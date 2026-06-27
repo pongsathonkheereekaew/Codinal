@@ -47,6 +47,13 @@ karpathy-guidelines: surgical changes, surface assumptions, define verifiable su
 - Hard thinking / plan / debug → Plan Mode (Opus, max effort). Mechanical writing → execute phase (Sonnet).
 - Fable 5 (`claude-fable-5`) = optional planning model when wanted.
 
+# Delegation (keep main context lean — default to fan-out)
+- Broad/unfamiliar reads (>3 files, or sweeping for a pattern/naming) → dispatch an **Explore** subagent; it returns conclusions, not file dumps. Don't read wide in the main thread.
+- Independent sub-tasks → dispatch agents **concurrently in ONE message**. Use `run_in_background: true` for work that must not block the main task (notified on completion).
+- Audits/research that only inform a decision → the subagent returns the verdict, not the raw material.
+- Big multi-phase work (migrate / audit / review many files) → Workflow (ultracode), when opted in.
+- Exception: if you already know the exact file + symbol, just read it — don't fan out for a single lookup.
+
 @RTK.md
 # graphify
 - **graphify** (`~/.claude/skills/graphify/SKILL.md`) - any input to knowledge graph. Trigger: `/graphify`
