@@ -38,23 +38,36 @@ cp -R "$SRC"/skills/.       "$DEST/skills/"            2>/dev/null || true
 
 echo "==> Files installed."
 
-# 5. dependency checks (warn, don't fail)
-echo "==> Checking external deps:"
-for c in rtk lowfat jq git; do
-  if command -v "$c" >/dev/null 2>&1; then echo "   ✓ $c"; else echo "   ✗ $c  MISSING — see MANIFEST.md"; fi
-done
-if ! command -v rtk >/dev/null 2>&1 || ! command -v lowfat >/dev/null 2>&1; then
-  echo "   ⚠ rtk/lowfat missing → the PreToolUse Bash hook will error."
-  echo "     Install them (MANIFEST.md) OR remove the PreToolUse block from $DEST/settings.json until you do."
+# 5. external CLIs (best-effort via Homebrew; Bash hook degrades gracefully if absent)
+echo "==> Installing CLIs (Homebrew)..."
+if command -v brew >/dev/null 2>&1; then
+  brew install jq node 2>/dev/null || true
+  brew install rtk lowfat 2>/dev/null || echo "   ⚠ rtk/lowfat not in default taps — see MANIFEST.md (hook passthrough-degrades until installed)"
+  brew install --cask obsidian 2>/dev/null || true
+else
+  echo "   ⚠ Homebrew absent — install jq node rtk lowfat yourself (MANIFEST.md)"
 fi
+
+# 6. plugins (headless — no manual /plugin needed). ECC/harness/claudeclaw intentionally omitted.
+if command -v claude >/dev/null 2>&1; then
+  echo "==> Installing plugins (claude plugin CLI)..."
+  for m in forrestchang/andrej-karpathy-skills JuliusBrussee/caveman thedotmack/claude-mem; do
+    claude plugin marketplace add "$m" 2>/dev/null || true
+  done
+  for p in superpowers@claude-plugins-official clangd-lsp@claude-plugins-official \
+           caveman@caveman claude-mem@thedotmack andrej-karpathy-skills@karpathy-skills; do
+    claude plugin install "$p" 2>/dev/null && echo "   ✓ $p" || echo "   ⚠ $p — retry: claude plugin install $p"
+  done
+else
+  echo "   ⚠ 'claude' CLI not on PATH — install plugins via MANIFEST.md"
+fi
+
+echo "==> Verify:"; for c in rtk lowfat jq claude; do command -v "$c" >/dev/null 2>&1 && echo "   ✓ $c" || echo "   ✗ $c"; done
 
 cat <<'EOF'
 
-==> NEXT (manual, one-time):
-  1. Install CLIs + apps  → see MANIFEST.md  (rtk, lowfat, jq, Obsidian, node)
-  2. Install plugins      → launch `claude`, then run the /plugin commands in MANIFEST.md
-  3. (optional) trim the agent pack → bash prune-agents.sh
-  4. Restart `claude`. claude-mem auto-recall + hooks + routing now active.
-  5. (optional) open Obsidian on ~/.claude/projects/-/memory for the knowledge graph.
-Done.
+==> DONE — one-command bootstrap complete.
+  • Restart `claude` → claude-mem recall + hooks + routing + delegation active.
+  • (optional) open Obsidian on ~/.claude/projects/-/memory for the knowledge graph.
+  • (optional) bash prune-agents.sh  if a full agent pack ever gets re-added.
 EOF

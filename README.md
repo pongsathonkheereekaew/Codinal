@@ -29,11 +29,12 @@ Disabled on purpose: claude-code-harness, claudeclaw, ECC heavy hooks. Full rati
 ```bash
 git clone <your-remote>/claude-workflow.git
 cd claude-workflow
-./install.sh                 # copies into ~/.claude, backs up anything it overwrites
-# then follow MANIFEST.md: brew install rtk lowfat jq node + /plugin installs
+./install.sh    # one command: files → ~/.claude, brew CLIs, AND plugins (headless)
 ```
 
-`install.sh` is idempotent and backs up existing files to `*.bak-<timestamp>`. See **MANIFEST.md** for the CLI + plugin steps it can't do itself.
+**One command, no other repos to hunt down.** `install.sh` copies all files, then auto-installs the CLIs (`brew install rtk lowfat jq node`) and every plugin (`claude plugin install ...` — superpowers, caveman, claude-mem, karpathy, clangd-lsp) via the headless `claude plugin` CLI. Idempotent; backs up overwrites to `*.bak-<timestamp>`.
+
+Not vendored on purpose: claude-mem (node app + DB), rtk/lowfat (compiled binaries), and the skill plugins stay as real installs so they keep getting **updates** — but install.sh pulls them for you, so it *feels* self-contained. See **MANIFEST.md** only if a step fails.
 
 ## Update the repo from this machine
 
