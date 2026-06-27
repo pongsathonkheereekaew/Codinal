@@ -25,7 +25,7 @@ used=$(tail -150 "$tp" 2>/dev/null | jq -rs '
   | (max // 0)' 2>/dev/null || echo 0)
 [ -n "$used" ] || used=0
 
-threshold="${CTX_GUARD_TOKENS:-800000}"
+threshold="${CTX_GUARD_TOKENS:-450000}"
 marker="$HOME/.claude/.ctx-guard-fired"
 
 if [ "${used:-0}" -ge "$threshold" ] && [ ! -f "$marker" ]; then
