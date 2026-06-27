@@ -2,3 +2,4 @@
 - [User profile](user-profile.md) — solo coder+designer, Thai, token-efficiency + caveman
 - [Memory SSOT rule](memory-ssot.md) — claude-mem only; never add a 2nd memory system
 - [Goal-loop](goal-loop.md) — semi-auto handoff at 80% context via ctx-guard hook
+- [Model routing](model-routing.md) — Opus/Fable plan+think (max effort), Sonnet writes

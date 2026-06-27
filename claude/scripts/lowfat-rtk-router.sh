@@ -5,6 +5,8 @@
 set -euo pipefail
 
 input=$(cat)
+# graceful: if rtk/lowfat not installed, pass input through unchanged (don't break Bash on a fresh machine)
+if ! command -v rtk >/dev/null 2>&1 || ! command -v lowfat >/dev/null 2>&1; then printf '%s' "$input"; exit 0; fi
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 
 # Strip env-var prefixes (FOO=bar BAZ=qux git log ...) and leading sudo

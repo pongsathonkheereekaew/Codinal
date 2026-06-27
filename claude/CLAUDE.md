@@ -42,6 +42,11 @@ karpathy-guidelines: surgical changes, surface assumptions, define verifiable su
 - rtk + lowfat (bash stdout) and caveman (prose) stay on. ECC strategic-compact nudges /compact.
 - Don't echo large files; summarize anything >100 lines. Prefer Explore/subagents for broad reads (return conclusions, not dumps).
 
+# Model routing
+- `opusplan` + `CLAUDE_EFFORT=max`: Opus reasons/plans, Sonnet writes/executes.
+- Hard thinking / plan / debug → Plan Mode (Opus, max effort). Mechanical writing → execute phase (Sonnet).
+- Fable 5 (`claude-fable-5`) = optional planning model when wanted.
+
 @RTK.md
 # graphify
 - **graphify** (`~/.claude/skills/graphify/SKILL.md`) - any input to knowledge graph. Trigger: `/graphify`

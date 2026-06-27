@@ -3,7 +3,8 @@
     "ECC_DISABLED_HOOKS": "stop:cost-tracker,post:ecc-context-monitor,pre:edit-write:gateguard-fact-force,pre:bash:gateguard-fact-force",
     "ECC_HOOK_PROFILE": "minimal",
     "ECC_SESSION_START_MAX_CHARS": "0",
-    "ECC_DISABLED_MCPS": "exa,github,memory,playwright,sequential-thinking"
+    "ECC_DISABLED_MCPS": "exa,github,memory,playwright,sequential-thinking",
+    "CLAUDE_EFFORT": "max"
   },
   "permissions": {
     "allow": [
@@ -43,6 +44,10 @@
           {
             "type": "command",
             "command": "__HOME__/.claude/scripts/sessionstart-resume.sh"
+          },
+          {
+            "type": "command",
+            "command": "__HOME__/.claude/scripts/claude-mem-backup.sh"
           }
         ]
       }

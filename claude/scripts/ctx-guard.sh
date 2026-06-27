@@ -4,6 +4,8 @@
 # At >=80% context: force handoff once, then allow stop. SessionStart clears the marker.
 set -euo pipefail
 input=$(cat)
+# TEMP debug: capture Stop-hook payload once to verify .context_window is present (remove after verified)
+printf '%s\n' "$input" >> "$HOME/.claude/.ctx-guard-debug.log" 2>/dev/null || true
 
 cwd=$(printf '%s' "$input" | jq -r '.cwd // "."' 2>/dev/null || echo ".")
 # gate: only act when a loop is armed
