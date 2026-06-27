@@ -43,9 +43,10 @@ karpathy-guidelines: surgical changes, surface assumptions, define verifiable su
 - Don't echo large files; summarize anything >100 lines. Prefer Explore/subagents for broad reads (return conclusions, not dumps).
 
 # Model routing
-- `opusplan` + `CLAUDE_EFFORT=max`: Opus reasons/plans, Sonnet writes/executes.
-- Hard thinking / plan / debug → Plan Mode (Opus, max effort). Mechanical writing → execute phase (Sonnet).
+- `opusplan`: Opus reasons/plans, Sonnet writes/executes. Effort is DYNAMIC (no global pin) — raise to max only for hard work via `/effort max` or "ultrathink".
+- Hard thinking / plan / debug → Plan Mode (Opus) + bump effort. Routine + writing → default effort (fast, Sonnet).
 - Fable 5 (`claude-fable-5`) = optional planning model when wanted.
+- Don't pin `CLAUDE_EFFORT=max` globally — it slows every turn (incl. trivial ones) for no gain.
 
 # Delegation (keep main context lean — default to fan-out)
 - Broad/unfamiliar reads (>3 files, or sweeping for a pattern/naming) → dispatch an **Explore** subagent; it returns conclusions, not file dumps. Don't read wide in the main thread.

@@ -1,7 +1,5 @@
 {
-  "env": {
-    "CLAUDE_EFFORT": "max"
-  },
+  "env": {},
   "permissions": {
     "allow": [
       "Bash",
