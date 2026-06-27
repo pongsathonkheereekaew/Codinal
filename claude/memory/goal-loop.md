@@ -15,7 +15,9 @@ For long tasks that outrun one context window. Semi-auto (user rotates the sessi
 
 **Why:** a Claude session can't spawn its own successor natively, so full-auto needs a daemon; semi-auto (user rotates) is reliable, zero runaway cost, and the user explicitly chose to stay in control. Gating on GOAL.md/.loop-active keeps normal sessions from getting surprise handoffs at 80%.
 
-**How to apply:** tune `CTX_GUARD_TOKENS` to your model's window (e.g. 160000 for a 200k-context model; 800000 for Opus 1M). If it never fires, check the transcript actually carries `message.usage` and that a loop is armed (GOAL.md / `.loop-active`). Full-auto upgrade path: claudeclaw heartbeat or a cron routine to spawn the fresh session. See [[workflow-stack]].
+**How to apply:** tune `CTX_GUARD_TOKENS` to your model's window (default 450000; e.g. 160000 for a 200k model). If it never fires, check the transcript carries `message.usage` and a loop is armed (GOAL.md / `.loop-active`).
+
+**Full-auto** (no human rotation): `~/.claude/scripts/loop-runner.sh` — a bash while-loop where each iteration spawns a FRESH `claude -p` session (fresh context) that does ONE verified next-step and updates GOAL.md, looping until the first line reads `DONE`. Bounded (`MAX_ITERS`/`MAX_TURNS`), stall-guarded (stops if GOAL.md unchanged), `PERM_MODE=acceptEdits` by default (`skip` = fully unattended/dangerous), honors the GOAL.md denylist + human-gate (writes `## BLOCKED` and stops). **Run in a throwaway branch/worktree; review the diff before merging — it's unattended autonomous execution.** See [[workflow-stack]].
 
 **Loop hygiene** (distilled from cobusgreyling/loop-engineering, 2026-06-27 — discipline only, no tooling adopted; their CLIs/LOOP.md/STATE.md conventions skipped as overlap):
 - **Attempt-cap:** GOAL.md carries `Attempts: N/3`; escalate to human at 3 → kills infinite-fix spirals across rotations.
