@@ -1,9 +1,5 @@
 {
   "env": {
-    "ECC_DISABLED_HOOKS": "stop:cost-tracker,post:ecc-context-monitor,pre:edit-write:gateguard-fact-force,pre:bash:gateguard-fact-force",
-    "ECC_HOOK_PROFILE": "minimal",
-    "ECC_SESSION_START_MAX_CHARS": "0",
-    "ECC_DISABLED_MCPS": "exa,github,memory,playwright,sequential-thinking",
     "CLAUDE_EFFORT": "max"
   },
   "permissions": {
@@ -63,7 +59,7 @@
     "claude-mem@thedotmack": true,
     "andrej-karpathy-skills@karpathy-skills": true,
     "clangd-lsp@claude-plugins-official": true,
-    "ecc@ecc": true,
+    "ecc@ecc": false,
     "claude-code-harness@claude-code-harness-marketplace": false,
     "superpowers@claude-plugins-official": true
   },

@@ -9,9 +9,9 @@ metadata:
 
 Consolidated 2026-06-27 from an overlapping pile (karpathy, matt, rtk, ECC, superpowers, claude-mem, harness, caveman, claudeclaw).
 
-**Winners per job:** memory → claude-mem · coding spine → superpowers · deep review → /ecc:review-pr · spec/issues/handoff → matt pocock (to-prd/to-issues/handoff/zoom-out) · web design → ui-ux-pro-max · native mac → macos-design · design-system → Figma MCP · a11y → ecc a11y-architect · code-trim → ponytail (on-demand only) · token → rtk+lowfat+caveman+ecc strategic-compact · docs → ecc context7 MCP · quality overlay → karpathy-guidelines.
+**Winners per job:** memory → claude-mem · coding spine → superpowers · deep review → /review-pr (standalone, fans out to code-reviewer + silent-failure-hunter + pr-test/type/comment/simplify) · spec/issues/handoff → matt pocock (to-prd/to-issues/handoff/zoom-out) · web design → ui-ux-pro-max · native mac → macos-design · design-system → Figma MCP · a11y → a11y-architect agent · code-trim → ponytail (on-demand only) · token → rtk+lowfat+caveman · docs → WebFetch · quality overlay → karpathy-guidelines.
 
-**Disabled:** claude-code-harness (removed — edit-blocking deny-hooks + 7.3GB harness-mem) · ECC minimal (ECC_HOOK_PROFILE=minimal, SESSION_START_MAX_CHARS=0, disabled MCPs exa/github/memory/playwright/sequential-thinking) · claudeclaw · ECC design-* swarm + redundant planners. Pruned 210→57 agents (rest in ~/.claude/agents-archive/).
+**Disabled/removed:** claude-code-harness (edit-blocking deny-hooks + 7.3GB harness-mem) · **ECC REMOVED 2026-06-27** — scrutinize found it was the dominant token tax (574 skills + 253 agents loaded every session for 3 used features); extracted its crown jewels first (/review-pr command + code-reviewer/comment-analyzer/pr-test-analyzer/silent-failure-hunter/type-design-analyzer/code-simplifier + a11y-architect agents → ~/.claude/{commands,agents}), then disabled the plugin · claudeclaw · Cloudflare skill pack. Standalone agents now 64 (57 kept + 7 ECC jewels); the earlier "210→57" claim was misleading while 253 ECC agents still loaded — removal made it real.
 
 **Rejected:** 9arm (redundant), openwolf (2nd memory SSOT + hook collisions; "fewer tokens" = advisory hint not compression).
 

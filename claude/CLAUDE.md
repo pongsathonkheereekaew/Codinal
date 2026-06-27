@@ -16,11 +16,11 @@ When suggesting code changes, output only the specific lines to replace — neve
 - Debug → superpowers: systematic-debugging
 - Multi-agent fan-out → superpowers: subagent-driven-development / dispatching-parallel-agents
 - Worktrees / finish branch → superpowers: using-git-worktrees / finishing-a-development-branch
-- Deep code review → /ecc:review-pr (fans out to lang + security + silent-failure)  | quick → superpowers: requesting-code-review
+- Deep code review → /review-pr (standalone: fans out to code-reviewer + silent-failure-hunter + pr-test/type/comment/simplify agents, ≥80% confidence)  | quick → superpowers: requesting-code-review
 - Spec/PRD → /to-prd   • plan → issues → /to-issues   • compact convo → /handoff   • higher context → /zoom-out
-- Web UI → ui-ux-pro-max   • native macOS → macos-design   • design-system extract → Figma MCP   • a11y audit → ecc a11y-architect
+- Web UI → ui-ux-pro-max   • native macOS → macos-design   • design-system extract → Figma MCP   • a11y audit → a11y-architect agent
 - Trim over-engineered diff → /ponytail-review  (on demand only — never always-on)
-- Library/API docs → ecc context7 MCP
+- Library/API docs → WebFetch the official docs (context7 removed with ECC)
 
 # Quality floor (always on)
 karpathy-guidelines: surgical changes, surface assumptions, define verifiable success criteria.
@@ -39,7 +39,7 @@ karpathy-guidelines: surgical changes, surface assumptions, define verifiable su
 - Rotate: open a FRESH `claude` session (not -c). SessionStart hook re-injects GOAL.md + HANDOFF.md + claude-mem recall. Type "continue".
 
 # Token policy
-- rtk + lowfat (bash stdout) and caveman (prose) stay on. ECC strategic-compact nudges /compact.
+- rtk + lowfat (bash stdout) and caveman (prose) stay on. Use /compact manually when the convo bloats.
 - Don't echo large files; summarize anything >100 lines. Prefer Explore/subagents for broad reads (return conclusions, not dumps).
 
 # Model routing
