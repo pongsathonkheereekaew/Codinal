@@ -1,0 +1,4 @@
+- [Workflow stack](workflow-stack.md) — locked tool-per-job winners + what's disabled and why
+- [User profile](user-profile.md) — solo coder+designer, Thai, token-efficiency + caveman
+- [Memory SSOT rule](memory-ssot.md) — claude-mem only; never add a 2nd memory system
+- [Goal-loop](goal-loop.md) — semi-auto handoff at 80% context via ctx-guard hook
