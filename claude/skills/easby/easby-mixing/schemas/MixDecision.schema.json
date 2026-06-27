@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "easby-mixing/MixDecision.schema.json",
+  "$comment": "Shared blocks (compression_core, eq_move) are canonicalized in ../../schemas/dsp-blocks.md — keep ranges in sync; Mixing extends compression with purpose:control|effect|glue.",
+  "title": "MixDecision",
+  "description": "Per-element mix processing decision (fader, pan, EQ, comp, sidechain, reverb, delay, imaging, bus assignment, automation).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "target_element", "fader_db", "pan", "eq_moves", "imaging", "confidence", "notes"],
+  "properties": {
+    "type": {"const": "MixDecision"},
+    "target_element": {"type": "string", "minLength": 1, "description": "Identifier of the track/element this decision targets, e.g. 'lead_vocal', 'kick'."},
+    "fader_db": {"type": "number", "minimum": -60, "maximum": 12},
+    "pan": {"type": "integer", "minimum": -100, "maximum": 100, "description": "-100 = hard L, 0 = center, +100 = hard R."},
+    "eq_moves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["band", "freq_hz", "reason"],
+        "properties": {
+          "band": {"enum": ["high_pass", "low_pass", "low_shelf", "high_shelf", "peak_boost", "peak_cut", "dynamic_eq"]},
+          "freq_hz": {"type": "number", "minimum": 20, "maximum": 20000},
+          "gain_db": {"type": "number", "minimum": -24, "maximum": 24},
+          "q": {"type": "number", "minimum": 0.1, "maximum": 20},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "compression": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ratio": {"type": "number", "minimum": 1.0, "maximum": 100},
+        "attack_ms": {"type": "number", "minimum": 0, "maximum": 5000},
+        "release_ms": {"type": "number", "minimum": 1, "maximum": 5000},
+        "threshold_db": {"type": "number", "minimum": -60, "maximum": 0},
+        "gain_reduction_db": {"type": "number", "minimum": 0, "maximum": 30},
+        "purpose": {"enum": ["control", "effect", "glue"]}
+      },
+      "required": ["ratio", "gain_reduction_db", "purpose"]
+    },
+    "sidechain": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"enum": ["kick", "snare", "vocal", "ghost_midi", "trigger_click", null]},
+        "depth_db": {"type": "number", "minimum": 0, "maximum": 30},
+        "attack_ms": {"type": "number", "minimum": 0, "maximum": 1000},
+        "release_ms": {"type": "number", "minimum": 1, "maximum": 5000},
+        "key_filter_hz": {"type": ["number", "null"], "minimum": 20, "maximum": 20000}
+      }
+    },
+    "reverb": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["plate", "hall", "room", "spring", "chamber", "nonlinear"]},
+        "pre_delay_ms": {"type": "number", "minimum": 0, "maximum": 500},
+        "decay_s": {"type": "number", "minimum": 0.1, "maximum": 30},
+        "send_db": {"type": "number", "minimum": -60, "maximum": 12},
+        "eq_hint": {"type": "string"}
+      }
+    },
+    "delay": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "time_ms": {"type": "number", "minimum": 0, "maximum": 10000},
+        "note_value": {"type": "string"},
+        "feedback_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "pan": {"enum": ["left", "right", "center", "stereo"]}
+      }
+    },
+    "imaging": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x_pan", "y_depth", "z_freq_placement"],
+      "properties": {
+        "x_pan": {"type": "integer", "minimum": -100, "maximum": 100},
+        "y_depth": {"enum": ["front", "mid", "back"]},
+        "z_freq_placement": {"enum": ["low", "mid", "mid-high", "high"]}
+      }
+    },
+    "group_assignment": {"enum": ["drum_bus", "vocal_bus", "guitar_bus", "fx_bus", "parallel_drum_bus", "parallel_vocal_bus", "mix_bus", null]},
+    "parallel_bus": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"type": "string"},
+        "send_db": {"type": "number"},
+        "gr_db": {"type": "number"},
+        "eq_hint": {"type": "string"}
+      }
+    },
+    "automation_notes": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "notes": {"type": "string", "minLength": 1}
+  }
+}
