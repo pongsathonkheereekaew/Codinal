@@ -16,7 +16,7 @@ marker="$HOME/.claude/.ctx-guard-fired"
 
 if [ "${pct:-0}" -ge 80 ] && [ ! -f "$marker" ]; then
   touch "$marker"
-  printf '{"decision":"block","reason":"CONTEXT %s%% >= 80%%. Before stopping: (1) append progress + the single next step to GOAL.md, (2) run the handoff skill to write HANDOFF.md (redact secrets), (3) tell the user: open a fresh session and type continue. Do this now, then stop."}' "$pct"
+  printf '{"decision":"block","reason":"CONTEXT %s%% >= 80%%. Before stopping: (1) update GOAL.md — append progress + the single next step, PRUNE finished items, bump Attempts N/3 + Last run, (2) run the handoff skill to write HANDOFF.md (redact secrets), (3) tell the user: open a fresh session and type continue. Do this now, then stop."}' "$pct"
   exit 0
 fi
 exit 0
