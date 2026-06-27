@@ -10,12 +10,12 @@ metadata:
 For long tasks that outrun one context window. Semi-auto (user rotates the session; everything else automated).
 
 **Arm:** drop a GOAL.md in the project (template ~/.claude/templates/GOAL.md) or `touch ~/.claude/.loop-active`.
-**Trigger:** Stop hook ~/.claude/scripts/ctx-guard.sh reads `.context_window.used_percentage`; at ≥80% it blocks stop once, forcing /handoff → append progress to GOAL.md + write HANDOFF.md.
+**Trigger:** Stop hook ~/.claude/scripts/ctx-guard.sh. The Stop payload has NO `context_window` field (verified 2026-06-27), so it reads `transcript_path` and sums recent `usage.input+cache` = current context tokens; fires once at `CTX_GUARD_TOKENS` (default 800000 ≈ 80% of Opus 4.8's 1M window), forcing /handoff → prune+append GOAL.md + write HANDOFF.md.
 **Resume:** open a FRESH `claude` session (NOT `claude -c` — that keeps the full context and defeats the reset). SessionStart hook ~/.claude/scripts/sessionstart-resume.sh clears the fired-marker and re-injects GOAL.md + HANDOFF.md; claude-mem adds episodic recall. Type "continue".
 
 **Why:** a Claude session can't spawn its own successor natively, so full-auto needs a daemon; semi-auto (user rotates) is reliable, zero runaway cost, and the user explicitly chose to stay in control. Gating on GOAL.md/.loop-active keeps normal sessions from getting surprise handoffs at 80%.
 
-**How to apply:** if ctx-guard never fires, verify the Stop hook payload actually contains `context_window.used_percentage` (newer Claude Code); if absent, switch trigger to a transcript-size estimate or PreCompact. Full-auto upgrade path: claudeclaw heartbeat or a cron routine to spawn the fresh session. See [[workflow-stack]].
+**How to apply:** tune `CTX_GUARD_TOKENS` to your model's window (e.g. 160000 for a 200k-context model; 800000 for Opus 1M). If it never fires, check the transcript actually carries `message.usage` and that a loop is armed (GOAL.md / `.loop-active`). Full-auto upgrade path: claudeclaw heartbeat or a cron routine to spawn the fresh session. See [[workflow-stack]].
 
 **Loop hygiene** (distilled from cobusgreyling/loop-engineering, 2026-06-27 — discipline only, no tooling adopted; their CLIs/LOOP.md/STATE.md conventions skipped as overlap):
 - **Attempt-cap:** GOAL.md carries `Attempts: N/3`; escalate to human at 3 → kills infinite-fix spirals across rotations.
