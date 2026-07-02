@@ -1,8 +1,8 @@
 From 346d352d3cc846bc48d8a75528dba9ceff6b4989 Mon Sep 17 00:00:00 2001
 From: Pongsathon Kheereekaew <kpongsat@gmail.com>
 Date: Thu, 2 Jul 2026 22:45:00 +0700
-Subject: [PATCH] feat(streaming): optional placeholder message before first
- streamed token
+Subject: [PATCH 1/2] feat(streaming): optional placeholder message before
+ first streamed token
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -267,6 +267,40 @@ index 0000000..6eca470
 +        # A stray non-string value must not crash the loader.
 +        restored = StreamingConfig.from_dict({"placeholder_text": 123})
 +        assert restored.placeholder_text is None
+-- 
+2.50.1 (Apple Git-155)
+
+
+From 2395d8093e6ad445d03f222ad09d30b3600016e8 Mon Sep 17 00:00:00 2001
+From: Pongsathon Kheereekaew <kpongsat@gmail.com>
+Date: Thu, 2 Jul 2026 23:10:33 +0700
+Subject: [PATCH 2/2] feat(streaming): rename long-running heartbeat to
+ "Ruminating"
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Cosmetic: the 3-min liveness heartbeat now reads "⏳ Ruminating — X min"
+to match the placeholder wording. Behavior unchanged.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ gateway/run.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/gateway/run.py b/gateway/run.py
+index ad83f2d..cb0b25c 100644
+--- a/gateway/run.py
++++ b/gateway/run.py
+@@ -18119,7 +18119,7 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
+                             _status_detail = " — " + ", ".join(_parts)
+                     except Exception:
+                         pass
+-                _heartbeat_text = f"⏳ Working — {_elapsed_mins} min{_status_detail}"
++                _heartbeat_text = f"⏳ Ruminating — {_elapsed_mins} min{_status_detail}"
+                 try:
+                     _notify_res = None
+                     if _heartbeat_msg_id:
 -- 
 2.50.1 (Apple Git-155)
 
