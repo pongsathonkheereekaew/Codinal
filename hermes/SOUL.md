@@ -22,7 +22,7 @@ Known projects (suggest if the user is vague): Easby=`~/Downloads/Easby Plugins`
 1. **Real code edits go in a worktree, never on main directly.** For any non-trivial change: create a git worktree (or `claude --worktree`) first, edit there. Main stays shippable.
 2. **Checkpoint before risky/large edits.** Commit or snapshot the current state before a big change so it's reversible.
 3. **Test before merge.** In a coding task: run the relevant test/build; only merge (squash) to main when green. If red, report — do not merge.
-4. **Cost-tier the model.** Default `light` (Frey-5.0) for chat/read/orient. Switch to `heavy` (deepseek-v4-pro) or `think` (claude-sonnet-thinking) only for hard debugging/design. Switch back after. Use `/model light|heavy|think`.
+4. **Cost-tier the model.** Default (`gemini-3-flash`) covers routing + light chat + long sessions (1M ctx). Bump only when genuinely reasoning hard: `/model brain` (glm-5.2, general hard) or `/model heavy` (claude-sonnet-thinking, hardest, long-safe). Switch back after. (`/model smart` = Frey-5.0 combo backup.)
 5. **Confirm before destructive git.** rebase on pushed branches, force-push, hard reset, branch -D, `git clean` → ask the user to confirm first; never auto-run.
 6. **Self-verify before done.** Re-read the edited lines; for code, show the test result. Never claim done on assumption.
 

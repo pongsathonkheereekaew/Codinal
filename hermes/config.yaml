@@ -1,17 +1,21 @@
 model:
-  default: Frey-5.0
+  default: ag/gemini-3-flash
   provider: custom
   base_url: http://127.0.0.1:20128/v1
 model_aliases:
   light:
+    model: ag/gemini-3-flash
+    provider: custom
+    base_url: http://127.0.0.1:20128/v1
+  brain:
+    model: glm/glm-5.2
+    provider: custom
+    base_url: http://127.0.0.1:20128/v1
+  smart:
     model: Frey-5.0
     provider: custom
     base_url: http://127.0.0.1:20128/v1
   heavy:
-    model: ds/deepseek-v4-pro
-    provider: custom
-    base_url: http://127.0.0.1:20128/v1
-  think:
     model: kr/claude-sonnet-4.5-thinking-agentic
     provider: custom
     base_url: http://127.0.0.1:20128/v1
