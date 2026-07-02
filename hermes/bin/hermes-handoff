@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""List/pick open Claude Code handoffs (GOAL.md / HANDOFF.md) for phone continuation.
+Usage: hermes-handoff list | pick N | continue N [task...]"""
+import os, sys, glob, time, json, subprocess
+
+HOME = os.path.expanduser("~")
+MAX_AGE_DAYS = 30
+EXCLUDE = ("/.claude/projects", "/.claude/skills", "/.claude/templates",
+           "/.claude/state", "/node_modules", "/Library/",
+           "/.Trash/", "/Open-CoWork", "/.hermes/")
+
+def age_str(mtime):
+    d = (time.time() - mtime) / 86400
+    if d < 1: return f"{int(d*24)}h ago"
+    if d < 30: return f"{int(d)}d ago"
+    return f"{int(d/30)}mo ago"
+
+def short(path):
+    return path.replace(HOME, "~")
+
+def summary(path):
+    """First meaningful content line, skipping frontmatter/headings."""
+    try:
+        txt = open(path, encoding="utf-8", errors="replace").read()
+    except Exception:
+        return "(unreadable)"
+    if txt.startswith("---"):
+        parts = txt.split("---", 2)
+        if len(parts) >= 3:
+            txt = parts[2]
+    for ln in txt.splitlines():
+        ln = ln.strip().lstrip("#").lstrip("*").strip()
+        if not ln: continue
+        low = ln.lower()
+        if low.startswith(("branch:", "read ", "tldr", "nothing", "read `", "handoff", "goal")): continue
+        if low.startswith(("name:", "description:")): continue
+        return ln[:90]
+    return "(no summary)"
+
+def discover():
+    found = {}
+    # use find with pruning — glob over HOME is too slow (Library/permissions)
+    cmd = ["find", HOME,
+           "-maxdepth", "6",
+           "(", "-name", "Library", "-o", "-name", ".Trash", "-o", "-name", "node_modules",
+           "-o", "-name", ".git", "-o", "-name", "Open-CoWork", "-o", "-name", ".hermes", ")",
+           "-prune",
+           "-o", "(", "-name", "HANDOFF.md", "-o", "-name", "GOAL.md", ")",
+           "-mtime", str(-MAX_AGE_DAYS), "-print"]
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, text=True, timeout=20)
+        paths = [l for l in out.splitlines() if l]
+    except Exception:
+        paths = []
+    for p in paths:
+        if any(x in p for x in EXCLUDE): continue
+        try: mt = os.path.getmtime(p)
+        except OSError: continue
+        if time.time() - mt > MAX_AGE_DAYS * 86400: continue
+        d = os.path.dirname(p)
+        if d in found and os.path.basename(p) == "GOAL.md": continue
+        handoff = os.path.join(d, "HANDOFF.md") if os.path.exists(os.path.join(d, "HANDOFF.md")) else p
+        found[d] = {"dir": d, "mtime": mt, "summary": summary(p), "handoff": handoff,
+                    "goal": os.path.join(d, "GOAL.md") if os.path.exists(os.path.join(d, "GOAL.md")) else None}
+    # canonical structured artifact (if live)
+    art = os.path.join(HOME, ".claude/state/handoff-artifact.json")
+    if os.path.exists(art):
+        try:
+            a = json.load(open(art))
+            sid = (a.get("sessionId") or "").strip()
+            ts = a.get("timestamp", "")
+            if sid:
+                from datetime import datetime
+                t = datetime.fromisoformat(ts.replace("Z","+00:00")).timestamp()
+                if time.time() - t < MAX_AGE_DAYS*86400:
+                    found.setdefault("__artifact__", {"dir": "(structured artifact)", "mtime": t,
+                        "summary": (a.get("next_action") or {}).get("summary","")[:90],
+                        "handoff": art, "goal": None, "artifact": True})
+        except Exception: pass
+    return sorted(found.values(), key=lambda e: -e["mtime"])
+
+def cmd_list():
+    rows = discover()
+    if not rows:
+        print("No open handoffs found."); return
+    print(f"Open handoffs ({len(rows)}):")
+    for i, e in enumerate(rows, 1):
+        name = os.path.basename(e["dir"].rstrip("/")) or short(e["dir"])
+        print(f"  [{i}] {name:<22} {age_str(e['mtime']):<8} {e['summary']}")
+    print("\npick: hermes-handoff pick N")
+
+def cmd_pick(n):
+    rows = discover()
+    if not (1 <= n <= len(rows)): sys.exit("bad index")
+    e = rows[n-1]
+    print(f"WORKDIR: {e['dir']}")
+    print(f"READ:    {e['handoff']}")
+    if e.get("goal"): print(f"GOAL:    {e['goal']}")
+
+def cmd_continue(n, task):
+    rows = discover()
+    if not (1 <= n <= len(rows)): sys.exit("bad index")
+    e = rows[n-1]
+    read = e["handoff"]
+    extra = f" and {e['goal']}" if e.get("goal") else ""
+    t = " ".join(task) if task else "continue the work from where the last session left off"
+    prompt = f"Read {read}{extra} to restore full context, then: {t}"
+    cmd = ["claude", "-p", prompt, "--workdir", e["dir"]]
+    print("RUN:", " ".join(cmd[:1]), f'-p ... --workdir "{e["dir"]}"')
+    os.execvp(cmd[0], cmd)
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if not args or args[0] == "list":
+        cmd_list()
+    elif args[0] == "pick" and len(args) >= 2:
+        cmd_pick(int(args[1]))
+    elif args[0] == "continue" and len(args) >= 2:
+        cmd_continue(int(args[1]), args[2:])
+    else:
+        sys.exit("usage: hermes-handoff [list | pick N | continue N [task...]]")

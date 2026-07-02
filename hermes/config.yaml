@@ -1,0 +1,57 @@
+model:
+  default: Frey-5.0
+  provider: custom
+  base_url: http://127.0.0.1:20128/v1
+model_aliases:
+  light:
+    model: Frey-5.0
+    provider: custom
+    base_url: http://127.0.0.1:20128/v1
+  heavy:
+    model: ds/deepseek-v4-pro
+    provider: custom
+    base_url: http://127.0.0.1:20128/v1
+  think:
+    model: kr/claude-sonnet-4.5-thinking-agentic
+    provider: custom
+    base_url: http://127.0.0.1:20128/v1
+platforms:
+  telegram:
+    extra:
+      status_indicator: true
+      ignore_root_dm: true
+      dm_topics:
+        - chat_id: 7024035068
+          topics:
+            - name: General
+              icon_color: 7322096
+              thread_id: 215
+            - name: Coding
+              icon_color: 9367192
+              skill: claude-code
+              thread_id: 234
+            - name: Easby
+              icon_color: 16766590
+              skill: claude-code
+              thread_id: 219
+            - name: Auric
+              icon_color: 2664282
+              skill: claude-code
+              thread_id: 236
+onboarding:
+  seen:
+    profile_build_offered: true
+    busy_input_prompt: true
+approvals:
+  destructive_slash_confirm: false
+quick_commands:
+  easby:
+    type: exec
+    command: "/Users/pongsathonkheeereekaew/.local/bin/project-ctx easby"
+  auric:
+    type: exec
+    command: "/Users/pongsathonkheeereekaew/.local/bin/project-ctx auric"
+gateway:
+  streaming:
+    enabled: true
+    transport: edit
