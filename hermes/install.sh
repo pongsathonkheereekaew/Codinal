@@ -51,7 +51,28 @@ UID_=$(id -u)
 launchctl bootout "gui/$UID_/com.nousresearch.hermes" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_" "$HOME/Library/LaunchAgents/com.nousresearch.hermes.plist"
 
-echo "## 5/5 done. Next steps:"
+echo "## 5/6 claude code z.ai routing"
+ZAI="${ANTHROPIC_AUTH_TOKEN:-}"
+if [ -z "$ZAI" ]; then
+  read -rsp "z.ai ANTHROPIC_AUTH_TOKEN (blank to skip): " ZAI; echo
+fi
+if [ -n "$ZAI" ]; then
+  python3 - "$HERE/claude/settings.zai.json" "$HOME/.claude/settings.json" "$ZAI" <<'PY'
+import json,sys,os
+tmpl,target,token=sys.argv[1],sys.argv[2],sys.argv[3]
+env=json.load(open(tmpl))["env"]
+env["ANTHROPIC_AUTH_TOKEN"]=token
+os.makedirs(os.path.dirname(target),exist_ok=True)
+cur=json.load(open(target)) if os.path.exists(target) else {}
+cur.setdefault("env",{}).update(env)
+json.dump(cur,open(target,"w"),indent=2)
+print("  merged z.ai env into",target)
+PY
+else
+  echo "  skipped (set ANTHROPIC_AUTH_TOKEN to route claude code via z.ai GLM)"
+fi
+
+echo "## 6/6 done. Next steps:"
 cat <<EOF
   1. Wait ~10s, then in Telegram open your bot and send any message.
   2. If unrecognized, pair:  hermes pairing approve telegram <CODE>
