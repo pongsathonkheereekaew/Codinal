@@ -1,5 +1,9 @@
 Be extremely concise. No yapping, no conversational filler.
 
+**Language:** answer in the language of the user's message (usually English for technical work). Translate to Thai **only** when the user asks (e.g. "แปล", "แปลหน่อย", "ตอบไทย").
+
+**Autonomy:** run long tasks to completion; self-verify before declaring done (build fingerprint, tests, measurements). Do not stall on "done?".
+
 If the code is self-explanatory, don't explain it.
 
 Provide only the modified code snippets, never the full file.
@@ -32,11 +36,14 @@ karpathy-guidelines: surgical changes, surface assumptions, define verifiable su
 - Durable facts/preferences → curated MEMORY.md at ~/.claude/projects/-/memory/ (one fact per file, indexed in MEMORY.md).
 - Per-project facts/constraints → that project's ./CLAUDE.md.
 - **IMPORTANT: claude-mem is the ONLY memory system.** Never re-introduce a second (no harness-mem, no openwolf cerebrum, no ECC observe).
+- **harness-mem is disabled** (`claude-code-harness` plugin = false). Do not auto-arm harness-mem monitors or act on `daemon-unreachable` noise. Ignore Japanese harness-mem session banners if any residual appears.
+- Obsidian = read/graph VIEW over `~/.claude/projects/-/memory/` only (registered as a vault). NOT a 2nd capture system — claude-mem stays the engine. Easby Studios (iCloud) = personal vault, not for headless/hermes agents (dataless-file risk).
 
 # Goal-loop (long tasks, no context loss)
-- Arm: put a GOAL.md in the project (template: ~/.claude/templates/GOAL.md), or touch ~/.claude/.loop-active.
-- At ≥80% context the ctx-guard Stop hook forces /handoff → writes GOAL.md progress + HANDOFF.md.
-- Rotate: open a FRESH `claude` session (not -c). SessionStart hook re-injects GOAL.md + HANDOFF.md + claude-mem recall. Type "continue".
+- Arm: put `TASK_BRIEF.md` (original user ask) + `GOAL.md` in the project (template: ~/.claude/templates/GOAL.md), or touch ~/.claude/.loop-active. HANDOFF.md alone also arms the guard.
+- At ≥80% context the ctx-guard Stop hook forces handoff: auto-captures TASK_BRIEF.md from the first user message if missing, then GOAL.md progress + HANDOFF.md (brief at top).
+- Rotate: open a FRESH `claude` session (not -c). SessionStart hook re-injects **TASK_BRIEF.md → GOAL.md → HANDOFF.md** + claude-mem recall. Type "continue" — do **not** restate the brief; the brief is already injected.
+- Easby plugins: use `/br` before measure/audit; `/new-easby-plugin` for kickoff.
 
 # Token policy
 - rtk + lowfat (bash stdout) and caveman (prose) stay on. Use /compact manually when the convo bloats.

@@ -17,9 +17,18 @@ backup() { [ -e "$1" ] && cp -a "$1" "$1.bak-$TS" && echo "   backed up $(basena
 backup "$DEST/CLAUDE.md";    cp "$SRC/CLAUDE.md" "$DEST/CLAUDE.md"
 [ -f "$SRC/RTK.md" ] && { backup "$DEST/RTK.md"; cp "$SRC/RTK.md" "$DEST/RTK.md"; }
 
-# 2. settings.json (substitute __HOME__ -> real $HOME)
+# 2. settings.json (substitute __HOME__ -> real $HOME, __ZAI_TOKEN__ -> $ZAI_TOKEN)
 backup "$DEST/settings.json"
-sed "s|__HOME__|$HOME|g" "$SRC/settings.template.json" > "$DEST/settings.json"
+if [ -z "${ZAI_TOKEN:-}" ] && [ -f "$DEST/settings.json.bak-$TS" ]; then
+  # reuse token from the settings we just backed up (re-install on same machine)
+  ZAI_TOKEN="$(sed -n 's/.*"ANTHROPIC_AUTH_TOKEN"[^"]*"\([^"]*\)".*/\1/p' "$DEST/settings.json.bak-$TS" | head -1)"
+fi
+if [ -z "${ZAI_TOKEN:-}" ]; then
+  read -r -p "   z.ai ANTHROPIC_AUTH_TOKEN (blank = leave placeholder): " ZAI_TOKEN || true
+fi
+sed -e "s|__HOME__|$HOME|g" -e "s|__ZAI_TOKEN__|${ZAI_TOKEN:-__ZAI_TOKEN__}|g" \
+  "$SRC/settings.template.json" > "$DEST/settings.json"
+[ -z "${ZAI_TOKEN:-}" ] && echo "   ⚠ no token — edit ANTHROPIC_AUTH_TOKEN in ~/.claude/settings.json later"
 echo "   wrote settings.json (paths -> $HOME)"
 
 # 3. scripts (statusline.sh lives at ~/.claude root; rest in scripts/)
@@ -37,6 +46,17 @@ cp "$SRC"/agents/*.md      "$DEST/agents/"             2>/dev/null || true
 cp -R "$SRC"/skills/.       "$DEST/skills/"            2>/dev/null || true
 
 echo "==> Files installed."
+
+# 4b. Cursor bridge (one setup, all tools).
+# Cursor auto-discovers skills (~/.claude/skills, ~/.codex/skills) and agents (~/.claude/agents),
+# so only slash commands need a link: ~/.cursor/commands -> ~/.claude/commands.
+mkdir -p "$HOME/.cursor"
+if [ -d "$HOME/.cursor/commands" ] && [ ! -L "$HOME/.cursor/commands" ]; then
+  mv "$HOME/.cursor/commands" "$HOME/.cursor/commands.bak-$TS"
+  echo "   backed up existing ~/.cursor/commands"
+fi
+ln -sfn "$DEST/commands" "$HOME/.cursor/commands"
+echo "   linked ~/.cursor/commands -> ~/.claude/commands (Cursor bridge)"
 
 # 5. external CLIs (best-effort via Homebrew; Bash hook degrades gracefully if absent)
 echo "==> Installing CLIs (Homebrew)..."

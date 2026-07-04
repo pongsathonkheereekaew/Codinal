@@ -1,6 +1,20 @@
-# claude-workflow
+# easby-workflow
 
-My consolidated Claude Code setup — one coding spine, one memory, lean token use, no context loss across projects. Portable to any new machine.
+My consolidated agent setup — one coding spine, one memory, lean token use, no context loss across projects. Portable to any new machine, usable from **any tool** (Claude Code, Cursor, Codex).
+
+## One setup, all tools
+
+`~/.claude` is the single source of truth; other tools read from it (via native discovery or symlinks the installer creates):
+
+| Layer | Source of truth | Claude Code | Cursor (IDE + CLI) | Codex |
+|---|---|---|---|---|
+| Skills | `~/.claude/skills/` | native | auto-discovers `~/.claude/skills` + `~/.codex/skills` | native (`~/.codex/skills`) |
+| Subagents | `~/.claude/agents/` | native | auto-discovers `~/.claude/agents` | auto-discovers |
+| Slash commands | `~/.claude/commands/` | native | symlink `~/.cursor/commands` → there (installer does it) | mirror to `~/.codex/prompts` if wanted |
+| Global instructions | `claude/CLAUDE.md` → `~/.claude/CLAUDE.md` | native | no global file — per-project `AGENTS.md`/`CLAUDE.md` picked up; put durable prefs in Cursor User Rules | `~/.codex/AGENTS.md` |
+| Memory | claude-mem (+ curated `~/.claude/projects/-/memory/`) | native | claude-mem MCP + curated files readable by any tool | curated files |
+
+Rule of thumb: **add new skills/commands/agents under `~/.claude/` only** — every other tool picks them up. Don't fork per-tool copies.
 
 > **PRIVATE repo** — bundles personal skills (insurance, nuiny, easby, graphify).
 
@@ -28,8 +42,8 @@ Disabled on purpose: claude-code-harness, claudeclaw, ECC heavy hooks. Full rati
 ## Install on a new machine
 
 ```bash
-git clone <your-remote>/claude-workflow.git
-cd claude-workflow
+git clone <your-remote>/easby-workflow.git
+cd easby-workflow
 ./install.sh    # one command: files → ~/.claude, brew CLIs, AND plugins (headless)
 ```
 
@@ -43,7 +57,9 @@ Not vendored on purpose: claude-mem (node app + DB), rtk/lowfat (compiled binari
 cp -R ~/.claude/CLAUDE.md ~/.claude/RTK.md claude/
 cp -R ~/.claude/scripts/. claude/scripts/   # (statusline.sh too)
 cp -R ~/.claude/commands/. ~/.claude/templates/. ~/.claude/projects/-/memory/. claude/...   # mirror back
-sed "s|$HOME|__HOME__|g" ~/.claude/settings.json > claude/settings.template.json
+sed -e "s|$HOME|__HOME__|g" \
+    -e 's|\("ANTHROPIC_AUTH_TOKEN"[^"]*\)"[^"]*"|\1"__ZAI_TOKEN__"|' \
+    ~/.claude/settings.json > claude/settings.template.json   # never commit the real token
 git add -A && git commit -m "sync from $(hostname)"
 ```
 
@@ -58,8 +74,8 @@ git add -A && git commit -m "sync from $(hostname)"
 **Prereqs (install first, by hand):** `git`, `node`, [Claude Code CLI](https://code.claude.com), [Hermes Agent](https://nousresearch.com) (`~/.local/bin/hermes`), **9router** running on `127.0.0.1:20128`, a Telegram bot token from [@BotFather](https://t.me/BotFather).
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/claude-workflow.git
-cd claude-workflow
+git clone git@github.com:pongsathonkheereekaew/easby-workflow.git
+cd easby-workflow
 
 # 1) desk side — claude code (CLAUDE.md, hooks, plugins, z.ai GLM routing)
 ./install.sh

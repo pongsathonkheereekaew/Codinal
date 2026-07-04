@@ -11,8 +11,8 @@ Ordered checklist. `🔧` = automated by install scripts. `✋` = manual (one-ti
 
 ## 1. Clone this repo
 ```bash
-git clone git@github.com:pongsathonkheereekaew/claude-workflow.git
-cd claude-workflow
+git clone git@github.com:pongsathonkheereekaew/easby-workflow.git
+cd easby-workflow
 ```
 
 ## 2. 🔧 Desk side — Claude Code

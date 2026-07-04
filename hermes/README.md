@@ -15,8 +15,8 @@ the phone via Claude Code, model-routed through 9router.
 
 ## Install (new machine)
 ```bash
-git clone git@github.com:pongsathonkheereekaew/claude-workflow.git
-cd claude-workflow/hermes
+git clone git@github.com:pongsathonkheereekaew/easby-workflow.git
+cd easby-workflow/hermes
 # prerequisites: hermes binary at ~/.local/bin/hermes, 9router running on :20128
 TELEGRAM_BOT_TOKEN=123:ABC... ./install.sh
 ```

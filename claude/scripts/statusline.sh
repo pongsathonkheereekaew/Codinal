@@ -10,31 +10,54 @@ model=$(echo "$input" | jq -r '.model.display_name // "Unknown model"')
 # ── 2. Context usage % ───────────────────────────────────────────────────────
 # tokens_used = input_tokens + cache_read + cache_creation (from current_usage)
 # context_window_size comes from the payload; fall back to 200000
+# Some models (GLM) may not provide context_window data - handle gracefully
 ctx_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
 cur=$(echo "$input" | jq -r '.context_window.current_usage // empty')
-if [ -n "$cur" ]; then
+
+# Debug: log input when context_window is missing
+if [ -z "$cur" ] || [ "$cur" = "null" ]; then
+  # Check if context_window object exists at all
+  has_ctx=$(echo "$input" | jq -r '.context_window // "MISSING"')
+  if [ "$has_ctx" = "MISSING" ]; then
+    # Model doesn't provide context_window data (GLM, local models, etc.)
+    context_field="context N/A"
+    tokens_used=$(echo "$input" | jq -r '
+      (.context_window.total_input_tokens // 0)
+      + (.context_window.total_output_tokens // 0)
+    ')
+  else
+    # context_window exists but current_usage is null/empty
+    ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
+    [ -z "$ctx_pct" ] || [ "$ctx_pct" = "null" ] && ctx_pct="0"
+    ctx_pct=$(printf "%.0f" "$ctx_pct")
+    tokens_used=$(echo "$input" | jq -r '
+      (.context_window.total_input_tokens // 0)
+      + (.context_window.total_output_tokens // 0)
+    ')
+    context_field="${ctx_pct}% context"
+  fi
+else
+  # Normal case: current_usage exists
   tokens_used=$(echo "$input" | jq -r '
     (.context_window.current_usage.input_tokens // 0)
     + (.context_window.current_usage.cache_read_input_tokens // 0)
     + (.context_window.current_usage.cache_creation_input_tokens // 0)
   ')
   ctx_pct=$(echo "$tokens_used $ctx_size" | awk '{printf "%.0f", ($1/$2)*100}')
-else
-  # Fall back to pre-calculated field
-  ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-  [ -z "$ctx_pct" ] && ctx_pct="0"
-  ctx_pct=$(printf "%.0f" "$ctx_pct")
-  tokens_used=$(echo "$input" | jq -r '
-    (.context_window.total_input_tokens // 0)
-    + (.context_window.total_output_tokens // 0)
-  ')
+  context_field="${ctx_pct}% context"
 fi
-context_field="${ctx_pct}% context"
 
 # ── 3. Total tokens used this session ────────────────────────────────────────
-total_in=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
-total_out=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
-total_tokens=$((total_in + total_out))
+# Handle missing context_window (GLM models, etc.)
+if [ "$context_field" = "context N/A" ]; then
+  # No context data available - tokens already computed above
+  total_tokens=$tokens_used
+else
+  # Normal case: read from context_window
+  total_in=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
+  total_out=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
+  total_tokens=$((total_in + total_out))
+fi
 # Format with thousands separator
 token_field=$(printf "%'d tokens" "$total_tokens")
 
