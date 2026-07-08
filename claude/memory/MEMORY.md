@@ -1,7 +1,0 @@
-- [Workflow stack](workflow-stack.md) — locked tool-per-job winners + what's disabled and why
-- [User profile](user-profile.md) — solo coder+designer, Thai, token-efficiency + caveman
-- [Memory SSOT rule](memory-ssot.md) — claude-mem only; never add a 2nd memory system
-- [Goal-loop](goal-loop.md) — semi-auto handoff at 80% context via ctx-guard hook
-- [Model routing](model-routing.md) — Opus/Fable plan+think (max effort), Sonnet writes
-- [Obsidian view layer](obsidian-view-layer.md) — Obsidian = graph view over memory folder, not a 2nd capture system
-- [Easby data topology](easby-data-topology.md) — 3-layer pipeline; Easby Studios = source, not a dup, do NOT delete

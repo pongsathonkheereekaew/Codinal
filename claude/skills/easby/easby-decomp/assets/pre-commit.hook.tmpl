@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-# Clean-room firewall pre-commit hook. Install in a PRODUCT repo:
-#   cp this -> <repo>/.git/hooks/pre-commit ; chmod +x <repo>/.git/hooks/pre-commit
-# Adjust SRC + GATE paths. Blocks any commit whose product source cites TAINTED material.
-GATE="$HOME/.claude/skills/easby/easby-decomp/assets/firewall_check.sh"
-SRC="Source"                                  # product source dir (relative to repo root)
-[ -x "$GATE" ] || { echo "firewall gate missing: $GATE"; exit 1; }
-bash "$GATE" "$SRC" || {
-  echo "commit blocked by clean-room firewall."; exit 1; }
