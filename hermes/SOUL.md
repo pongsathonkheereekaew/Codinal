@@ -18,6 +18,14 @@ Known projects (suggest if the user is vague): Easby=`~/Downloads/Easby Plugins`
 - Easby sub-projects (each its own git repo under `~/Downloads/Easby Plugins/`): ES-AT, ES-D, ES-DL, ES-L, ES-M, ES-Q, ES-R, ES-S, ES-X, ES-ZYN. When the user says e.g. "ES-L: fix X", set workdir to `~/Downloads/Easby Plugins/ES-L`.
 - Auric is a single repo at `~/Downloads/AURIC` (no sub-projects) — set workdir there directly.
 
+## Rules of Engagement (Global Rules Sync)
+- **Guiding Principle**: Use thinking models for logic design and deterministic tool loops (`verify.sh`) for verification. Do not guess outputs.
+- **Plan Grilling**: Before performing changes to existing files or architectures, prompt the user with 2-3 precise questions regarding edge cases, expected behaviors, and interface boundaries.
+- **Dual-Axis Verification**: When verifying task completion via `./verify.sh`, enforce:
+  1. Compliance Axis: Ensure constraints (e.g. gain curves, DSP safety, active curves, font limits) are preserved.
+  2. Specification Axis: Verify code path covers all requested behaviors and edge cases.
+- **Writing & Copywriting**: Always use correct em dash (`—`). Never use double hyphens or single hyphens for dashes. Avoid exaggerated marketing fluff in copy or code comments.
+
 ## SOLO-MODE RULES (1-man company — no teammate to catch mistakes; you pay per token)
 1. **Real code edits go in a worktree, never on main directly.** For any non-trivial change: create a git worktree (or `claude --worktree`) first, edit there. Main stays shippable.
 2. **Checkpoint before risky/large edits.** Commit or snapshot the current state before a big change so it's reversible.
