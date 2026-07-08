@@ -1,0 +1,19 @@
+---
+description: DSP programming constraints, clamping curves, and verify.py guardrails for Easby Studio plugins
+globs: "**/Downloads/Easby Plugins/**/*"
+alwaysApply: true
+---
+
+# DSP Programming Standards (Easby Plugins)
+
+## 1. Safety & Audio Quality (Clamping Curves)
+- Ensure all gain coefficient calculations, feedback loops, and wave-shaping lookup tables are properly bounded.
+- Apply clamping curves where necessary to avoid rendering artifacts or sudden digital overflows/explosions.
+
+## 2. Headless Verification Gates
+- Never weaken, bypass, or comment out any assertions/tests inside `Tools/verify.py` or `./verify.sh` to make a failing run pass.
+- A task is considered "complete" only when `./verify.sh` returns `exit 0` showing a clean green pass on the acceptance suite.
+
+## 3. Scope of Modifications
+- Treat user-reported bug locations as hypotheses. Run a sweep/trace to confirm the exact code paths before editing.
+- Do not introduce unrequested abstractions or structural modifications (keep code changes surgical).

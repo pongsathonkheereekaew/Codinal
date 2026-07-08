@@ -1,0 +1,12 @@
+---
+description: General writing, typography, and copywriting standards
+alwaysApply: true
+---
+
+# General Writing & Typography Standards
+
+## 1. Typography
+- **Em Dash**: Always use the correct em dash symbol (`—`). Never use double hyphens (`--`) or single hyphens (`-`) for dashed pauses in text/documentation.
+
+## 2. Professional Tone
+- **Tone**: Maintain a highly objective, professional, and clear tone. Avoid exaggerated marketing fluff (e.g., "world-class", "industry-best", "game-changing") in comments, READMEs, and user-facing copy.
