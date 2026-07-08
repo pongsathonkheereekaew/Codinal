@@ -1,4 +1,4 @@
-# my-workspace-settings (formerly: easby-workflow)
+# harness-flow (formerly: easby-workflow)
 
 โฟลเดอร์สำหรับเก็บไฟล์ตั้งค่า คอนฟิก และกฎการทำงานของ AI (SSOT) สำหรับ Cursor IDE และ Hermes Agent เพื่อย้ายเครื่องและตั้งค่าระบบได้ง่ายที่สุด
 
