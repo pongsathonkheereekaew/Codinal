@@ -17,3 +17,9 @@ alwaysApply: true
 ## 3. Scope of Modifications
 - Treat user-reported bug locations as hypotheses. Run a sweep/trace to confirm the exact code paths before editing.
 - Do not introduce unrequested abstractions or structural modifications (keep code changes surgical).
+
+## 4. Dual-Axis Verification & Self-Review (Concept from mattpocock/code-review)
+- **Verification Routine**: When testing any change via `./verify.sh`, enforce two review axes internally:
+  1. **Compliance Axis**: Ensure the code satisfies constraints (e.g., gain clamping, DSP boundary checks, font constraints).
+  2. **Specification Axis**: Double-check that the code fully covers the task description without skipping edge-case paths.
+
