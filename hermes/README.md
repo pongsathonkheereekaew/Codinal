@@ -28,21 +28,18 @@ it is written to `~/.zshrc` and the rendered plist only.
 ## Apply config fix on an existing machine
 If Telegram messages duplicate or sessions loop on the same old prompt:
 
-**One command (Terminal on Mac, or ask Hermes to run it):**
+**Terminal on Mac (repo must be cloned — private, no curl):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pongsathonkheereekaew/harness-flow/main/hermes/apply-fix.sh | bash
+cd ~/harness-flow && git pull && bash hermes/apply-fix.sh
+# installs hermes-apply-fix to ~/.local/bin when run via hermes/install.sh
 ```
 
-**Or from Telegram** (after the first apply adds `/fix-loop`):
+**Telegram** (after `hermes-apply-fix` is installed):
 ```
 /fix-loop
 ```
 
-Manual copy also works:
-```bash
-cd harness-flow && git pull
-bash hermes/apply-fix.sh
-```
+Or ask Hermes: `รัน hermes-apply-fix`
 Also install the Cursor bridge skill/plugin (one of):
 - `cursor-cloud-agents` skill (Cursor Cloud Agents API)
 - [cursor-hermes-plugin](https://github.com/fernandoabolafio/cursor-hermes-plugin)

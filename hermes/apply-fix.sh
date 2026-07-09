@@ -1,17 +1,48 @@
 #!/usr/bin/env bash
-# Apply the Hermes anti-loop fix from harness-flow (no git clone required).
-# Usage:  bash hermes/apply-fix.sh
-#    or:  curl -fsSL https://raw.githubusercontent.com/pongsathonkheereekaew/harness-flow/main/hermes/apply-fix.sh | bash
+# Apply the Hermes anti-loop fix from a local harness-flow clone (repo is private).
+# Usage:
+#   bash hermes/apply-fix.sh              # from repo, or auto-find clone
+#   hermes-apply-fix                      # after install.sh copies to ~/.local/bin
 set -euo pipefail
 
-REPO="${HARNESS_FLOW_REPO:-pongsathonkheereekaew/harness-flow}"
-BRANCH="${HARNESS_FLOW_BRANCH:-main}"
-BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}/hermes"
 OLD_USER="/Users/pongsathonkheeereekaew"
 HERMES_DIR="${HERMES_DIR:-$HOME/.hermes}"
 BACKUP_TS="$(date +%Y%m%d-%H%M%S)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> Hermes anti-loop fix (branch: ${BRANCH})"
+find_repo() {
+  local d
+  for d in \
+    "${HARNESS_FLOW_DIR:-}" \
+    "$SCRIPT_DIR/.." \
+    "$HOME/harness-flow" \
+    "$HOME/easby-workflow" \
+    "$HOME/claude-workflow" \
+    "$HOME/Downloads/harness-flow" \
+    "$HOME/Downloads/easby-workflow"; do
+    [ -n "$d" ] && [ -f "$d/hermes/config.yaml" ] && [ -f "$d/hermes/SOUL.md" ] && {
+      echo "$(cd "$d" && pwd)"
+      return 0
+    }
+  done
+  return 1
+}
+
+REPO_DIR="$(find_repo)" || {
+  echo "ERROR: harness-flow repo not found."
+  echo "  Clone: git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow"
+  echo "  Or set: HARNESS_FLOW_DIR=/path/to/harness-flow"
+  exit 1
+}
+
+echo "==> Hermes anti-loop fix"
+echo "   repo: $REPO_DIR"
+
+if [ -d "$REPO_DIR/.git" ]; then
+  git -C "$REPO_DIR" pull --ff-only origin main 2>/dev/null \
+    && echo "   git pull: ok" \
+    || echo "   git pull: skipped (offline or dirty)"
+fi
 
 mkdir -p "$HERMES_DIR"
 for f in config.yaml SOUL.md; do
@@ -21,11 +52,8 @@ for f in config.yaml SOUL.md; do
   fi
 done
 
-tmp="$(mktemp)"
-curl -fsSL "$BASE/config.yaml" -o "$tmp"
-sed "s#${OLD_USER}#${HOME}#g" "$tmp" > "$HERMES_DIR/config.yaml"
-rm -f "$tmp"
-curl -fsSL "$BASE/SOUL.md" -o "$HERMES_DIR/SOUL.md"
+sed "s#${OLD_USER}#${HOME}#g" "$REPO_DIR/hermes/config.yaml" > "$HERMES_DIR/config.yaml"
+cp "$REPO_DIR/hermes/SOUL.md" "$HERMES_DIR/SOUL.md"
 echo "   wrote config.yaml + SOUL.md -> $HERMES_DIR"
 
 UID_="$(id -u)"
@@ -37,10 +65,10 @@ if [ -f "$PLIST" ]; then
          launchctl bootstrap "gui/${UID_}" "$PLIST"
          echo "   restarted gateway (launchd bootstrap)"; }
 elif command -v hermes >/dev/null 2>&1; then
-  hermes gateway restart 2>/dev/null || hermes gateway run --replace &
+  hermes gateway restart 2>/dev/null || true
   echo "   restarted gateway (hermes CLI)"
 else
   echo "   ⚠ no launchd plist or hermes CLI — copy done; restart gateway manually"
 fi
 
-echo "==> Done. Send one test message in Telegram — expect one reply bubble per turn."
+echo "==> Done. Test: one Telegram message -> one reply bubble."

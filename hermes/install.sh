@@ -36,6 +36,7 @@ echo "## 3/5 helper scripts"
 mkdir -p "$HOME/.local/bin"
 install -m 0755 "$HERE/bin/hermes-handoff" "$HOME/.local/bin/hermes-handoff"
 install -m 0755 "$HERE/bin/project-ctx" "$HOME/.local/bin/project-ctx"
+install -m 0755 "$HERE/apply-fix.sh" "$HOME/.local/bin/hermes-apply-fix"
 
 echo "## 4/5 token + launchd"
 # token in shell rc (zsh/bash)
