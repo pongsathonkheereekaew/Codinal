@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "easby-mastering/MasterDecision.schema.json",
+  "$comment": "Shared blocks (compression_core, eq_move) are canonicalized in ../../schemas/dsp-blocks.md — keep ranges in sync; Mastering extends compression with type:broadband|multiband|parallel|dynamic_eq|none.",
+  "title": "MasterDecision",
+  "description": "Final-stage mastering decision: LUFS target, broad EQ, comp, optional saturation, limiter, M/S processing, dither, K-system reference, target format.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "target_lufs", "true_peak_ceiling", "eq_moves", "compression", "limiter", "stereo", "dither", "k_system_reference", "format", "confidence", "notes"],
+  "properties": {
+    "type": {"const": "MasterDecision"},
+    "target_lufs": {"type": "number", "minimum": -30, "maximum": 0},
+    "true_peak_ceiling": {"type": "number", "minimum": -3.0, "maximum": 0},
+    "eq_moves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["band", "freq_hz", "gain_db", "reason"],
+        "properties": {
+          "band": {"enum": ["high_pass", "low_pass", "low_shelf", "low_shelf_baxandall", "high_shelf", "high_shelf_baxandall", "peak_boost", "peak_cut", "dynamic_eq"]},
+          "freq_hz": {"type": "number", "minimum": 20, "maximum": 20000},
+          "gain_db": {"type": "number", "minimum": -12, "maximum": 12, "description": "Mastering EQ stays 0.5–2 dB typical, rarely >3 dB."},
+          "q": {"type": "number", "minimum": 0.1, "maximum": 20},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "compression": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ratio", "gain_reduction_db", "purpose"],
+      "properties": {
+        "type": {"enum": ["broadband", "multiband", "parallel", "dynamic_eq", "none"]},
+        "ratio": {"type": "number", "minimum": 1.0, "maximum": 100},
+        "attack_ms": {"type": "number", "minimum": 0, "maximum": 5000},
+        "release_ms": {"type": "number", "minimum": 1, "maximum": 5000},
+        "threshold_db": {"type": "number", "minimum": -60, "maximum": 0},
+        "gain_reduction_db": {"type": "number", "minimum": 0, "maximum": 12, "description": "Mastering GR typically 2–4 dB, rarely >6."},
+        "purpose": {"enum": ["glue", "control", "effect"]}
+      }
+    },
+    "multiband": {
+      "type": ["object", "null"],
+      "description": "Use rarely (Owsinski + Katz prefer dynamic EQ). null when not used."
+    },
+    "saturation_pre_limiter": {"type": "boolean"},
+    "limiter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ceiling_dbtp", "release_ms"],
+      "properties": {
+        "ceiling_dbtp": {"type": "number", "minimum": -3.0, "maximum": 0},
+        "release_ms": {"type": "number", "minimum": 1, "maximum": 5000},
+        "saturation_pre": {"type": "boolean"},
+        "manual_peak_rides": {"type": "boolean", "description": "True when DAW-automation gain rides used INSTEAD of plugin limiter for last 1–2 dB (Katz primary technique)."}
+      }
+    },
+    "stereo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mid_side", "width_adjustment"],
+      "properties": {
+        "mid_side": {"type": "boolean"},
+        "ms_eq_moves": {"type": "array"},
+        "ms_compression": {"type": ["object", "null"]},
+        "width_adjustment": {"enum": ["none", "narrow", "widen"]}
+      }
+    },
+    "dither": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apply", "type"],
+      "properties": {
+        "apply": {"type": "boolean"},
+        "type": {"enum": ["TPDF", "POW-R-1", "POW-R-3", "UV22HR", "none"]},
+        "auto_black": {"type": "boolean"},
+        "note": {"type": "string"}
+      }
+    },
+    "k_system_reference": {"enum": ["K-20", "K-14", "K-12", "K-0"]},
+    "format": {"enum": ["16bit/44100", "24bit/48000", "24bit/96000", "mp3/320", "atmos_adm_bwf", "vinyl_lacquer"]},
+    "album_level_notes": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "notes": {"type": "string", "minLength": 1}
+  }
+}

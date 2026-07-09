@@ -10,8 +10,16 @@ echo "1. Installing Global Cursor Rules..."
 mkdir -p ~/.cursor/rules
 cp -f .cursor/rules/*.mdc ~/.cursor/rules/ 2>/dev/null || echo "No custom rules to copy yet, skipping. (Rules will be managed directly in ~/.cursor/rules/)"
 
-# 2. คัดลอกและตั้งค่าของ Hermes
-echo "2. Setting up Hermes Agent configuration..."
+# 2. Claude Code workflow (skills, agents, hooks)
+echo "2. Installing Claude Code workflow..."
+if [ -d "claude/skills" ]; then
+    bash scripts/install-claude.sh
+else
+    echo "   ⚠ claude/skills missing — restore: git checkout 6aeca1e^ -- claude/"
+fi
+
+# 3. คัดลอกและตั้งค่าของ Hermes
+echo "3. Setting up Hermes Agent configuration..."
 mkdir -p ~/.hermes
 if [ -d "hermes" ]; then
     cp -rf hermes/* ~/.hermes/

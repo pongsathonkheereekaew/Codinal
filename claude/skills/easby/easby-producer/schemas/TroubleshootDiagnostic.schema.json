@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "easby-producer/TroubleshootDiagnostic.schema.json",
+  "title": "TroubleshootDiagnostic",
+  "description": "Emitted by Easby-producer when operator says 'loop doesn't sound right' without naming a target. Runs the 10-Q Owsinski diagnostic (O-Ch14, see 11-owsinski-producer-handbook.md §11) and reports the first failing question + variation direction.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "failed_at", "failed_check", "target", "next_decision_kind", "basis"],
+  "properties": {
+    "type": {"const": "TroubleshootDiagnostic"},
+    "failed_at": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Q# from the 10-Q diagnostic. Q1=parts known, Q2=same-way-every-time, Q3=dynamic breath, Q4=hold drive at low vol, Q5=starts/stops, Q6=tight unit, Q7=in tune, Q8=groove/pocket, Q9=tempo, Q10=lead range."
+    },
+    "failed_check": {"type": "string", "minLength": 1},
+    "target": {"type": "string", "minLength": 1, "description": "One-line variation direction."},
+    "next_decision_kind": {
+      "enum": ["VariationDecision", "SoundDesignTarget", "ArrangementDecision", "Refusal"],
+      "description": "Mapping: Q1/Q2 → Refusal (clarify intent); Q3 → VariationDecision (velocity/accent); Q4 → VariationDecision (transient-shape); Q5/Q6 → VariationDecision (unison-accent); Q7 → Refusal (defer to aubio); Q8 → VariationDecision (preserve pocket); Q9 → Refusal (defer to AnalysisCoordinator); Q10 → VariationDecision (register-shift)."
+    },
+    "basis": {"type": "string", "minLength": 1}
+  }
+}

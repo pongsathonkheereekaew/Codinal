@@ -1,0 +1,12 @@
+.claude/
+Producer/.claude/
+sessions/
+state/
+
+# Plugin manuals: raw source files stay local (like the source books); distilled cards (*.md) are tracked
+shared/plugins/manuals/*
+!shared/plugins/manuals/.gitkeep
+!shared/plugins/manuals/*.md
+
+.DS_Store
+**/.DS_Store
