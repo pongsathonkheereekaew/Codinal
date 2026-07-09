@@ -19,10 +19,22 @@ model_aliases:
     model: kr/claude-sonnet-4.5-thinking-agentic
     provider: custom
     base_url: http://127.0.0.1:20128/v1
+display:
+  # One bubble per turn — interim commentary + final reply looked like duplicate spam
+  # on Telegram, especially with Cursor Cloud Agent tool calls (Hermes #43835).
+  interim_assistant_messages: false
+  platforms:
+    telegram:
+      interim_assistant_messages: false
+      tool_progress: off
+      cleanup_progress: true
+
 platforms:
   telegram:
     extra:
-      status_indicator: true
+      # status_indicator + streaming edit transport can leave stale cursors and
+      # re-trigger delivery paths on Telegram (Hermes #7183, #51828).
+      status_indicator: false
       ignore_root_dm: true
       dm_topics:
         - chat_id: 7024035068
@@ -32,15 +44,12 @@ platforms:
               thread_id: 215
             - name: Coding
               icon_color: 9367192
-              skill: claude-code
               thread_id: 234
             - name: Easby
               icon_color: 16766590
-              skill: claude-code
               thread_id: 219
             - name: Auric
               icon_color: 2664282
-              skill: claude-code
               thread_id: 236
 onboarding:
   seen:
@@ -57,5 +66,8 @@ quick_commands:
     command: "/Users/pongsathonkheeereekaew/.local/bin/project-ctx auric"
 gateway:
   streaming:
-    enabled: true
-    transport: edit
+    # Off on mobile: edit-transport + flood control caused duplicate/reformulated
+    # replies and stale cursors (Hermes #8375, #51828). Re-enable after hermes
+    # upgrade if you want live previews again.
+    enabled: false
+    transport: auto
