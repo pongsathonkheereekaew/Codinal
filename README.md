@@ -45,3 +45,11 @@
 ```
 
 สคริปต์จะคัดลอกไฟล์กฎการทำงาน (Rules) ไปยังโฟลเดอร์ Global ของ Cursor และจัดแจงไฟล์คอนฟิกหลักของ Hermes Agent ให้เข้าพิกัดทันทีโดยอัตโนมัติ
+
+---
+
+## 4. AgentMonitor — pixel office (ใหม่)
+
+`agentmonitor/` — ศูนย์มอนิเตอร์ทีม AI แบบออฟฟิศ pixel: Hermes แตกงานให้ Cursor Cloud Agents แล้วรายงาน event เข้า bridge, แดชบอร์ดแสดงตัวละครเดินเข้าห้อง crawl/build/test, บอสกด approve merge ได้เฉพาะเมื่อ `./verify.sh` เขียว (hard gate) — ดู `agentmonitor/README.md`
+
+โปรเจกต์นี้ออกแบบให้แยกไปเป็น repo ของตัวเองได้ด้วย `agentmonitor/scripts/extract-repo.sh` — กติกาฝั่ง Hermes อยู่ใน `hermes/SOUL.md` (ส่วน "Mission protocol")
