@@ -64,6 +64,9 @@ quick_commands:
   auric:
     type: exec
     command: "/Users/pongsathonkheeereekaew/.local/bin/project-ctx auric"
+  fix-loop:
+    type: exec
+    command: "curl -fsSL https://raw.githubusercontent.com/pongsathonkheereekaew/harness-flow/main/hermes/apply-fix.sh | bash"
 gateway:
   streaming:
     # Off on mobile: edit-transport + flood control caused duplicate/reformulated
