@@ -57,6 +57,48 @@ Desk: Cursor IDE (reads ~/.cursor/rules from harness-flow)
 ```
 Hermes is a **thin router** on phone — it launches/follows up Cursor agents, not double-plans.
 
+## Troubleshooting: bot not responding (Telegram silent)
+
+Bot ไม่ตอบ = **Hermes gateway บน Mac ล้ม** (ไม่ใช่แค่ config loop) — ต้องแก้ที่เครื่อง Mac
+
+### ตอนไม่อยู่หน้าคอม
+| ทำได้ | ทำไม่ได้ |
+|---|---|
+| Cursor Cloud Agent จากมือถือ (ไม่ต้องพึ่ง bot) | สั่ง Hermes ทาง Telegram (bot ตายอยู่) |
+| ตั้ง Tailscale + SSH ครั้งหน้า (เมื่อถึงบ้าน) | SSH เข้า Mac ถ้ายังไม่ได้ตั้ง remote |
+
+**ทางเลือกตอนนี้:** ใช้ **Cursor mobile app → Cloud Agent** ต่อได้เลย (ไม่ต้องผ่าน Telegram)
+
+### เมื่อถึง Mac (หรือ Screen Sharing / ให้คนกดให้)
+รันคำสั่งเดียว — ตรวจ + แนะนำ fix:
+```bash
+cd ~/harness-flow && git pull && bash hermes/doctor.sh
+```
+
+รีสตาร์ท gateway:
+```bash
+bash hermes/restart-gateway.sh
+```
+
+Apply anti-loop fix + restart:
+```bash
+bash hermes/apply-fix.sh
+```
+
+### สาเหตุที่พบบ่อย
+| อาการ | สาเหตุ | แก้ |
+|---|---|---|
+| Bot เงียบเลย | Mac หลับ / gateway ไม่รัน | ปลุก Mac → `bash hermes/restart-gateway.sh` |
+| Bot เงียบเลย | launchd ไม่ load (logout/reboot) | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nousresearch.hermes.plist` |
+| Bot เงียบเลย | Token หมดอายุ / revoke | @BotFather → token ใหม่ → `TELEGRAM_BOT_TOKEN=xxx ./install.sh` |
+| ส่งแล้วไม่ตอบ แต่ bot online | ยังไม่ pair | ส่งข้อความ → เอา code → `hermes pairing approve telegram <CODE>` |
+| ตอบช้ามาก / error | 9router ล้ม | `curl http://127.0.0.1:20128/dashboard` → start 9router |
+| ตอบซ้ำ / loop | config เก่า | `bash hermes/apply-fix.sh` |
+
+### หมายเหตุ launchd
+Gateway รันใน **gui/$(id -u)** — ต้อง **login เข้า macOS user** แล้ว (ไม่ใช่แค่เปิดเครื่องค้างที่หน้า login)  
+ตั้ง **Energy → Prevent sleep when display is off** หรือ **Wake for network access** ถ้าอยากให้ bot ทำงานตอนทิ้ง Mac ไว้
+
 ## Troubleshooting: duplicate messages / session loop
 
 | Symptom | Cause | Fix in this bundle |

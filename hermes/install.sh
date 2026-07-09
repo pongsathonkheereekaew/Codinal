@@ -37,6 +37,8 @@ mkdir -p "$HOME/.local/bin"
 install -m 0755 "$HERE/bin/hermes-handoff" "$HOME/.local/bin/hermes-handoff"
 install -m 0755 "$HERE/bin/project-ctx" "$HOME/.local/bin/project-ctx"
 install -m 0755 "$HERE/apply-fix.sh" "$HOME/.local/bin/hermes-apply-fix"
+install -m 0755 "$HERE/doctor.sh" "$HOME/.local/bin/hermes-doctor"
+install -m 0755 "$HERE/restart-gateway.sh" "$HOME/.local/bin/hermes-restart"
 
 echo "## 4/5 token + launchd"
 # token in shell rc (zsh/bash)
