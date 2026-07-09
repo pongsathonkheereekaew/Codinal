@@ -1,0 +1,53 @@
+# AC-1 radare2 batch. Run:  r2 -i cmds.r2 ac1_arm64
+# Targeted analysis only (binary is 30MB / ~32k funcs — full aaaa is too slow).
+# We analyze on demand at the FFI entry points and follow calls into the real Rust DSP.
+#
+# DSP map (Rust `dynamics` crate, reached via _dynamics_* C FFI):
+#   detector  -> envelope follower (peak/RMS, dual-release)
+#   gain law  -> threshold/ratio/knee compression curve
+#   link      -> dynamics::link::LinkController  (signature N-order channel-link curve)
+#   maximizer -> RMS-aware limiter stage + auto-gain
+#   process   -> _dynamics_process_block_mono / _process_audio_*  (per-sample loop)
+
+e asm.bytes=false
+e asm.lines.wide=true
+e scr.color=2
+e asm.cmt.col=60
+
+# light pass: import symbols/flags without full graph analysis
+aa
+
+# --- the param->state mapping (how UI values reach the DSP) ---
+?e \n========== _dynamics_update_parameters ==========
+af @ sym._dynamics_update_parameters
+pdf @ sym._dynamics_update_parameters
+
+# --- the gain-computer / curve setters (constants live here) ---
+?e \n========== threshold / ratio / knee setters ==========
+af @ sym._dynamics_set_threshold_db
+pdf @ sym._dynamics_set_threshold_db
+af @ sym._dynamics_set_ratio
+pdf @ sym._dynamics_set_ratio
+af @ sym._dynamics_set_knee_db
+pdf @ sym._dynamics_set_knee_db
+
+# --- the LINK curve (the unique feature: link_n / sharpness / curve_mode) ---
+?e \n========== link curve setters ==========
+af @ sym._dynamics_set_link_curve_mode
+pdf @ sym._dynamics_set_link_curve_mode
+af @ sym._dynamics_set_link_sharpness
+pdf @ sym._dynamics_set_link_sharpness
+af @ sym._dynamics_set_link_n
+pdf @ sym._dynamics_set_link_n
+
+# --- the per-sample process loop: detector + gain + link applied here ---
+?e \n========== process_block_mono (per-sample DSP) ==========
+af @ sym._dynamics_process_block_mono
+# show callees -> these internal fns are the real math (LinkController::*, detector, gain computer)
+?e ---- callees (the internal Rust DSP to disasm next) ----
+afl @ sym._dynamics_process_block_mono
+axff @ sym._dynamics_process_block_mono
+pdf @ sym._dynamics_process_block_mono
+
+?e \n# To go deeper: pick an internal callee addr above, then:  af @ <addr> ; pdf @ <addr>
+?e # Float constants:  e search.in=io.sections.r ; / <ratio bytes>   or use rabin2 -z for strings.

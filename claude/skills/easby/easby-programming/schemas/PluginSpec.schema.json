@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "easby-programming/PluginSpec",
+  "title": "PluginSpec",
+  "description": "Full internal RE knowledge of one plugin. Holds CLEAN + REF facts. Stays inside easby-programming; NEVER handed to a product. Use BuildSpec for product emission.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "plugin", "category", "signal_chain", "stages"],
+  "properties": {
+    "type": { "const": "PluginSpec" },
+    "plugin": { "type": "string" },
+    "vendor": { "type": "string" },
+    "measured_on": {
+      "type": "object",
+      "description": "provenance/repro metadata — plugins change across versions; pin what was measured",
+      "properties": {
+        "plugin_version": { "type": "string" },
+        "sample_rate": { "type": "number" },
+        "tool": { "type": "string", "description": "harness/version used, e.g. ac1_ffi.py / pedalboard x.y" },
+        "date": { "type": "string" }
+      }
+    },
+    "category": {
+      "enum": ["limiter", "compressor_leveler", "multifx_dynamics", "saturation", "eq", "other"]
+    },
+    "signal_chain": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "provenance"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "provenance": { "enum": ["CLEAN", "REF"] },
+          "formula": { "type": "string" },
+          "constants": { "type": "object" },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id"],
+              "properties": {
+                "id": { "type": "string" },
+                "unit": { "type": "string", "description": "seconds|ms|dB|ratio|normalized|hz|linear" },
+                "range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+                "note": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "measurements": {
+      "type": "array",
+      "description": "Black-box probe results. provenance is always CLEAN.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["probe", "provenance"],
+        "properties": {
+          "probe": { "type": "string" },
+          "provenance": { "const": "CLEAN" },
+          "data": { "type": "object" }
+        }
+      }
+    },
+    "ffi": {
+      "type": "object",
+      "description": "Diagnostic/harness FFI signatures (REF-class — for measurement tooling, not product)."
+    }
+  }
+}

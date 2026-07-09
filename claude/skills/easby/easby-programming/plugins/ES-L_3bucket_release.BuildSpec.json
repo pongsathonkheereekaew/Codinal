@@ -1,0 +1,129 @@
+{
+  "type": "BuildSpec",
+  "target_product": "ES-L",
+  "source_plugin": "Weiss DS1-MK3 (architecture concept) + AL-1 (backward-compat oracle)",
+  "provenance_gate": "CLEAN_ONLY",
+  "feature": "3-bucket program-dependent release",
+  "summary": "Replaces AL-1's fixed linear-dB release with a 3-stage program-adaptive release: hold → fast (transient) → slow (sustained). Architecture from Weiss DS1 MK3 hardware (public literature). Lookahead/attack path UNCHANGED.",
+  "stages": [
+    {
+      "id": "rms_sustain_detector",
+      "description": "RMS averaging window over the input signal — detects sustained content vs short transients. Output: sustained_factor ∈ [0,1].",
+      "behavior_targets": [
+        {
+          "source": "black_box",
+          "description": "Single short transient (1ms click, −6 dBFS): sustained_factor must remain <0.1 throughout entire event",
+          "signal": "1ms impulse at −6 dBFS, silence before/after (100ms window)"
+        },
+        {
+          "source": "black_box",
+          "description": "Sustained loud tone (1kHz sine, 500ms, −6 dBFS): sustained_factor must rise to >0.9 after ≥Average_ms ms",
+          "signal": "500ms 1kHz sine at −6 dBFS, pre-silenced 100ms"
+        },
+        {
+          "source": "black_box",
+          "description": "Transition: sustained_factor changes smoothly (no hard step) when content transitions transient→sustained or vice versa",
+          "signal": "200ms noise burst followed by silence"
+        }
+      ],
+      "null_test": {
+        "oracle": "synthetic_analytical: compute expected RMS over window of length Average_samples directly from input signal",
+        "signal": "sweep: silence + click + silence + tone + silence at −6 dBFS",
+        "metric": "max_sample_err_db",
+        "threshold_db": -80,
+        "status": "pending"
+      },
+      "literature": [
+        "Zölzer DAFX 2nd ed. ch.4 — RMS detector (boxcar window: running-sum ring buffer Σx²/N)",
+        "Giannoulis et al. 2012 JAES — detector structures for dynamic range control"
+      ],
+      "implementation_note": "RMS detector = ring buffer of squared samples, sum maintained incrementally. Length = Average_ms × fs. Normalized to [0,1] against a reference level (e.g. threshold). sustained_factor = clamp((rms_db - (threshold - knee)) / knee, 0, 1). Compute on the PRE-gain-reduction signal, NOT the output."
+    },
+    {
+      "id": "hold_delay",
+      "description": "After peak GR is reached, hold GR constant for Release_Delay_ms before starting release. Prevents premature release on consecutive peaks.",
+      "behavior_targets": [
+        {
+          "source": "black_box",
+          "description": "After a peak event, GR must NOT decrease for exactly Release_Delay_ms samples, then begin releasing",
+          "signal": "single 1ms burst at −3 dBFS, silence after"
+        },
+        {
+          "source": "black_box",
+          "description": "If a new peak occurs during hold, hold timer resets (GR stays at new max, delay restarts)",
+          "signal": "two bursts 30ms apart at −3 dBFS"
+        }
+      ],
+      "null_test": {
+        "oracle": "synthetic_analytical: GR envelope must be flat for exactly floor(Release_Delay_ms × fs / 1000) samples after peak",
+        "signal": "single peak at −3 dBFS, 200ms silence",
+        "metric": "max_sample_err_db",
+        "threshold_db": -80,
+        "status": "pending"
+      },
+      "literature": [
+        "Bohn & Hearst 2000 — 'Dynamic Processors — Technology & Techniques', hold time in compressor design"
+      ],
+      "implementation_note": "Hold counter: decrement each sample after GR peak reached. Release only allowed when hold_counter == 0. On any new peak (GR increases), reset hold_counter = Release_Delay_samples. When Release_Delay = 0, stage is a no-op."
+    },
+    {
+      "id": "blended_release",
+      "description": "Dual one-pole release smoother: blend between fast τ and slow τ based on sustained_factor from stage 1. Smooth blend avoids discontinuity on bucket switch.",
+      "behavior_targets": [
+        {
+          "source": "black_box",
+          "description": "After single 1ms transient (sustained_factor→0): GR must release at approximately exp-decay with τ=Release_Fast_ms (±20%)",
+          "signal": "1ms burst at −6 dBFS, Release_Fast=20ms, Release_Slow=500ms, Average=50ms"
+        },
+        {
+          "source": "black_box",
+          "description": "After 500ms sustained tone (sustained_factor→1): GR must release at approximately exp-decay with τ=Release_Slow_ms (±20%)",
+          "signal": "500ms 1kHz at −6 dBFS, Release_Fast=20ms, Release_Slow=500ms, Average=50ms"
+        },
+        {
+          "source": "black_box",
+          "description": "Blend continuity: NO discontinuity or click when sustained_factor transitions. Release rate changes smoothly.",
+          "signal": "burst → silence → tone → silence sequence"
+        },
+        {
+          "source": "black_box",
+          "description": "Backward compat: when Release_Fast = Release_Slow = AL-1 release rate equivalent (0.272 dB/sample linear), output must null against AL-1 ≤−60 dB (linear-dB vs one-pole are different shapes — this tests parameter-space boundary only; full shape match NOT required)",
+          "signal": "single peak at −6 dBFS, all Release_Delay=0"
+        }
+      ],
+      "null_test": {
+        "oracle": "al1_sysid.py (AL-1 black-box harness): when Release_Fast=Release_Slow=AL1_equivalent, verify GR envelope shape matches within envelope tolerance; separate: analytical verification of τ=Release_Fast on isolated transient",
+        "signal": "step_burst + sustained_tone + transition sequence",
+        "metric": "curve_rmse_db",
+        "threshold_db": -20,
+        "status": "pending"
+      },
+      "literature": [
+        "Zölzer DAFX 2nd ed. ch.4 — one-pole smoother: a = 1 − exp(−1/(τ·fs)); asymmetric attack/release",
+        "Giannoulis et al. 2012 JAES — smooth-decoupled branch design for dynamic processors",
+        "McNally 1984 JAES — 'Dynamic Range Control of Digital Audio Signals' — dual-release concept"
+      ],
+      "implementation_note": "a_fast = 1 − exp(−1/(Release_Fast_ms × fs / 1000)); a_slow = 1 − exp(−1/(Release_Slow_ms × fs / 1000)); a_blend = lerp(a_fast, a_slow, sustained_factor). GR_db[n] = max(0, GR_db[n-1] × (1 − a_blend)). Note: one-pole in dB domain = exponential decay in dB = different shape from AL-1's linear-dB. ES-L voicing decision: use one-pole (smoother tail) OR keep linear-dB for fast bucket only (see voicing below).",
+      "voicing": "Option A (Weiss-style): both fast+slow as one-pole τ — smooth tails, classic mastering feel. Option B (Hybrid): fast bucket = linear-dB (AL-1 style, punchy), slow bucket = one-pole τ (smooth). Option A recommended for mastering context.",
+      "excluded_ref": [
+        "DS1-MK3 exact release curve shape (iLok blocked — not measured)",
+        "DS1-MK3 sustained_factor blend function (not measured — analytical design used instead)"
+      ]
+    }
+  ],
+  "params_added": [
+    { "name": "release_delay_ms",  "range_ms": [0, 200],  "default_ms": 10,  "note": "0 = off (no hold)" },
+    { "name": "release_fast_ms",   "range_ms": [5, 500],   "default_ms": 30,  "note": "transient recovery" },
+    { "name": "release_slow_ms",   "range_ms": [50, 5000], "default_ms": 300, "note": "sustained content" },
+    { "name": "average_ms",        "range_ms": [0, 100],   "default_ms": 40,  "note": "RMS window for bucket decision; 0 = always fast" }
+  ],
+  "params_removed": [
+    { "name": "release_rate_db_per_sample", "was": 0.272, "replaced_by": "release_fast_ms + release_slow_ms + sustained_factor blend" }
+  ],
+  "signal_chain_patch": "AL-1 unchanged EXCEPT: after 'GR_db = max(0, GR_prev − relRate)', replace relRate with: hold_delay stage → blended_release stage. Lookahead (PURE-MAX combine + phi slew) UNTOUCHED.",
+  "risks": [
+    "One-pole vs linear-dB shape: outputs will NOT null-test perfectly against AL-1 by design (different release shapes). This is intentional — ES-L sounds different from AL-1 with 3-bucket enabled.",
+    "sustained_factor computation adds latency of Average_ms to the 'feel' of bucket switching — set Average_ms ≥ 20ms to avoid jitter on bucket selection.",
+    "If Release_Slow >> Release_Fast and sustained_factor oscillates, GR can have visible low-frequency modulation. Guard: one-pole filter on sustained_factor itself (τ≈20ms)."
+  ]
+}
