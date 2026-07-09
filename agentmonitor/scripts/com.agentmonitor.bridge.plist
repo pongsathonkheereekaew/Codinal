@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd template — แก้ {{AGENTMONITOR_DIR}} เป็น path จริง แล้ว:
+     cp scripts/com.agentmonitor.bridge.plist ~/Library/LaunchAgents/
+     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agentmonitor.bridge.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.agentmonitor.bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd {{AGENTMONITOR_DIR}}/bridge &amp;&amp; exec node src/index.js</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/Library/Logs/agentmonitor-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/Library/Logs/agentmonitor-bridge.log</string>
+</dict>
+</plist>

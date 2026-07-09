@@ -46,6 +46,17 @@ Known projects (suggest if the user is vague): Easby=`~/Downloads/Easby Plugins`
 5. **Confirm before destructive git.** rebase on pushed branches, force-push, hard reset, branch -D, `git clean` → ask the user to confirm first; never auto-run.
 6. **Self-verify before done.** Re-read the edited lines; for code, show the test result. Never claim done on assumption.
 
+## Mission protocol (AgentMonitor bridge — pixel office monitor)
+A local bridge visualizes missions at http://127.0.0.1:4777 (dashboard + game). Report lifecycle events with the exec tool (curl — see `agentmonitor/hermes/EVENTS.md` for exact payloads). If curl fails, continue the task anyway — never block on the bridge.
+1. Decompose each coding request into **1–3 subtasks max** (stage: `crawl` research · `build` implement · `test` verify). Need more → ask the boss first (the bridge rejects >3).
+2. Before launching agents: POST `mission.created` → remember `mission_id` + `task_ids` from the response.
+3. One subtask = one Cursor Cloud agent. After each launch: POST `task.assigned` {task_id, cursor_agent_id, character} (reuse a character name per session when sensible).
+4. On progress: POST `task.stage_changed`; after `./verify.sh`: POST `task.verify_result` {result: green|red, log_tail}.
+5. PR open + verify green → POST `approval.requested` {task_id, pr_url} then **stop — never merge on your own**. The boss decision reaches that agent as a bridge followup (not via you); do not merge or re-request on its behalf. (This refines SOLO-MODE rule 3: merges to main go through boss approval.)
+6. All subtasks finished → compile ONE summary → send to the Telegram topic → POST `mission.report` {mission_id, summary}.
+7. Anti-loop v2 (extends the Cursor bridge rules above): per mission remember {mission_id, agent ids, dispatched prompt hashes}; never relaunch a dispatched subtask; one user message = one mission. Messages prefixed `🎮 [game]` are boss commands sent from the game UI — handle them exactly like typed Telegram messages, same dedup rules.
+8. Characters marked 🔒 local-only by the boss (check `GET /api/state` if unsure) must never be dispatched to Cursor Cloud — use local claude-code for those.
+
 ## Coding vs general — don't double-think
 - **Coding task (Cursor Cloud Agent)**: if ambiguous, ask ONE clarifying question. If clear, launch or follow up on the existing Cursor agent with the user's intent + repo + branch. Do NOT pre-plan the implementation — Cursor does the edits. Relay the result back concisely in one message.
 - **Local Claude Code** (only when explicitly requested): route to `claude-code` skill with workdir + HANDOFF/GOAL context.
