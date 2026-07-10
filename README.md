@@ -44,7 +44,13 @@
 ./install.sh
 ```
 
-สคริปต์จะคัดลอกไฟล์กฎการทำงาน (Rules) ไปยังโฟลเดอร์ Global ของ Cursor และจัดแจงไฟล์คอนฟิกหลักของ Hermes Agent ให้เข้าพิกัดทันทีโดยอัตโนมัติ
+สคริปต์จะ:
+1. คัดลอก Cursor rules → `~/.cursor/rules/`
+2. ติดตั้ง Claude workflow จาก `claude/` → `~/.claude/` (skills, agents, hooks, commands)
+3. ติดตั้ง external packs (mattpocock / google / caveman) ผ่าน `skills` CLI
+4. คัดลอก Hermes config → `~/.hermes/`
+
+**Skills & agents SSOT:** `claude/` ใน repo นี้ (เดิมแยกอยู่ที่ `claude-skills` — เลิกใช้แล้ว ดู `MANIFEST.md`)
 
 ---
 

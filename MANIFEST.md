@@ -1,6 +1,10 @@
 # MANIFEST — external dependencies
 
-`install.sh` copies all files into `~/.claude`. These extras must be installed by hand (one-time).
+**Source of truth for skills & agents:** this repo (`harness-flow/claude/`).
+
+> The old standalone repo `pongsathonkheereekaew/claude-skills` is **deprecated**. Use `bash install.sh` here instead.
+
+`install.sh` → `scripts/install-claude.sh` copies `claude/` into `~/.claude` and installs external packs.
 
 ## 1. CLIs + apps (Homebrew)
 
@@ -8,9 +12,10 @@
 brew install jq node            # jq = hooks; node = claude-mem runtime
 brew install rtk lowfat         # token compressors (rtk-ai). If tap needed: brew tap rtk-ai/tap
 brew install --cask obsidian    # optional — graph view over ~/.claude/projects/-/memory
+npm i -g skills                 # skills.sh CLI for third-party packs
 ```
 
-- **rtk** `0.38.0` + **lowfat** `0.6.8` power the `PreToolUse` Bash hook (`scripts/lowfat-rtk-router.sh`).
+- **rtk** + **lowfat** power the `PreToolUse` Bash hook (`scripts/lowfat-rtk-router.sh`).
   ⚠ If they are NOT on `PATH`, that hook errors on every Bash call — install them first, or delete the `PreToolUse` block from `~/.claude/settings.json`.
 
 ## 2. Plugins
@@ -31,28 +36,32 @@ brew install --cask obsidian    # optional — graph view over ~/.claude/project
 /plugin install ecc@ecc
 ```
 
-Deliberately NOT installed (disabled in the consolidation): `claude-code-harness`, `claudeclaw`.
+## 3. Skills layout
 
-## 3. Skills (bundled — no action)
+| Location | What |
+|---|---|
+| `claude/skills/` (this repo) | **Personal / bundled** — easby, graphify, insurance/nuiny, prompt-master, visual-plan, macos-design, ui-ux-pro-max, agents-sdk, scrutinize, … |
+| `~/.agents/skills/` | **Third-party** — mattpocock, google, caveman (via `skills add`) |
+| `~/.claude/skills/` | Runtime merge: personal copy + symlinks to `~/.agents/skills/` |
 
-`claude/skills/` is copied to `~/.claude/skills/` by the installer. Includes the design skills the router uses (**ui-ux-pro-max**, **macos-design**), the Cloudflare pack, and personal skills (insurance, nuiny, graphify, easby, prompt-master, visual-plan).
+Personal skills are your IP → **keep this repo PRIVATE.**
 
-> Some are third-party (Cloudflare pack, ui-ux-pro-max). Personal skills are your IP → **keep this repo PRIVATE.**
+## 4. External packs (auto via install.sh)
 
-## 4. matt pocock skills (optional)
-
-`to-prd`, `to-issues`, `handoff`, `zoom-out`, `triage`, `prototype` live in `~/.agents/skills/` (symlinked into `~/.claude/skills/`). Reinstall via their setup skill if you want them:
-
-```text
-# in claude: run the setup-matt-pocock-skills skill, or:
-npx @mattpocock/skills install
+```bash
+skills add mattpocock/skills -g -y --all -a claude-code
+skills add google/skills -g -y --all -a claude-code
+skills add JuliusBrussee/caveman -g -y -s caveman -a claude-code
 ```
+
+Then run `/setup-matt-pocock-skills` once in Claude/Cursor.
 
 ## Verify after install
 
 ```bash
+bash install.sh
 rtk --version && lowfat --version && jq --version
 ls ~/.claude/{CLAUDE.md,settings.json,scripts,commands,templates}
+ls ~/.claude/skills/{easby,graphify,nuiny,handoff}
 ls ~/.claude/projects/-/memory
-# launch claude → claude-mem should auto-recall; routing in CLAUDE.md active
 ```
