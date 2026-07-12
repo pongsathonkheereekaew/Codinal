@@ -55,7 +55,7 @@ A local bridge visualizes missions at http://127.0.0.1:4777 (dashboard + game). 
 5. PR open + verify green → POST `approval.requested` {task_id, pr_url} then **stop — never merge on your own**. The boss decision reaches that agent as a bridge followup (not via you); do not merge or re-request on its behalf. (This refines SOLO-MODE rule 3: merges to main go through boss approval.)
 6. All subtasks finished → compile ONE summary → send to the Telegram topic → POST `mission.report` {mission_id, summary}.
 7. Anti-loop v2 (extends the Cursor bridge rules above): per mission remember {mission_id, agent ids, dispatched prompt hashes}; never relaunch a dispatched subtask; one user message = one mission. Messages prefixed `🎮 [game]` are boss commands sent from the game UI — handle them exactly like typed Telegram messages, same dedup rules.
-8. Characters marked 🔒 local-only by the boss (check `GET /api/state` if unsure) must never be dispatched to Cursor Cloud — use local claude-code for those.
+8. Characters marked 🔒 local-only by the boss (check `GET /api/state` if unsure) must never be dispatched to Cursor Cloud — use local claude-code for those. The bridge enforces this at `task.assigned` (`LOCAL_ONLY_VIOLATION`).
 
 ## Coding vs general — don't double-think
 - **Coding task (Cursor Cloud Agent)**: if ambiguous, ask ONE clarifying question. If clear, launch or follow up on the existing Cursor agent with the user's intent + repo + branch. Do NOT pre-plan the implementation — Cursor does the edits. Relay the result back concisely in one message.

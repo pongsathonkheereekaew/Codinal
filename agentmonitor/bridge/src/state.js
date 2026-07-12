@@ -85,6 +85,7 @@ export function getState() {
       stall_minutes: c.stallMinutes,
       pause_minutes: c.pauseMinutes,
       max_agents: c.maxAgentsPerMission,
+      auth_required: Boolean(c.apiToken),
     },
   };
 }

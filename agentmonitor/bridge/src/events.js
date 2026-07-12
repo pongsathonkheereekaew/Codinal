@@ -63,6 +63,18 @@ export function handleEvent(evt) {
         }
       }
       const character = db.getOrCreateCharacter(evt.character);
+      // Q6 enforcement: ตัวละคร 🔒 local-only ห้ามผูก Cursor Cloud agent
+      if (evt.cursor_agent_id && character.locked_local_only) {
+        db.logEvent({
+          source, type: 'task.local_only_blocked', mission_id: task.mission_id, task_id: task.id,
+          payload: { character: character.name, cursor_agent_id: evt.cursor_agent_id },
+        });
+        notify(`🔒 "${character.name}" ถูกล็อก local-only — ห้ามส่งขึ้น Cursor Cloud (ใช้ claude-code ในเครื่อง)`, null);
+        return {
+          ok: false, status: 409, error: 'LOCAL_ONLY_VIOLATION',
+          detail: `character "${character.name}" is locked local-only — use local claude-code, not Cursor Cloud`,
+        };
+      }
       db.updateTask(task.id, {
         cursor_agent_id: evt.cursor_agent_id || task.cursor_agent_id,
         character_id: character.id,

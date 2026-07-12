@@ -60,8 +60,13 @@ Then run `/setup-matt-pocock-skills` once in Claude/Cursor.
 
 ```bash
 bash install.sh
+bash ./verify.sh
 rtk --version && lowfat --version && jq --version
 ls ~/.claude/{CLAUDE.md,settings.json,scripts,commands,templates}
 ls ~/.claude/skills/{easby,graphify,nuiny,handoff}
 ls ~/.claude/projects/-/memory
 ```
+
+## Agents index
+
+`agents-keep.txt` ที่ repo root = รายชื่อ agents ที่ใช้งานจริง (ที่เหลือใน `claude/agents/` เป็น optional packs)

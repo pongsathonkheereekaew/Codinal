@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import * as cursor from './cursor.js';
+import { fetchPrCiStatus } from './github.js';
 import { cfg } from './config.js';
 import { changed, notify } from './bus.js';
 import { maybeCloseMission } from './events.js';
@@ -37,6 +38,30 @@ function applyCursorStatus(task, agent) {
     maybeCloseMission(task.mission_id);
   }
   return true;
+}
+
+// verify truth ที่สอง: ถ้า Hermes รายงานเขียวแต่ GitHub CI แดง → downgrade เป็นแดง (ไม่ upgrade เอง)
+async function reconcileVerifyFromCi(task) {
+  if (!task.pr_url || task.verify_status !== 'green') return false;
+  const c = cfg();
+  try {
+    const ci = await fetchPrCiStatus(task.pr_url, { githubToken: c.githubToken, apiBase: c.githubApiBase });
+    if (ci.status !== 'red') return false;
+    db.updateTask(task.id, {
+      verify_status: 'red',
+      verify_red_count: (task.verify_red_count || 0) + 1,
+      last_event_at: db.now(),
+    });
+    db.logEvent({
+      source: 'poller', type: 'verify.ci_override', mission_id: task.mission_id, task_id: task.id,
+      payload: { pr_url: task.pr_url, ci_state: ci.state, sha: ci.sha, reason: 'github_ci_failure' },
+    });
+    notify(`🔴 CI แดงบน PR — downgrade verify ของ "${task.name}" (Hermes รายงานเขียวแต่ GitHub ไม่ผ่าน)`, null);
+    return true;
+  } catch (e) {
+    console.warn('[poller] ci check', task.id, e.message);
+    return false;
+  }
 }
 
 async function adoptUntracked() {
@@ -90,6 +115,14 @@ export async function tick() {
 
   if (apiOk && tickCount % 5 === 1) {
     try { await adoptUntracked(); } catch { apiOk = false; }
+  }
+
+  for (const task of db.listActiveAgentTasks()) {
+    if (task.pr_url && task.verify_status === 'green') {
+      try {
+        if (await reconcileVerifyFromCi(task)) anyChange = true;
+      } catch { /* ไม่ block poller */ }
+    }
   }
 
   db.setHealth('cursor_api', apiOk ? 'ok' : 'down');

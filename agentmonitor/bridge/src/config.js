@@ -25,6 +25,9 @@ export function cfg() {
     cursorApiBase: env.CURSOR_API_BASE || 'https://api.cursor.com',
     cursorApiKey: env.CURSOR_API_KEY || '',
 
+    githubToken: env.GITHUB_TOKEN || '',
+    githubApiBase: env.GITHUB_API_BASE || 'https://api.github.com',
+
     telegramBotToken: env.TELEGRAM_BOT_TOKEN || '',
     telegramChatId: env.TELEGRAM_CHAT_ID || '',
     topics,

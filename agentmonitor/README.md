@@ -66,7 +66,7 @@ npm start                   # → http://127.0.0.1:4777
 | เกิน 45 นาที | → auto pause + followup ให้ agent หยุด + ถามบอส | timers |
 | เครื่องดับ/หลับ | บูตกลับมา → แจ้ง Telegram พร้อมจำนวนงานค้าง | health bootCheck |
 | ลบตัวละคร (session) ได้ | memory หาย — git ยังเป็น truth | `POST /api/characters/:id/archive` |
-| 🔒 local-only ต่อตัวละคร | Hermes ห้ามส่งขึ้น Cursor Cloud (SOUL ข้อ 8) | flag ใน state + SOUL |
+| 🔒 local-only ต่อตัวละคร | Hermes ห้ามส่งขึ้น Cursor Cloud (SOUL ข้อ 8) | bridge block `task.assigned` → `LOCAL_ONLY_VIOLATION` |
 
 ## API (เกม Phaser ใน Phase 1 ใช้ชุดเดียวกันนี้)
 
@@ -81,12 +81,14 @@ npm start                   # → http://127.0.0.1:4777
 | `POST /api/restart-gateway` | รัน `harness-flow/hermes/restart-gateway.sh` |
 | `GET /api/events?limit=100` | ไล่ debug โปรโตคอลฝั่ง Hermes |
 
-Bind `127.0.0.1` โดย default — จะเปิดให้มือถือ (PWA ผ่าน Tailscale) ค่อยเปลี่ยน `BIND` + ตั้ง `API_TOKEN`
+Bind `127.0.0.1` โดย default — จะเปิดให้มือถือ (PWA ผ่าน Tailscale) ค่อยเปลี่ยน `BIND` + ตั้ง `API_TOKEN` (dashboard จะถาม token ครั้งแรกและเก็บใน localStorage)
+
+**Verify truth ที่สอง:** ตั้ง `GITHUB_TOKEN` แล้ว poller จะเช็ค CI บน PR — ถ้า Hermes รายงาน verify เขียวแต่ GitHub CI แดง bridge จะ downgrade เป็นแดงอัตโนมัติ
 
 ## ทดสอบ
 
 ```bash
-./verify.sh    # syntax check + test suite 13 ข้อ (rooms, meter, hard gate, spawn cap, E2E flow)
+./verify.sh    # syntax check + test suite 15 ข้อ (rooms, meter, hard gate, spawn cap, local-only, CI override, E2E flow)
 ```
 
 ## แผนตาม gate 7 วัน (ตกลงกันไว้: bridge + status จริง + verify gate + Telegram แจ้ง = 4/4 ไปต่อ)

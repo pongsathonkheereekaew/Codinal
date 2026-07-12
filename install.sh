@@ -28,9 +28,9 @@ else
     echo "No hermes directory found in repository."
 fi
 
-# 3. ให้คำแนะนำผู้ใช้
+# 4. ให้คำแนะนำผู้ใช้
 echo "=== Installation Completed Successfully! ==="
 echo "Next Steps:"
 echo "1. If you are on a new machine, make sure to install Cursor IDE and Hermes Agent."
 echo "2. Your global rules are now active at ~/.cursor/rules/"
-echo "3. Run your local project test suites with ./verify.sh"
+echo "3. Run ./verify.sh at repo root (includes AgentMonitor tests)"

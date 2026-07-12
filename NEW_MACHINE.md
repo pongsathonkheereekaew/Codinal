@@ -11,9 +11,11 @@ Ordered checklist. `🔧` = automated by install scripts. `✋` = manual (one-ti
 
 ## 1. Clone this repo
 ```bash
-git clone git@github.com:pongsathonkheereekaew/easby-workflow.git
-cd easby-workflow
+git clone git@github.com:pongsathonkheereekaew/harness-flow.git
+cd harness-flow
 ```
+
+> Repo เก่า `easby-workflow` / `claude-skills` เลิกใช้แล้ว — ใช้ `harness-flow` เป็น SSOT
 
 ## 2. 🔧 Desk side — Claude Code
 ```bash
@@ -61,6 +63,7 @@ git clone git@github.com:pongsathonkheereekaew/Auric.git ~/Downloads/AURIC
 ```
 
 ## 8. ✅ Verify
+- `bash ./verify.sh` ที่ root repo (รวม AgentMonitor tests)
 - `claude --version` works; `claude` runs
 - `curl http://127.0.0.1:20128/dashboard` answers
 - `hermes-handoff list` finds projects
