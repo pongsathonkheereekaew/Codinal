@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+video_page_debug.html
+fapnut_page_debug.html
+downloads/
+.DS_Store
