@@ -17,3 +17,7 @@ Do not enact the plan until I confirm we have reached a shared understanding.
 ## Optional: leave a paper trail
 
 When the user is in a real codebase (or asks to create ADRs / glossary / CONTEXT as you go), also follow the `domain-modeling` skill so resolved terms and decisions land in the project's domain docs. Skip this when there is no repo / no docs to update.
+
+## After a written plan
+
+If this session produces a written plan intended as final to ship, run `scrutinize` next before presenting it as done.

@@ -14,7 +14,7 @@ A **flow** is a path through the skills. Most paths run along one **main flow**,
 
 The route most work travels. You have an idea and want it built.
 
-1. **`/grilling`** — sharpen the idea by interview. In a real codebase it also drives **`/domain-modeling`** so terms/ADRs land in project docs; with no repo it stays a pure interview (no paper trail).
+1. **`/grilling`** — sharpen the idea by interview. In a real codebase it also drives **`/domain-modeling`** so terms/ADRs land in project docs; with no repo it stays a pure interview (no paper trail). Before presenting a plan as final, run **`/scrutinize`**.
 2. **Branch — can you settle every question in conversation?** If a question needs a runnable answer (state, business logic, a UI you have to see), detour through a prototype, bridged by **`/handoff`** in both directions (see Crossing sessions):
    - **`/handoff`** out, then open a fresh session against that file,
    - **`/prototype`** to answer the question with throwaway code,
