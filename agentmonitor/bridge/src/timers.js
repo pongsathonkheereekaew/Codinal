@@ -80,7 +80,9 @@ export async function cancelMission(missionId, via = 'game') {
 }
 
 export function start() {
-  timer = setInterval(() => tick().catch((e) => console.warn('[timers]', e.message)), 30000);
+  const c = cfg();
+  const ms = Math.max(10, c.pollSeconds) * 1000;
+  timer = setInterval(() => tick().catch((e) => console.warn('[timers]', e.message)), ms);
   timer.unref?.();
 }
 

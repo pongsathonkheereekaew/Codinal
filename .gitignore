@@ -3,3 +3,6 @@
 .DS_Store
 node_modules/
 .obsidian/workspace*.json
+
+# local e2e checkpoints
+test-e2e*.txt

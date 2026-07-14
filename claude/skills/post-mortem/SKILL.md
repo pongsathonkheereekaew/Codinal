@@ -1,6 +1,6 @@
 ---
 name: post-mortem
-description: Write the canonical engineering record of a fixed bug — root cause, mechanism, fix, validation, and how it slipped through. Engineer-audience, code identifiers welcome. Use after a debug session lands a fix, before closing the ticket. Trigger on /post-mortem, when the user says "write the post-mortem / postmortem / RCA / root cause analysis", "document this fix", "write up the root cause", "close out this bug with a writeup", or hands you a fixed-and-validated bug and asks for the writeup.
+description: Write the canonical engineering record of a fixed bug — root cause, mechanism, fix, validation, and how it slipped through. Default destination is docs/wiki/incidents/ when the project has a wiki SCHEMA. Use after a debug session lands a validated fix, before declaring done. Trigger on /post-mortem, after validated bug fixes when docs/wiki/SCHEMA.md exists, when the user says "write the post-mortem / postmortem / RCA / root cause analysis", "document this fix", "write up the root cause", "close out this bug with a writeup", or hands you a fixed-and-validated bug and asks for the writeup.
 ---
 
 # Post-mortem
@@ -14,7 +14,8 @@ For the up-the-org version of this same content, hand the finished post-mortem t
 - "/post-mortem"
 - "write the post-mortem / postmortem / RCA / root-cause analysis"
 - "document this fix" / "write up the root cause" / "close out this bug with a writeup"
-- After a debug session has clearly landed a fix, proactively offer to draft one.
+- After a debug session has clearly landed a **validated** fix — **required** (not optional) when `docs/wiki/SCHEMA.md` exists, before declaring the bug-fix done
+- After a debug session has clearly landed a fix and there is no project wiki — proactively offer to draft one
 
 ## When NOT to use
 
@@ -106,10 +107,59 @@ This is engineer-to-engineer. Different from `management-talk`:
 ## Output flow
 
 1. **Confirm all four required inputs are satisfied.** If any are missing, list them and stop. Do not draft.
-2. **Confirm where it goes** (default: JIRA comment on the source ticket). Other valid destinations: PR description, `docs/postmortems/<ticket>.md`, internal wiki page. The shape is the same — only the wrapping changes.
-3. **Produce the draft** as a single chat block.
-4. **Sign-off before posting.** If posting back to JIRA, show the exact ADF payload, wait for explicit *"post it"* / *"go ahead"* / *"yes,"* then `POST /rest/api/3/issue/<KEY>/comment`. Print-only output needs no approval.
+2. **Choose destination:**
+   - **Default when `docs/wiki/SCHEMA.md` exists:** write to git at `docs/wiki/incidents/<slug>.md` (auto-write; no human sign-off). Then update `docs/wiki/index.md` and append `docs/wiki/log.md`. If the fix reveals a reusable invariant, also upsert a short page under `docs/wiki/patterns/` or `docs/wiki/code-map/`.
+   - **Otherwise:** ask briefly — JIRA comment, PR description, or `docs/postmortems/<ticket>.md`. The prose shape is the same; only the wrapping changes.
+3. **Produce the record** (and write the wiki files when using the default wiki path).
+4. **Sign-off only for JIRA.** If posting to JIRA, show the exact ADF payload, wait for explicit *"post it"* / *"go ahead"* / *"yes,"* then `POST /rest/api/3/issue/<KEY>/comment`. Wiki / print-only / PR-description output needs no approval.
 5. **Offer the management-talk handoff:** *"Want a leadership-flavored version? I can hand this to `management-talk`."* Don't do it automatically.
+
+### Wiki page shape (`docs/wiki/incidents/<slug>.md`)
+
+```markdown
+---
+type: incident
+slug: <kebab-case-slug>
+status: fixed
+date_updated: YYYY-MM-DD
+commit: <sha-or-empty>
+pr: <url-or-empty>
+---
+
+# <short title>
+
+## Summary
+…
+
+## Symptom
+…
+
+## Root cause
+…
+
+## Why it produced the symptom
+…
+
+## Fix
+…
+
+## How it was found
+…
+
+## Why it slipped through
+…
+
+## Validation
+…
+
+## Action items
+…
+
+## Related
+- [[patterns/…]] or [[code-map/…]] if linked
+```
+
+Slug: short kebab-case from the symptom or root module (e.g. `tada-single-stream-scratch-race`).
 
 ## Worked example — Tada hang in dumbModel (JIRA-12345)
 
@@ -151,5 +201,6 @@ What this post-mortem does that the management-talk version didn't:
 - **Never strip code identifiers** in the engineering record. They are the index. The leadership reframe is `management-talk`'s job, not yours.
 - **Blameless.** Describe gaps and bugs, never people.
 - **State validation coverage honestly.** If you only tested one config, say so. Implying broader coverage is the failure mode that breeds repeat regressions.
-- **Get sign-off before posting to JIRA.** Print-only output needs no approval. Never post to non-JIRA destinations from this skill.
+- **Get sign-off before posting to JIRA.** Wiki writes and print-only output need no approval. Do not auto-commit; leave staging/commit to the user.
+- **When `docs/wiki/SCHEMA.md` exists, do not declare a validated non-trivial bug fix done until the incident page + index + log are written.**
 - **One iteration is normal, three is a smell.** If the user is still revising on the third pass, ask what specific section is wrong — don't keep tweaking blindly.

@@ -27,8 +27,39 @@ ZAI_TOKEN="${ZAI_TOKEN:-}"
 if [ -z "$ZAI_TOKEN" ] && [ -f "$DEST/settings.json" ]; then
   ZAI_TOKEN="$(python3 -c "import json;print(json.load(open('$DEST/settings.json')).get('env',{}).get('ANTHROPIC_AUTH_TOKEN',''))" 2>/dev/null || true)"
 fi
-sed -e "s|__HOME__|$HOME|g" -e "s|__ZAI_TOKEN__|${ZAI_TOKEN:-__ZAI_TOKEN__}|g" \
-  "$SRC/settings.template.json" > "$DEST/settings.json"
+
+render_settings() {
+  sed -e "s|__HOME__|$HOME|g" -e "s|__ZAI_TOKEN__|${ZAI_TOKEN:-__ZAI_TOKEN__}|g" \
+    "$SRC/settings.template.json"
+}
+
+if [ -f "$DEST/settings.json" ]; then
+  backup "$DEST/settings.json"
+  render_settings | python3 -c "
+import json, sys
+
+def merge_defaults(defaults, user):
+    out = {}
+    for k in set(defaults) | set(user):
+        if k in defaults and k in user and isinstance(defaults[k], dict) and isinstance(user[k], dict):
+            out[k] = merge_defaults(defaults[k], user[k])
+        elif k in user:
+            out[k] = user[k]
+        else:
+            out[k] = defaults[k]
+    return out
+
+template = json.load(sys.stdin)
+with open('$DEST/settings.json') as f:
+    user = json.load(f)
+json.dump(merge_defaults(template, user), sys.stdout, indent=2)
+print()
+" > "$DEST/settings.json.new"
+  mv "$DEST/settings.json.new" "$DEST/settings.json"
+  echo "   merged settings.json (user values preserved, new template keys added)"
+else
+  render_settings > "$DEST/settings.json"
+fi
 
 for f in "$SRC"/scripts/*; do
   b="$(basename "$f")"

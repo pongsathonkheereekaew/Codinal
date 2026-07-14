@@ -22,12 +22,37 @@ function toast(msg, ms = 3500) {
   el._t = setTimeout(() => { el.hidden = true; }, ms);
 }
 
-async function api(path, body) {
+const TOKEN_KEY = 'am_api_token';
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+
+function setToken(tok) {
+  if (tok) localStorage.setItem(TOKEN_KEY, tok);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(extra = {}) {
+  const h = { ...extra };
+  const tok = getToken();
+  if (tok) h.Authorization = `Bearer ${tok}`;
+  return h;
+}
+
+async function api(path, body, retried = false) {
   const res = await fetch(path, {
     method: body ? 'POST' : 'GET',
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers: authHeaders(body ? { 'Content-Type': 'application/json' } : {}),
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401 && !retried) {
+    const entered = prompt('Bridge ต้องการ API token (ค่า API_TOKEN ใน .env):');
+    if (entered?.trim()) {
+      setToken(entered.trim());
+      return api(path, body, true);
+    }
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || res.status), { data });
   return data;
@@ -193,7 +218,9 @@ $('#cmd-text').addEventListener('keydown', (e) => {
 // ---- live state: WS + fallback polling ----
 function connectWs() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  const tok = getToken();
+  const qs = tok ? `?token=${encodeURIComponent(tok)}` : '';
+  const ws = new WebSocket(`${proto}://${location.host}/ws${qs}`);
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'state.sync') { state = msg.state; render(); }

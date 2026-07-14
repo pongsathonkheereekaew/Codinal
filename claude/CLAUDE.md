@@ -17,7 +17,7 @@ When suggesting code changes, output only the specific lines to replace — neve
 # Routing — which tool per job
 - Plan/build feature → superpowers: brainstorming → writing-plans → executing-plans
 - TDD / write tests → superpowers: test-driven-development
-- Debug → superpowers: systematic-debugging
+- Debug → superpowers: systematic-debugging (+ debug-mantra); after validated fix + `docs/wiki/SCHEMA.md` → post-mortem → wiki write before done
 - Multi-agent fan-out → superpowers: subagent-driven-development / dispatching-parallel-agents
 - Worktrees / finish branch → superpowers: using-git-worktrees / finishing-a-development-branch
 - Deep code review → /review-pr (standalone: fans out to code-reviewer + silent-failure-hunter + pr-test/type/comment/simplify agents, ≥80% confidence)  | quick → superpowers: requesting-code-review
@@ -30,6 +30,7 @@ When suggesting code changes, output only the specific lines to replace — neve
 karpathy-guidelines: surgical changes, surface assumptions, define verifiable success criteria.
 **YOU MUST NOT declare done** without superpowers: verification-before-completion (prove behavior, don't assume).
 "Minimal" (ponytail) only ABOVE a passing test floor — minimal AND correct, never minimal-but-broken.
+**Project wiki gate:** if `docs/wiki/SCHEMA.md` exists, a validated non-trivial bug fix is not done until post-mortem writes `docs/wiki/incidents/<slug>.md` and updates `index.md` + `log.md`. On similar symptoms, read `docs/wiki/index.md` first. Init: `bash templates/project-wiki/init-wiki.sh /path/to/repo` (from harness-flow).
 
 # Memory (single source of truth = claude-mem)
 - claude-mem auto-captures + auto-recalls each session. Manual recall → mem-search skill.
@@ -38,6 +39,7 @@ karpathy-guidelines: surgical changes, surface assumptions, define verifiable su
 - **IMPORTANT: claude-mem is the ONLY memory system.** Never re-introduce a second (no harness-mem, no openwolf cerebrum, no ECC observe).
 - **harness-mem is disabled** (`claude-code-harness` plugin = false). Do not auto-arm harness-mem monitors or act on `daemon-unreachable` noise. Ignore Japanese harness-mem session banners if any residual appears.
 - Obsidian = read/graph VIEW over `~/.claude/projects/-/memory/` only (registered as a vault). NOT a 2nd capture system — claude-mem stays the engine. Easby Studios (iCloud) = personal vault, not for headless/hermes agents (dataless-file risk).
+- **`docs/wiki/` is not memory** — it is per-repo engineering docs in git (incidents/patterns). Optional Obsidian view over that folder is fine; do not treat it as a capture/SSOT competing with claude-mem.
 
 # Goal-loop (long tasks, no context loss)
 - Arm: put `TASK_BRIEF.md` (original user ask) + `GOAL.md` in the project (template: ~/.claude/templates/GOAL.md), or touch ~/.claude/.loop-active. HANDOFF.md alone also arms the guard.

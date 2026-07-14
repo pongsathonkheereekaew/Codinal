@@ -108,13 +108,24 @@ test('resume / cancel mission endpoints', async () => {
   assert.equal(state.missions.find((m) => m.id === mid).status, 'cancelled');
 });
 
-test('characters — archive + local-only toggle (Q5/Q6)', async () => {
+test('characters — archive + local-only toggle + assign block (Q5/Q6)', async () => {
   const state = (await call('GET', '/api/state')).data;
   const bee = state.characters.find((c) => c.name === 'Bee');
   assert.ok(bee);
   await call('POST', `/api/characters/${bee.id}/local-only`, { value: true });
   let after = (await call('GET', '/api/state')).data;
   assert.equal(after.characters.find((c) => c.id === bee.id).locked_local_only, 1);
+
+  const created = await call('POST', '/api/events', {
+    type: 'mission.created', mission: { title: 'locked-char', tasks: [{ name: 'secret' }] },
+  });
+  const taskId = created.data.task_ids[0].task_id;
+  const blocked = await call('POST', '/api/events', {
+    type: 'task.assigned', task_id: taskId, cursor_agent_id: 'blocked-agent', character: 'Bee',
+  });
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.data.error, 'LOCAL_ONLY_VIOLATION');
+
   await call('POST', `/api/characters/${bee.id}/archive`, {});
   after = (await call('GET', '/api/state')).data;
   assert.equal(after.characters.find((c) => c.id === bee.id), undefined);

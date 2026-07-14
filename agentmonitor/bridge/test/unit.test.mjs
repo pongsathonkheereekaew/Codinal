@@ -21,6 +21,12 @@ const fake = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url.startsWith('/v0/agents')) {
       return res.end(JSON.stringify({ agents: [] }));
     }
+    if (req.method === 'GET' && /\/repos\/.+\/pulls\//.test(req.url)) {
+      return res.end(JSON.stringify({ head: { sha: 'abc123deadbeef' } }));
+    }
+    if (req.method === 'GET' && /\/repos\/.+\/commits\//.test(req.url)) {
+      return res.end(JSON.stringify({ state: 'failure' }));
+    }
     res.end(JSON.stringify({}));
   });
 });
@@ -144,6 +150,42 @@ test('spawn cap — agent ตัวที่ 4 ใน mission เดียวถ
   const r = handleEvent({ type: 'task.assigned', task_id: extra.id, cursor_agent_id: 'sp-4' });
   assert.equal(r.ok, false);
   assert.equal(r.error, 'SPAWN_CAP');
+});
+
+test('task.assigned — local-only character ห้ามผูก Cursor agent', () => {
+  const created = handleEvent({
+    type: 'mission.created',
+    mission: { title: 'insurance-local', tasks: [{ name: 'premium-calc' }] },
+  });
+  const taskId = created.task_ids[0].task_id;
+  handleEvent({ type: 'task.assigned', task_id: taskId, character: 'Nuiny' });
+  const nuiny = db.listCharacters().find((c) => c.name === 'Nuiny');
+  db.updateCharacter(nuiny.id, { locked_local_only: 1 });
+  const r = handleEvent({
+    type: 'task.assigned', task_id: taskId, cursor_agent_id: 'cloud-agent-99', character: 'Nuiny',
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'LOCAL_ONLY_VIOLATION');
+  assert.equal(db.getTask(taskId).cursor_agent_id, null);
+});
+
+test('parsePrUrl + poller CI override — Hermes เขียวแต่ GitHub CI แดง → downgrade', async () => {
+  const { parsePrUrl } = await import('../src/github.js');
+  assert.deepEqual(parsePrUrl('https://github.com/acme/repo/pull/42'), { owner: 'acme', repo: 'repo', pullNumber: 42 });
+
+  const created = handleEvent({
+    type: 'mission.created',
+    mission: { title: 'ci-check', tasks: [{ name: 'impl' }] },
+  });
+  const taskId = created.task_ids[0].task_id;
+  handleEvent({ type: 'task.assigned', task_id: taskId, cursor_agent_id: 'agent-ci' });
+  handleEvent({ type: 'task.verify_result', task_id: taskId, result: 'green' });
+  db.updateTask(taskId, { pr_url: 'https://github.com/acme/repo/pull/1' });
+
+  process.env.GITHUB_API_BASE = `http://127.0.0.1:${fake.address().port}`;
+  const { tick } = await import('../src/poller.js');
+  await tick();
+  assert.equal(db.getTask(taskId).verify_status, 'red');
 });
 
 test('reject → agent กลับไปแก้ (build) + followup มี note', async () => {

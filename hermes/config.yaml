@@ -57,6 +57,12 @@ onboarding:
     busy_input_prompt: true
 approvals:
   destructive_slash_confirm: false
+
+# Shared harness skills (SSOT: ~/.agents/skills). Hermes-native skills stay under ~/.hermes/skills/.
+skills:
+  external_dirs:
+    - ~/.agents/skills
+
 quick_commands:
   easby:
     type: exec
