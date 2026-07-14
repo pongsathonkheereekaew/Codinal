@@ -1,45 +1,43 @@
-# New machine — Agent Harness only
+# เครื่องใหม่ — Agent Harness อย่างเดียว
 
-Clean coding setup. **No Telegram.** Office stack is optional.
+ตั้งค่าเขียนโค้ดล้วนๆ **ไม่ต้องมี Telegram** ออฟฟิศเป็นทางเลือก
 
-## 0. Prereqs
+## 0. ต้องมีก่อน
 - macOS, Homebrew, `git`
-- Coding agents you use (Cursor / Claude Code / Codex / …)
+- coding agent ที่ใช้ (Cursor / Claude Code / Codex / …)
+- SSH เข้า GitHub (หรือวิธี clone private repo ได้)
 
-## 1. Clone + install harness-flow
+## 1. คำสั่งเดียว — clone + install + doctor
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow
-cd ~/harness-flow
-./install.sh
-~/.agents/scripts/harness doctor
+git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && cd ~/harness-flow && ./install.sh && ~/.agents/scripts/harness doctor
 ```
 
-This installs into `~/.agents/`: `AGENTS.md`, `skills/`, `standards/`, `commands/`, `scripts/`, plus adapter symlinks.
+ได้ที่ `~/.agents/`: `AGENTS.md`, `skills/`, `standards/`, `commands/`, `scripts/` + symlink adapter
 
-## 2. Optional — AgentMonitor + Hermes (office)
+อัปเดตภายหลัง: `cd ~/harness-flow && git pull && ./install.sh`
+
+## 2. ทางเลือก — AgentMonitor + Hermes (ออฟฟิศ)
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/agentmonitor.git ~/agentmonitor
-cd ~/agentmonitor
-./install.sh
+git clone git@github.com:pongsathonkheereekaew/agentmonitor.git ~/agentmonitor && cd ~/agentmonitor && ./install.sh
 ```
 
 - Pixel office: http://127.0.0.1:4777/
-- Hermes kit → `~/.hermes` with `skills.external_dirs: [~/.agents/skills]`
-- 9router on `:20128` if your models use it
+- Hermes kit → `~/.hermes` พร้อม `skills.external_dirs: [~/.agents/skills]`
+- 9router ที่ `:20128` ถ้าโมเดลใช้
 
-## 3. Verify
+## 3. ตรวจว่าติดแล้ว
 
 ```bash
 cd ~/harness-flow && bash ./verify.sh
 ~/.agents/scripts/harness doctor
 ```
 
-## Daily flow
+## ใช้ประจำวัน
 
-| Job | Where |
+| งาน | ที่ไหน |
 |-----|--------|
-| Policy / skills | `~/harness-flow` → `./install.sh` (or edit `~/.agents` + `./backup.sh`) |
-| Desk coding | Cursor / Claude with `~/.agents` loaded |
-| Office missions | `agentmonitor` repo (optional) |
+| นโยบาย / สกิล | `~/harness-flow` → `./install.sh` (หรือแก้ `~/.agents` แล้ว `./backup.sh`) |
+| เขียนโค้ดที่โต๊ะ | Cursor / Claude ที่โหลด `~/.agents` |
+| มิชชันออฟฟิศ | repo `agentmonitor` (ทางเลือก) |

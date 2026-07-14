@@ -1,106 +1,112 @@
 # harness-flow — Agent Harness
 
-One **lingua franca** + shared skills for every coding agent. Install once → live SSOT at `~/.agents/`.
+**นโยบาย + สกิลร่วม** สำหรับทุก coding agent ติดตั้งครั้งเดียว → SSOT สดที่ `~/.agents/`
 
-| Term | Meaning |
-|------|---------|
-| **Agent Harness** | The method: thin always-on policy + skills on demand |
-| **`AGENTS.md`** | Shared policy (filename stays — keep it short) |
-| **`~/.agents/`** | Live SSOT after `./install.sh` |
-| **harness-flow** | This repo — git SSOT for that content |
+| คำ | ความหมาย |
+|----|----------|
+| **Agent Harness** | วิธีทำงาน: นโยบายสั้นที่โหลดเสมอ + สกิลเรียกเมื่อใช้ |
+| **`AGENTS.md`** | นโยบายร่วม (เก็บชื่อไฟล์นี้ — ให้สั้น) |
+| **`~/.agents/`** | SSOT สดหลังรัน `./install.sh` |
+| **harness-flow** | repo นี้ — git SSOT ของเนื้อหานั้น |
 
-Office / Hermes lives in a separate repo: [`agentmonitor`](https://github.com/pongsathonkheereekaew/agentmonitor). Not required for a clean coding setup.
+ออฟฟิศ / Hermes อยู่ repo แยก: [`agentmonitor`](https://github.com/pongsathonkheereekaew/agentmonitor) — ไม่จำเป็นสำหรับเครื่องเขียนโค้ดล้วนๆ
 
 ```text
 tool safety → tool settings
   → ~/.agents/AGENTS.md
-  → tool adapter (CLAUDE.md, Cursor rules, …)
-  → project ./AGENTS.md or ./CLAUDE.md
-  → invoked skill → user message → model
+  → adapter ของเครื่องมือ (CLAUDE.md, Cursor rules, …)
+  → project ./AGENTS.md หรือ ./CLAUDE.md
+  → skill ที่เรียก → ข้อความ user → model
 ```
 
-## What you get
+## ติดตั้งเครื่องใหม่ (คำสั่งเดียว)
 
-- **Thin always-on policy** — classify work, skill router, verify-before-done
-- **~100 Agent Skills** under `skills/` (Matt Pocock flows, domain packs, …)
-- **Standards + slash commands** synced into adapters
-- **Adapters** for Claude Code, Cursor, Codex, Gemini, OpenCode, ZCode, Openclaw
-- **Default engineering flow** (in `AGENTS.md`): fog → `wayfinder`; design/plan → `grilling`; clear build → `implement`/`tdd`; before a **final** plan/spec → `scrutinize`
+ต้องมี `git` (macOS แนะนำ Homebrew) และสิทธิ์ clone repo นี้
 
-Full design notes: [`docs/DESIGN-thinking-flow.md`](docs/DESIGN-thinking-flow.md) · eval: [`docs/eval/thinking-flow/`](docs/eval/thinking-flow/) · naming: [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md)
+```bash
+git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && cd ~/harness-flow && ./install.sh && ~/.agents/scripts/harness doctor
+```
 
-## Layout
+จบแล้วได้ `~/.agents/` (นโยบาย, skills, standards, commands, scripts) + symlink ไป Claude / Cursor / Codex / Gemini ฯลฯ
 
-| Path | Role |
-|------|------|
-| [`AGENTS.md`](AGENTS.md) | Lingua franca (edit here, then install) |
-| [`skills/`](skills/) | Shared Agent Skills (`SKILL.md`) |
-| [`standards/`](standards/) | Rule bodies → Cursor `.mdc` via `harness rules` |
-| [`commands/`](commands/) | Shared slash commands |
+อัปเดตภายหลัง:
+
+```bash
+cd ~/harness-flow && git pull && ./install.sh
+```
+
+เช็กลิสต์ละเอียด: [`NEW_MACHINE.md`](NEW_MACHINE.md)
+
+## ได้อะไรบ้าง
+
+- **นโยบายสั้นเสมอ** — classify งาน, ชี้ skill, verify ก่อนบอกทำเสร็จ
+- **สกิล Agent Skills ~100+** ใต้ `skills/` (Matt Pocock, แพ็กโดเมน, …)
+- **standards + slash commands** ซิงก์เข้า adapter
+- **flow เริ่มต้น** (ใน `AGENTS.md`): งานมืด/ใหญ่ → `wayfinder`; ออกแบบ/แพลน → `grilling`; สร้างชัด → `implement`/`tdd`; ก่อนส่งแพลน/สเปก**สุดท้าย** → `scrutinize`
+
+รายละเอียดดีไซน์: [`docs/DESIGN-thinking-flow.md`](docs/DESIGN-thinking-flow.md) · eval: [`docs/eval/thinking-flow/`](docs/eval/thinking-flow/) · ชื่อเรียก: [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md)
+
+## โครง repo
+
+| พาธ | บทบาท |
+|-----|--------|
+| [`AGENTS.md`](AGENTS.md) | lingua franca (แก้ที่นี่ แล้ว install) |
+| [`skills/`](skills/) | Agent Skills (`SKILL.md`) |
+| [`standards/`](standards/) | เนื้อกฎ → Cursor `.mdc` ผ่าน `harness rules` |
+| [`commands/`](commands/) | slash commands ร่วม |
 | [`scripts/`](scripts/) | `harness` — `sync` / `rules` / `doctor` |
-| [`adapters/`](adapters/) | Thin tool snippets (e.g. Claude) |
-| [`install.sh`](install.sh) | Repo → `~/.agents` (+ adapter links) |
-| [`backup.sh`](backup.sh) | Live `~/.agents` → this repo |
-| [`verify.sh`](verify.sh) | Smoke checks |
-| [`NEW_MACHINE.md`](NEW_MACHINE.md) | Fresh-machine checklist |
+| [`adapters/`](adapters/) | snippet บางๆ ต่อเครื่องมือ |
+| [`install.sh`](install.sh) | repo → `~/.agents` (+ลิงก์ adapter) |
+| [`backup.sh`](backup.sh) | สด `~/.agents` → repo นี้ |
+| [`verify.sh`](verify.sh) | ตรวจคร่าวๆ |
 
-## Clean setup
+## ใช้ประจำวัน
+
+**แก้ใน git นี้ แล้ว install** (repo คือ SSOT):
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/harness-flow.git
-cd harness-flow
+# แก้ AGENTS.md / skills / standards / commands
 ./install.sh
 ~/.agents/scripts/harness doctor
 ```
 
-## Day to day
+`install.sh` คัดลอกนโยบาย/skills/standards/commands/scripts เข้า `~/.agents` สร้าง Cursor rules และ symlink สกิล ถ้า `AGENTS.md` สดต่างจาก git จะสำรองเป็น `~/.agents/AGENTS.md.bak.<timestamp>` แล้วค่อยทับ
 
-**Edit in this repo, then install** (git is SSOT):
-
-```bash
-# edit AGENTS.md / skills / standards / commands
-./install.sh
-~/.agents/scripts/harness doctor
-```
-
-`install.sh` copies policy/skills/standards/commands/scripts into `~/.agents`, regenerates Cursor rules, and symlinks skill adapters. If live `AGENTS.md` differs, it is backed up to `~/.agents/AGENTS.md.bak.<timestamp>` then replaced from git.
-
-If you edited live `~/.agents` instead, pull it back before the next install overwrites:
+ถ้าแก้ที่ `~/.agents` โดยตรง ให้ดึงกลับก่อน install ครั้งถัดไปทับ:
 
 ```bash
 ./backup.sh
-git status   # review + commit in this repo
-./install.sh # optional re-sync adapters
+git status   # ตรวจแล้ว commit ใน repo นี้
+./install.sh # ซิงก์ adapter อีกครั้งถ้าต้องการ
 ```
 
-CLI on the machine after install:
+CLI หลังติดตั้ง:
 
 ```bash
-~/.agents/scripts/harness sync    # skill symlink adapters
+~/.agents/scripts/harness sync    # symlink สกิลไป adapter
 ~/.agents/scripts/harness rules   # standards → Cursor rules
-~/.agents/scripts/harness doctor  # health check
+~/.agents/scripts/harness doctor  # ตรวจสุขภาพ
 ```
 
-## Optional: AgentMonitor + Hermes
+## ทางเลือก: AgentMonitor + Hermes
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/agentmonitor.git
-cd agentmonitor && ./install.sh   # SKIP_TELEGRAM=1 is fine
+git clone git@github.com:pongsathonkheereekaew/agentmonitor.git ~/agentmonitor && cd ~/agentmonitor && ./install.sh
 ```
 
 - Pixel office: http://127.0.0.1:4777
-- Hermes reads skills via `skills.external_dirs → ~/.agents/skills`
-- Telegram is not required for a clean setup
+- Hermes อ่านสกิลผ่าน `skills.external_dirs → ~/.agents/skills`
+- ไม่บังคับ Telegram
 
-## What not to put here
+## สิ่งที่ไม่ใส่ใน repo นี้
 
-| Keep out of harness-flow | Where it belongs |
-|--------------------------|------------------|
+| อย่าใส่ใน harness-flow | เก็บที่ไหน |
+|------------------------|-----------|
 | Hermes identity / gateway / SOUL | `agentmonitor` → `~/.hermes` |
-| Claude hooks, claude-mem, RTK hooks | `~/.claude` only |
-| Secrets, tokens, API keys | never in this repo |
+| Claude hooks, claude-mem, RTK hooks | `~/.claude` เท่านั้น |
+| secrets / tokens / API keys | ห้าม commit |
 
-## Verify
+## ตรวจว่าติดแล้ว
 
 ```bash
 bash ./verify.sh
