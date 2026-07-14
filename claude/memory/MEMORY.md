@@ -4,4 +4,5 @@
 - [Goal-loop](goal-loop.md) — semi-auto handoff at 80% context via ctx-guard hook
 - [Model routing](model-routing.md) — Opus/Fable plan+think (max effort), Sonnet writes
 - [Obsidian view layer](obsidian-view-layer.md) — Obsidian = graph view over memory folder, not a 2nd capture system
+- [Project wiki](project-wiki.md) — per-repo docs/wiki engineering lessons in git; not a 2nd memory SSOT
 - [Easby data topology](easby-data-topology.md) — 3-layer pipeline; Easby Studios = source, not a dup, do NOT delete

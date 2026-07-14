@@ -73,3 +73,4 @@ Maintain a running **ledger** of every experiment in this session. Each entry: w
   - Do not declare a hypothesis correct until #4 confirms it against every prior breadcrumb.
 - If you catch yourself proposing a fix without a reliable repro, stop and return to step 1.
 - The mantra is a constraint **you** carry through the session — not advice to deliver back to the user.
+- **After the fix is validated** (repro green / `./verify.sh` or equivalent proves it) and the four post-mortem inputs are met: if `docs/wiki/SCHEMA.md` exists, run the **post-mortem** skill and write `docs/wiki/incidents/<slug>.md` + update `index.md` / `log.md` **before** declaring done. Skip trivial typo/one-liner fixes. Project wiki is engineering docs in git — not a second memory SSOT (claude-mem stays memory).

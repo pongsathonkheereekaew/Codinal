@@ -1,0 +1,29 @@
+---
+description: Per-repo engineering wiki gate — after validated bug fixes, write docs/wiki before done
+globs: docs/wiki/**
+alwaysApply: true
+---
+
+# Project Wiki (engineering lessons)
+
+When this repo contains `docs/wiki/SCHEMA.md`, treat that folder as the durable record of bugs fixed and invariants learned.
+
+## Done gate (bug fixes)
+
+After a **validated** non-trivial fix (repro known, root cause known, fix identified, verification passed):
+
+1. Write `docs/wiki/incidents/<slug>.md` via the post-mortem skill shape.
+2. Update `docs/wiki/index.md` and append `docs/wiki/log.md`.
+3. Only then declare the bug-fix task done.
+
+Skip typo / obvious one-liner fixes.
+
+## Query first
+
+On recurring-looking symptoms, read `docs/wiki/index.md` and matching incident/pattern pages before rediscovering from scratch.
+
+## Boundaries
+
+- Do not edit `docs/wiki/raw/` after it is committed (immutable evidence).
+- This wiki is **not** a second memory system — claude-mem remains session memory SSOT.
+- Do not auto-commit wiki pages unless the user asks.
