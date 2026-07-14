@@ -2,7 +2,7 @@
 
 | Path | Purpose |
 |------|---------|
-| [`agents-harness/`](agents-harness/) | Minimal portable starter (mirrors repo root; prefer cloning harness-flow) |
+| [`agents-harness/`](agents-harness/) | Stub only — delegates to repo-root `./install.sh` (no second AGENTS.md) |
 | [`project-wiki/`](project-wiki/) | Per-repo engineering wiki scaffold |
 
-Root of **harness-flow** is the full Agent Harness (AGENTS.md + skills + scripts). Use `./install.sh` there.
+Use the **repo root** as Agent Harness (`AGENTS.md` + `skills/` + `./install.sh`).

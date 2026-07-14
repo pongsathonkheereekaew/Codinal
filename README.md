@@ -5,11 +5,11 @@
 | Name | Meaning |
 |------|---------|
 | **Agent Harness** | The method |
-| **`AGENTS.md`** | Shared always-on policy |
+| **`AGENTS.md`** | Shared always-on policy (kept thin — skill router, not full catalog) |
 | **`~/.agents/`** | Live SSOT after install |
 | **harness-flow** | This git repo (source of that SSOT) |
 
-Office / Hermes live in a **separate** repo: [`agentmonitor`](https://github.com/pongsathonkheereekaew/agentmonitor) (Hermes kit + pixel office). Not required for clean coding setup.
+Office / Hermes: separate repo [`agentmonitor`](https://github.com/pongsathonkheereekaew/agentmonitor). Not required for clean coding setup.
 
 ```text
 tool safety → tool settings
@@ -40,13 +40,25 @@ cd harness-flow
 ~/.agents/scripts/harness doctor
 ```
 
-Day to day:
+## Day to day
+
+**Edit in this git repo, then install** (repo is SSOT):
 
 ```bash
-# edit policy / skills in this repo (or in ~/.agents then backup)
-./install.sh                  # re-sync → ~/.agents
-~/.agents/scripts/harness sync
+# edit AGENTS.md / skills / standards here
+./install.sh
+~/.agents/scripts/harness sync   # already run by install; safe to re-run
 ```
+
+If you edited live `~/.agents` instead, pull it back before the next install overwrites:
+
+```bash
+./backup.sh          # ~/.agents → this repo
+git status && commit
+./install.sh         # optional re-sync adapters
+```
+
+`./install.sh` **backs up** a differing live `AGENTS.md` to `~/.agents/AGENTS.md.bak.<timestamp>`, then replaces it from git.
 
 ## Optional: AgentMonitor + Hermes
 
@@ -61,5 +73,5 @@ Primary UI: http://127.0.0.1:4777 — Telegram not required. Hermes reads skills
 
 ```bash
 bash ./verify.sh
-./backup.sh    # pull live ~/.agents + Cursor rules into this repo before commit
+./backup.sh
 ```

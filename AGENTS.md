@@ -37,7 +37,7 @@ Otherwise:
 5. **Verify** — observe the Step-2 criterion; use `verification-before-completion` before any success claim.
 6. **Report** — outcome first, honest caveats.
 
-Prefer catalog skills below when they match (e.g. `grilling`, `tdd`, `diagnosing-bugs`) — the loop is the fallback when no better skill fits.
+Prefer a matching skill under `~/.agents/skills/` when one fits; the loop is the fallback. Unsure which skill → `ask-matt`.
 
 ## Where content lives (one install place)
 
@@ -48,71 +48,50 @@ Prefer catalog skills below when they match (e.g. `grilling`, `tdd`, `diagnosing
 | Shared slash commands | `~/.agents/commands/` |
 | This policy | `~/.agents/AGENTS.md` |
 
-After adding/moving a skill:
-
 ```bash
-~/.agents/scripts/harness sync
+~/.agents/scripts/harness sync    # after adding skills
+~/.agents/scripts/harness rules   # after editing standards
+~/.agents/scripts/harness doctor  # health check
 ```
 
-After editing standards:
-
-```bash
-~/.agents/scripts/harness rules
-```
-
-Health check:
-
-```bash
-~/.agents/scripts/harness doctor
-```
-
-**Never** maintain parallel real copies under tool skill dirs (`~/.claude/skills`, `~/.cursor/skills`, `~/.openclaw/skills`, `~/.gemini/skills`, `~/.zcode/skills`) — those are symlink adapters. Codex/Gemini/OpenCode also read this `skills/` folder natively. Never write into `~/.cursor/skills-cursor/` (product-managed).
+**Never** maintain parallel real copies under tool skill dirs — those are symlink adapters (or native readers of `~/.agents/skills`). Never write into `~/.cursor/skills-cursor/` (product-managed).
 
 ## Standards (load when relevant)
 
-- Writing / typography / grilling vs AFK: `~/.agents/standards/ui-writing.md`
+- Writing / typography: `~/.agents/standards/ui-writing.md`
 - Easby DSP / verify gates: `~/.agents/standards/easby-dsp.md`
 - Easby UI: `~/.agents/standards/easby-ui.md`
 
-Cursor also gets these via generated `~/.cursor/rules/*.mdc` (`harness rules`).
+Cursor also gets these via generated `~/.cursor/rules/*.mdc` (`harness rules`). On Easby plugins: never weaken `./verify.sh` / `Tools/verify.py` to force a green run.
 
-On Easby plugins: never weaken `./verify.sh` / `Tools/verify.py` to force a green run.
+## Skills (core router — keep always-on thin)
 
-## Skills (shared catalog)
-
-Prefer skills under `~/.agents/skills/` when the task matches their description. **Do not install a second full suite** (e.g. Superpowers) that duplicates Matt Pocock flows already here — map to the skill below instead.
-
-Useful defaults:
+Prefer skills under `~/.agents/skills/` when the task matches their `SKILL.md` description. Do not install a second full suite that duplicates flows already there.
 
 | Job | Skill |
 |-----|--------|
 | Unsure which flow | `ask-matt` |
-| Stress-test a plan | `grilling` (+ `domain-modeling` in a real repo) |
-| Huge multi-session work | `wayfinder` |
-| Conversation → spec / tickets | `to-spec` → `to-tickets` |
+| Stress-test a plan | `grilling` |
 | Implement / TDD | `implement`, `tdd` |
-| Two-axis review | `code-review` |
 | Hard bugs | `diagnosing-bugs` |
 | Before claiming done | `verification-before-completion` |
-| Isolated feature worktree | `using-git-worktrees` → then `finishing-a-development-branch` |
 | Compact for a fresh session | `handoff` |
-| Research / throwaway prototype | `research`, `prototype` |
-| UI / macOS UI | `ui-ux-pro-max`, `macos-design` |
-| Insurance (Thai) | `nuiny`, `insurance-commission`, `insurance-premium-finding` |
-| Audio plugin RE / mix / master | `easby-*` under `skills/easby/` |
-| GCP / GKE / Gemini Agent Platform | matching `gcloud`, `gke-*`, `agent-platform-*`, `gemini-*` skills |
+| Huge multi-session work | `wayfinder` |
 
-Project overlays (`./AGENTS.md` / `./CLAUDE.md`) win for repo-specific constraints.
+Everything else (UI, insurance, easby, GCP, …): match by skill description under `~/.agents/skills/` or ask `ask-matt`. Project overlays (`./AGENTS.md`) win for repo-specific constraints.
 
 ## Context hygiene
 
 - Don't re-read what is already in context. Prefer narrow reads over whole-file dumps.
-- Broad / unfamiliar exploration (>~3 files or sweeping search) → use an explore/subagent path when the harness supports it; return conclusions, not raw dumps.
-- Independent sub-tasks → run in parallel when the harness allows.
-- Known exact file + symbol → just read it; don't fan out for a single lookup.
+- Broad / unfamiliar exploration (>~3 files) → explore/subagent when available; return conclusions.
+- Independent sub-tasks → parallel when the harness allows.
+- Known exact file → read it directly.
+- **Depth:** trivial → short path; hard/ambiguous → plan first or a heavier model in the *tool adapter* — do not paste hidden chain-of-thought into the user reply.
+- **Survive context limits:** long work → `handoff` / GOAL before rotating the session.
+- **Stdout:** if `rtk` is on `PATH`, prefer `rtk <cmd>` for high-stdout commands (git, grep, find, ls, tree, docker). RTK *hooks* stay Claude-only — not here.
 
 ## Out of scope for this file
 
-Claude-only memory (claude-mem), Claude hooks/goal-loop, plugin marketplaces, model IDs (`opusplan`, etc.), and RTK hooks belong in `~/.claude/CLAUDE.md` (or that tool's settings) — not here.
+Claude-only memory (claude-mem), Claude hooks/goal-loop, plugin marketplaces, model IDs, and RTK hooks belong in `~/.claude/CLAUDE.md` (or that tool's settings) — not here.
 
-Hermes + AgentMonitor live in the separate `agentmonitor` repo (install → `~/.hermes` + office). Skills attach via `skills.external_dirs` → `~/.agents/skills` — do not maintain a second skill tree under Hermes except Hermes-native bundles.
+Hermes + AgentMonitor live in the separate `agentmonitor` repo (install → `~/.hermes` + office). Skills attach via `skills.external_dirs` → `~/.agents/skills`.

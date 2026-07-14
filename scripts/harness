@@ -90,10 +90,26 @@ for d in adapters:
         print(f"  broken: {', '.join(broken[:15])}")
 
 # Optional: assert skills you care about exist (customize names)
-for name in ("verification-before-completion",):
+for name in ("verification-before-completion", "ask-matt"):
     src = skills / name
     if src.exists():
         print(f"optional {name}: OK")
+
+print("\n=== machine probes (non-fatal) ===")
+import shutil
+for bin_name in ("rtk", "lowfat"):
+    path = shutil.which(bin_name)
+    print(f"{bin_name}: {'OK ' + path if path else 'MISSING'}")
+
+hermes_cfg = home / ".hermes" / "config.yaml"
+if hermes_cfg.is_file():
+    htext = hermes_cfg.read_text(encoding="utf-8", errors="replace")
+    if "external_dirs" in htext and ".agents/skills" in htext:
+        print("hermes external_dirs → ~/.agents/skills: OK")
+    else:
+        print("hermes external_dirs → ~/.agents/skills: WARN (add skills.external_dirs)")
+else:
+    print("hermes config: (absent — ok if office stack not installed)")
 
 print("\nDone. Fix drift then: harness sync")
 PY

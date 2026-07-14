@@ -13,14 +13,15 @@
 ## Day to day
 
 ```bash
-# In harness-flow
+# In harness-flow (preferred — git is SSOT)
 edit skills/ or AGENTS.md
-./install.sh                         # → ~/.agents
-~/.agents/scripts/harness sync
+./install.sh                         # → ~/.agents (backs up differing live AGENTS.md)
 ~/.agents/scripts/harness doctor
 ```
 
-Or edit live `~/.agents` then `./backup.sh` before commit.
+Or edit live `~/.agents` then `./backup.sh` before the next install overwrites policy.
+
+Always-on `AGENTS.md` stays **thin** (core skill router). Full packs live under `skills/` and are matched by description / `ask-matt`.
 
 ## Clean setup
 

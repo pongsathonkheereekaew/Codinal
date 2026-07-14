@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Install Agent Harness (lingua franca + skills) → ~/.agents
+# Git SSOT = this repo. Live edits to AGENTS.md are backed up then replaced.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -8,9 +9,20 @@ DEST="${AGENTS_HOME:-$HOME/.agents}"
 echo "=== harness-flow → $DEST ==="
 mkdir -p "$DEST"/{skills,standards,commands,scripts}
 
-# Policy: refresh from repo (this repo owns AGENTS.md)
-cp -f "$ROOT/AGENTS.md" "$DEST/AGENTS.md"
-echo "AGENTS.md ← repo"
+# Policy: repo wins; backup live copy if it differs
+install_agents_md() {
+  local src="$ROOT/AGENTS.md"
+  local dest="$DEST/AGENTS.md"
+  if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
+    local bak="$DEST/AGENTS.md.bak.$(date +%Y%m%d%H%M%S)"
+    cp -f "$dest" "$bak"
+    echo "WARN: live AGENTS.md differed — backed up to $bak"
+  fi
+  cp -f "$src" "$dest"
+  echo "AGENTS.md ← repo"
+}
+
+install_agents_md
 
 # Scripts CLI
 cp -f "$ROOT"/scripts/* "$DEST/scripts/"
@@ -69,4 +81,4 @@ echo ""
 echo "=== done ==="
 echo "  Doctor:  $DEST/scripts/harness doctor"
 echo "  Office:  optional — git clone …/agentmonitor && ./install.sh"
-echo "  Hermes:  lives in the agentmonitor package (not this repo)"
+echo "  Edit policy in this git repo, then re-run ./install.sh (live-only edits are overwritten after backup)."
