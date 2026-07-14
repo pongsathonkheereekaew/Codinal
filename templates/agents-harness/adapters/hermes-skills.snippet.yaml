@@ -1,0 +1,5 @@
+# Shared Agent Skills (SSOT: ~/.agents/skills).
+# Hermes-native skills stay under ~/.hermes/skills/.
+skills:
+  external_dirs:
+    - ~/.agents/skills

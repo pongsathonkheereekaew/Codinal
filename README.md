@@ -1,6 +1,23 @@
-# harness-flow (formerly: easby-workflow)
+# harness-flow
 
-โฟลเดอร์สำหรับเก็บไฟล์ตั้งค่า คอนฟิก และกฎการทำงานของ AI (SSOT) สำหรับ Cursor IDE และ Hermes Agent เพื่อย้ายเครื่องและตั้งค่าระบบได้ง่ายที่สุด
+Machine kit + templates for **Agent Harness** — one content hub (`~/.agents`) and thin per-tool adapters.
+
+| Name | Meaning |
+|------|---------|
+| **Agent Harness** | The method |
+| **`AGENTS.md`** | Lingua franca (shared policy — keep this filename) |
+| **`~/.agents/`** | Live SSOT for skills / standards / commands / policy |
+| **harness-flow** | This repo (bootstrap, templates, personal packs) |
+
+**How to use (day to day):** edit `~/.agents` → `harness sync` / `harness rules` / `harness doctor`.  
+Claude-only → `~/.claude/CLAUDE.md`. Hermes-only → `~/.hermes/SOUL.md`.  
+Full guide: [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md).
+
+**Share with others (no personal skills):** [`templates/agents-harness/`](templates/agents-harness/) → `bash templates/agents-harness/install.sh`.
+
+**Your machine migrate (private kit):** `./install.sh` below still installs Claude/Hermes packs from this repo.
+
+---
 
 ## 1. โครงสร้างระบบ (System Structure)
 
@@ -59,3 +76,19 @@
 `agentmonitor/` — ศูนย์มอนิเตอร์ทีม AI แบบออฟฟิศ pixel: Hermes แตกงานให้ Cursor Cloud Agents แล้วรายงาน event เข้า bridge, แดชบอร์ดแสดงตัวละครเดินเข้าห้อง crawl/build/test, บอสกด approve merge ได้เฉพาะเมื่อ `./verify.sh` เขียว (hard gate) — ดู `agentmonitor/README.md`
 
 โปรเจกต์นี้ออกแบบให้แยกไปเป็น repo ของตัวเองได้ด้วย `agentmonitor/scripts/extract-repo.sh` — กติกาฝั่ง Hermes อยู่ใน `hermes/SOUL.md` (ส่วน "Mission protocol")
+
+---
+
+## 5. Project Wiki (engineering lessons ต่อ repo)
+
+Karpathy-style wiki สำหรับบันทึกบั๊กที่แก้แล้ว + invariants — อยู่ที่ `docs/wiki/` ใน **git ของแต่ละโปรเจกต์** (ไม่ใช่ memory ระบบที่ 2; claude-mem ยังเป็น SSOT ของ session memory)
+
+harness-flow มี live wiki ที่ [`docs/wiki/`](docs/wiki/) และ template ที่ [`templates/project-wiki/`](templates/project-wiki/)
+
+เปิดในปลั๊กอิน/แอปอื่น:
+
+```bash
+bash templates/project-wiki/init-wiki.sh /path/to/your-repo
+```
+
+หลังแก้บั๊กแบบมี repro + root cause + verification ผ่าน — agent ต้องเขียน `docs/wiki/incidents/<slug>.md` และอัปเดต `index.md` / `log.md` ก่อนบอก done (ข้าม typo/one-liner)

@@ -1,10 +1,18 @@
 # MANIFEST — external dependencies
 
-**Source of truth for skills & agents:** this repo (`harness-flow/claude/`).
+**Live SSOT for portable skills & policy:** `~/.agents/` (Agent Harness).  
+**This repo:** bootstrap + personal Claude/Hermes packs + shareable templates.
 
-> The old standalone repo `pongsathonkheereekaew/claude-skills` is **deprecated**. Use `bash install.sh` here instead.
+| Layer | Location |
+|-------|----------|
+| Lingua franca + shared skills | `~/.agents/AGENTS.md`, `~/.agents/skills/` |
+| Portable starter for others | `templates/agents-harness/` |
+| Personal Claude packs (IP) | `claude/` in this repo → install via `./install.sh` |
+| Hermes identity / mission | `hermes/` + live `~/.hermes/SOUL.md` |
 
-`install.sh` → `scripts/install-claude.sh` copies `claude/` into `~/.claude` and installs external packs.
+> Old standalone repo `claude-skills` is **deprecated**. Prefer `~/.agents` + `templates/agents-harness/`, and `./install.sh` for personal Claude glue.
+
+`install.sh` → `scripts/install-claude.sh` copies `claude/` into `~/.claude` and installs external packs. After that, keep new skills in `~/.agents/skills` and run `harness sync`.
 
 ## 1. CLIs + apps (Homebrew)
 
