@@ -30,14 +30,20 @@ Skip this only when the task is trivial (one file, ~<10 lines, no new behavior, 
 
 Otherwise:
 
-1. **Classify** — question/assessment (change nothing) vs task vs plan-first (ambiguous/irreversible → plan and wait).
-2. **Define done** — name the verification (test, build, measured value, visible result).
-3. **Evidence** — primary sources; parallel lookups when the harness allows; intent before behavior-changing edits.
-4. **Decide** — one recommendation; then act surgically (smallest correct change).
-5. **Verify** — observe the Step-2 criterion; use `verification-before-completion` before any success claim.
-6. **Report** — outcome first, honest caveats.
+1. **Classify** — one path (never force grilling + wayfinder together):
+   - question / assessment → answer; change nothing unless asked
+   - foggy / greenfield / multi-week map missing → `wayfinder`
+   - design / plan / ambiguous / irreversible → `grilling` (+ `domain-modeling` in-repo when useful)
+   - clear build in a known repo → `implement` / `tdd`
+   - hard bug → `diagnosing-bugs`
+2. **Final plan gate** — before presenting a plan/spec as final → run `scrutinize`; fix or mark rework. No `finalize-plan` skill.
+3. **Define done** — name the verification (test, build, measured value, visible result).
+4. **Evidence** — primary sources; parallel lookups when the harness allows; intent before behavior-changing edits.
+5. **Decide** — one recommendation; then act surgically (smallest correct change).
+6. **Verify** — observe the done criterion; use `verification-before-completion` before any success claim.
+7. **Report** — outcome first, honest caveats.
 
-Prefer a matching skill under `~/.agents/skills/` when one fits; the loop is the fallback. Unsure which skill → `ask-matt`.
+Prefer a matching skill under `~/.agents/skills/` by name (progressive disclosure — don't paste Ask Matt every turn). Full graph: user invokes `ask-matt`.
 
 ## Where content lives (one install place)
 
@@ -70,13 +76,14 @@ Prefer skills under `~/.agents/skills/` when the task matches their `SKILL.md` d
 
 | Job | Skill |
 |-----|--------|
-| Unsure which flow | `ask-matt` |
-| Stress-test a plan | `grilling` |
+| Unsure which flow (user) | `ask-matt` |
+| Design / stress-test a plan | `grilling` |
+| Before final plan / PR review | `scrutinize` |
 | Implement / TDD | `implement`, `tdd` |
 | Hard bugs | `diagnosing-bugs` |
 | Before claiming done | `verification-before-completion` |
 | Compact for a fresh session | `handoff` |
-| Huge multi-session work | `wayfinder` |
+| Foggy / huge multi-session | `wayfinder` |
 
 Everything else (UI, insurance, easby, GCP, …): match by skill description under `~/.agents/skills/` or ask `ask-matt`. Project overlays (`./AGENTS.md`) win for repo-specific constraints.
 
