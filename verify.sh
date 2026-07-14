@@ -1,44 +1,40 @@
 #!/usr/bin/env bash
-# harness-flow acceptance gate
+# harness-flow acceptance — Agent Harness only (no AgentMonitor suite)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 echo "=== harness-flow verify ==="
 
-echo "== shell syntax check =="
-for f in install.sh backup.sh \
-  scripts/*.sh \
-  agentmonitor/verify.sh \
-  templates/agents-harness/install.sh \
-  templates/project-wiki/init-wiki.sh; do
-  [ -f "$f" ] && bash -n "$f"
-done
-for f in hermes/*.sh; do
-  [ -f "$f" ] && bash -n "$f"
-done
-for f in templates/agents-harness/scripts/*; do
-  [ -f "$f" ] && bash -n "$f"
-done
-
-echo "== agent harness template =="
+echo "== layout =="
+test -f AGENTS.md
+test -d skills
+test -d standards
+test -d scripts
+test -x install.sh
 test -f docs/AGENT_HARNESS.md
-test -f templates/agents-harness/AGENTS.md
-test -f templates/agents-harness/install.sh
-test -f templates/agents-harness/scripts/harness
-echo "agent harness template: OK"
+echo "layout: OK"
 
-echo "== project wiki scaffold =="
-test -f docs/wiki/SCHEMA.md
-test -f docs/wiki/index.md
-test -f docs/wiki/log.md
-test -f .cursor/rules/project-wiki.mdc
-test -f templates/project-wiki/init-wiki.sh
-test -f templates/project-wiki/SCHEMA.md
-echo "project wiki: OK"
+echo "== shell syntax =="
+for f in install.sh backup.sh verify.sh scripts/*; do
+  [ -f "$f" ] || continue
+  case "$f" in
+    *.py) continue ;;
+  esac
+  bash -n "$f"
+done
+echo "syntax: OK"
 
-echo "== agentmonitor suite =="
-bash agentmonitor/verify.sh
+echo "== skills =="
+count=$(find skills -mindepth 1 -maxdepth 1 ! -name '.*' | wc -l | tr -d ' ')
+test "$count" -gt 0
+echo "skills: $count"
+
+echo "== project wiki template (optional) =="
+if [ -f templates/project-wiki/init-wiki.sh ]; then
+  bash -n templates/project-wiki/init-wiki.sh
+  echo "project-wiki template: OK"
+fi
 
 echo ""
 echo "harness-flow verify: PASS"

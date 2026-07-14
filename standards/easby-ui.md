@@ -1,0 +1,10 @@
+# Easby Plugins UI & Design Standards
+
+## 1. Visual & Layout Consistency (Easby UI System)
+- **Active Curves**: Use ES-Q's orange active curves for display rendering.
+- **Font Sizes**: Standard labeling font size is `10px`.
+- **Undo / Redo Symbols**: Always use `↰` (Undo) and `↱` (Redo) as icons.
+
+## 2. Pre-Verification Rule
+- When completing UI-only edits in `Source/PluginEditor.{h,cpp}`, ensure no APVTS/DSP logic is mutated.
+- Run `./verify.sh` locally to confirm linter and asset checks pass before declaring "done".

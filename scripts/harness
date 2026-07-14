@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Universal ~/.agents harness entrypoint.
+# Usage: harness <sync|rules|doctor|help>
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPTS="$ROOT/scripts"
+
+cmd="${1:-help}"
+
+sync_cmd() {
+  exec "$SCRIPTS/sync-skill-links.sh"
+}
+
+rules_cmd() {
+  exec "$SCRIPTS/gen-cursor-rules.sh"
+}
+
+doctor_cmd() {
+  python3 - "$ROOT" <<'PY'
+import os, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+home = Path.home()
+skills = root / "skills"
+policy = root / "AGENTS.md"
+
+adapters = [
+    home / ".claude" / "skills",
+    home / ".cursor" / "skills",
+    home / ".openclaw" / "skills",
+    home / ".gemini" / "skills",
+    home / ".zcode" / "skills",
+]
+
+policy_links = [
+    home / ".codex" / "AGENTS.md",
+    home / ".zcode" / "AGENTS.md",
+    home / ".config" / "opencode" / "AGENTS.md",
+    home / ".gemini" / "GEMINI.md",
+]
+
+print("=== harness doctor ===")
+print(f"SSOT: {root}")
+print(f"skills: {sum(1 for p in skills.iterdir() if not p.name.startswith('.'))}")
+print(f"AGENTS.md: {'OK' if policy.is_file() else 'MISSING'}")
+
+claude_md = home / ".claude" / "CLAUDE.md"
+print(f"CLAUDE.md: {'OK' if claude_md.is_file() else 'MISSING'}")
+if claude_md.is_file():
+    text = claude_md.read_text(encoding="utf-8", errors="replace")
+    if "AGENTS.md" in text or ".agents/AGENTS" in text:
+        print("CLAUDE.md → AGENTS.md: OK")
+    else:
+        print("CLAUDE.md → AGENTS.md: WARN")
+
+print("\n=== policy links ===")
+for dest in policy_links:
+    if dest.is_symlink():
+        print(f"OK  {dest} -> {os.readlink(dest)}")
+    elif dest.is_file():
+        print(f"WARN real file (prefer symlink): {dest}")
+    else:
+        print(f"MISSING {dest}")
+
+print("\n=== native ~/.agents/skills readers (no adapter required) ===")
+print("  Codex, Gemini CLI, OpenCode — discover ~/.agents/skills directly")
+
+print("\n=== adapter skill dirs ===")
+for d in adapters:
+    if not d.is_dir():
+        print(f"{d}: MISSING")
+        continue
+    real, broken, links = [], [], 0
+    for p in sorted(d.iterdir()):
+        if p.name.startswith("."):
+            continue
+        if p.is_symlink():
+            links += 1
+            if not p.exists():
+                broken.append(p.name)
+        elif p.is_dir() or p.is_file():
+            real.append(p.name)
+    status = "OK" if not real and not broken else "WARN"
+    print(f"{d}: {status}  links={links}  real={len(real)}  broken={len(broken)}")
+    if real:
+        print(f"  real copies: {', '.join(real[:15])}")
+    if broken:
+        print(f"  broken: {', '.join(broken[:15])}")
+
+# Optional: assert skills you care about exist (customize names)
+for name in ("verification-before-completion",):
+    src = skills / name
+    if src.exists():
+        print(f"optional {name}: OK")
+
+print("\nDone. Fix drift then: harness sync")
+PY
+}
+
+help_cmd() {
+  cat <<EOF
+harness — ~/.agents universal content harness
+
+Usage:
+  harness sync     Symlink skills + wire AGENTS.md for all adapters
+  harness rules    Regenerate ~/.cursor/rules/*.mdc from standards/
+  harness doctor   Drift / health check
+  harness help     This text
+
+Install a skill (once):
+  cp -R <skill-dir> ~/.agents/skills/<name>
+  harness sync
+
+Coverage after sync:
+  Skills adapters: Claude, Cursor, Openclaw, Gemini (~/.gemini/skills), ZCode (~/.zcode/skills)
+  Native skills:   Codex + Gemini + OpenCode also read ~/.agents/skills
+  Policy:          ~/.codex/AGENTS.md, ~/.zcode/AGENTS.md,
+                   ~/.config/opencode/AGENTS.md, ~/.gemini/GEMINI.md
+                   (+ Claude via ~/.claude/CLAUDE.md @AGENTS.md)
+EOF
+}
+
+case "$cmd" in
+  sync) sync_cmd ;;
+  rules) rules_cmd ;;
+  doctor) doctor_cmd ;;
+  help|-h|--help) help_cmd ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    help_cmd >&2
+    exit 1
+    ;;
+esac

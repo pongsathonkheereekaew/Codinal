@@ -1,57 +1,72 @@
-#!/bin/bash
-# install.sh: Machine install for harness-flow
-# 1) Agent Harness → ~/.agents  2) Cursor rules  3) Claude packs  4) Hermes kit
-
-set -e
+#!/usr/bin/env bash
+# Install Agent Harness (lingua franca + skills) → ~/.agents
+set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-cd "$ROOT"
+DEST="${AGENTS_HOME:-$HOME/.agents}"
 
-echo "=== Starting harness-flow installation ==="
+echo "=== harness-flow → $DEST ==="
+mkdir -p "$DEST"/{skills,standards,commands,scripts}
 
-# 0. Agent Harness (lingua franca + scripts) — never overwrites existing AGENTS.md
-echo "0. Installing Agent Harness → ~/.agents ..."
-if [ -f templates/agents-harness/install.sh ]; then
-    bash templates/agents-harness/install.sh
-else
-    echo "   ⚠ templates/agents-harness missing — skip"
+# Policy: refresh from repo (this repo owns AGENTS.md)
+cp -f "$ROOT/AGENTS.md" "$DEST/AGENTS.md"
+echo "AGENTS.md ← repo"
+
+# Scripts CLI
+cp -f "$ROOT"/scripts/* "$DEST/scripts/"
+chmod +x "$DEST/scripts/"*
+echo "scripts/ ← repo"
+
+# Standards + commands
+rsync -a --delete "$ROOT/standards/" "$DEST/standards/"
+rsync -a --delete "$ROOT/commands/" "$DEST/commands/" 2>/dev/null || mkdir -p "$DEST/commands"
+echo "standards/ + commands/ ← repo"
+
+# Skills SSOT
+rsync -a --delete "$ROOT/skills/" "$DEST/skills/"
+echo "skills/ ← repo ($(ls -1 "$DEST/skills" | wc -l | tr -d ' ') entries)"
+
+# Thin Claude adapter (prepend AGENTS if needed)
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
+if [[ -f "$CLAUDE_MD" ]]; then
+  if ! grep -q 'AGENTS.md' "$CLAUDE_MD"; then
+    tmp="$(mktemp)"
+    { echo "# Shared policy — load first"; echo "@../.agents/AGENTS.md"; echo ""; cat "$CLAUDE_MD"; } >"$tmp"
+    mv "$tmp" "$CLAUDE_MD"
+    echo "prepended @AGENTS.md → ~/.claude/CLAUDE.md"
+  fi
+elif [[ -d "$HOME/.claude" ]]; then
+  cp "$ROOT/adapters/CLAUDE.md.example" "$CLAUDE_MD"
+  echo "created ~/.claude/CLAUDE.md"
 fi
 
-# 1. Cursor rules snapshot (prefer regenerating from ~/.agents/standards later)
-echo "1. Installing Cursor rules snapshot..."
-mkdir -p ~/.cursor/rules
-cp -f .cursor/rules/*.mdc ~/.cursor/rules/ 2>/dev/null || echo "   No .cursor/rules snapshots; use: ~/.agents/scripts/harness rules"
+# Policy symlinks for other tools
+link_policy() {
+  local dest="$1" rel="$2"
+  mkdir -p "$(dirname "$dest")"
+  if [[ -L "$dest" ]] || [[ ! -e "$dest" ]]; then
+    rm -f "$dest"
+    ln -s "$rel" "$dest"
+    echo "linked $dest"
+  else
+    echo "WARN keep real file: $dest"
+  fi
+}
+link_policy "$HOME/.codex/AGENTS.md" "../.agents/AGENTS.md"
+link_policy "$HOME/.zcode/AGENTS.md" "../.agents/AGENTS.md"
+mkdir -p "$HOME/.config/opencode"
+link_policy "$HOME/.config/opencode/AGENTS.md" "../../.agents/AGENTS.md"
+mkdir -p "$HOME/.gemini"
+link_policy "$HOME/.gemini/GEMINI.md" "../.agents/AGENTS.md"
 
-# 2. Claude Code workflow (skills, agents, hooks)
-echo "2. Installing Claude Code workflow..."
-if [ -d "claude/skills" ]; then
-    bash scripts/install-claude.sh
-else
-    echo "   ⚠ claude/skills missing — restore from git history if needed"
+# Cursor rules from standards
+if [[ -x "$DEST/scripts/harness" ]]; then
+  "$DEST/scripts/harness" rules || true
+  "$DEST/scripts/harness" sync
 fi
 
-# 3. Hermes kit files (review SOUL.md; do not treat as second AGENTS.md)
-echo "3. Setting up Hermes Agent configuration..."
-mkdir -p ~/.hermes
-if [ -d "hermes" ]; then
-    # copy helpers; keep live config.yaml/.env if already present
-    for f in SOUL.md README.md doctor.sh restart-gateway.sh apply-fix.sh install.sh; do
-        [ -f "hermes/$f" ] && cp -f "hermes/$f" ~/.hermes/
-    done
-    mkdir -p ~/.hermes/bin ~/.hermes/LaunchAgents
-    cp -f hermes/bin/* ~/.hermes/bin/ 2>/dev/null || true
-    cp -f hermes/LaunchAgents/* ~/.hermes/LaunchAgents/ 2>/dev/null || true
-    if [ ! -f ~/.hermes/config.yaml ] && [ -f hermes/config.yaml ]; then
-        cp -f hermes/config.yaml ~/.hermes/config.yaml
-    fi
-    echo "   Hermes kit copied (existing config.yaml preserved if present)."
-    echo "   Ensure skills.external_dirs includes ~/.agents/skills — see templates/agents-harness/adapters/"
-else
-    echo "   No hermes/ directory found."
-fi
-
-echo "=== Installation completed ==="
-echo "Next:"
-echo "  1. ~/.agents/scripts/harness sync && harness doctor"
-echo "  2. Follow NEW_MACHINE.md for 9router / Telegram / projects"
-echo "  3. bash ./verify.sh"
+echo ""
+echo "=== done ==="
+echo "  Doctor:  $DEST/scripts/harness doctor"
+echo "  Office:  optional — git clone …/agentmonitor && ./install.sh"
+echo "  Hermes:  lives in the agentmonitor package (not this repo)"

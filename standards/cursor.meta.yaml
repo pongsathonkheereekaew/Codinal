@@ -1,0 +1,22 @@
+# Cursor adapter metadata for ~/.agents/standards/*.md
+# Regenerate rules: ~/.agents/scripts/gen-cursor-rules.sh
+
+ui-writing:
+  body: ui-writing.md
+  out: ui-design-standards.mdc
+  description: General writing, typography, and copywriting standards
+  alwaysApply: true
+
+easby-dsp:
+  body: easby-dsp.md
+  out: dsp-standards.mdc
+  description: DSP programming constraints, clamping curves, and verify.py guardrails for Easby Studio plugins
+  globs: "**/Downloads/Easby Plugins/**/*"
+  alwaysApply: false
+
+easby-ui:
+  body: easby-ui.md
+  out: easby-ui-standards.mdc
+  description: Specific visual identity, layout guidelines, and UI specs for Easby Studio plugins
+  globs: "**/Downloads/Easby Plugins/**/*"
+  alwaysApply: false
