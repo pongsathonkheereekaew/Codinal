@@ -1,85 +1,47 @@
 # Agent Harness — naming & how to use it
 
-## Names (use these consistently)
+## Names
 
-| Term | What it is | Example |
-|------|------------|---------|
-| **Agent Harness** | The *method*: one content hub + thin per-tool adapters | “We run Agent Harness at home” |
-| **Lingua franca** | The shared always-on policy file | `~/.agents/AGENTS.md` (name stays **AGENTS.md** — tool ecosystem standard) |
-| **SSOT / content hub** | Directory that owns skills, standards, commands, policy | `~/.agents/` |
-| **Adapter** | Tool-private glue; never a second full copy of skills | `~/.claude/CLAUDE.md`, `~/.hermes/SOUL.md`, Cursor `.mdc` |
-| **harness-flow** | *This repo* — bootstrap kit, templates, personal packs, docs | GitHub `…/harness-flow` |
+| Term | What it is |
+|------|------------|
+| **Agent Harness** | Method: one content hub + thin adapters |
+| **Lingua franca** | `AGENTS.md` (keep this filename) |
+| **`~/.agents/`** | Live SSOT after install |
+| **harness-flow** | This repo — git SSOT for policy + skills |
+| **agentmonitor** | Separate repo — Hermes kit + pixel office |
 
-Do **not** rename the lingua franca to something quirky (`POLICY.md`, `BRAIN.md`). Other agents already look for `AGENTS.md`.
+## Day to day
 
----
-
-## Optimal daily use (you)
-
-```text
-Edit once → live in ~/.agents → adapters stay thin
+```bash
+# In harness-flow
+edit skills/ or AGENTS.md
+./install.sh                         # → ~/.agents
+~/.agents/scripts/harness sync
+~/.agents/scripts/harness doctor
 ```
 
-| Job | Do this |
-|-----|---------|
-| Add a skill | `cp -R <skill> ~/.agents/skills/<name>` → `~/.agents/scripts/harness sync` |
-| Change shared policy / loop | Edit `~/.agents/AGENTS.md` only |
-| Change writing / domain rules | Edit `~/.agents/standards/*.md` → `harness rules` |
-| Claude-only (mem, hooks, RTK) | `~/.claude/CLAUDE.md` / settings — not AGENTS.md |
-| Hermes-only (cursor-agent, AgentMonitor) | `~/.hermes/SOUL.md` — point to AGENTS.md, don’t duplicate |
-| Hermes skills | `skills.external_dirs: [~/.agents/skills]` in `config.yaml` |
-| Health check | `~/.agents/scripts/harness doctor` |
+Or edit live `~/.agents` then `./backup.sh` before commit.
 
-**Precedence (remember this):**
+## Clean setup
 
-```text
-tool safety → tool settings
-  → ~/.agents/AGENTS.md          ← lingua franca
-  → tool adapter                 ← Claude / Hermes / Cursor
-  → project ./AGENTS.md
-  → invoked skill
-  → user message
-  → model
+```bash
+git clone …/harness-flow && cd harness-flow && ./install.sh
 ```
 
-**Rule of thumb:** if a sentence applies to *every* coding agent → AGENTS.md.  
-If it only works on *one* product → adapter.
+Optional office:
 
----
+```bash
+git clone …/agentmonitor && cd agentmonitor && ./install.sh
+```
 
-## Optimal use for others (adopters)
+## Precedence
 
-1. Copy [`templates/agents-harness/`](../templates/agents-harness/) (or run its `install.sh`).
-2. Fill **placeholders** in their `AGENTS.md` (language, verify command, skill favorites).
-3. Keep their identity file thin (`CLAUDE.md` / `SOUL.md`).
-4. Do **not** paste your private skills, API keys, or Easby paths into a public fork — ship policy + scripts + empty `skills/`.
+```text
+tool safety → tool settings → ~/.agents/AGENTS.md → adapter → project AGENTS.md → skill → user → model
+```
 
-Personal machine migrate (Claude packs, Hermes SOUL, AgentMonitor) stays on **this** repo’s `install.sh` — that path is *your* kit, not the generic starter.
+## What not to put here
 
----
-
-## What belongs where
-
-| Content | Home |
-|---------|------|
-| Communication, done/verify loop, skill catalog map | `AGENTS.md` |
-| Agent Skills (SKILL.md trees) | `~/.agents/skills/` only |
-| Long rule bodies + Cursor frontmatter meta | `standards/` |
-| Slash commands shared by tools | `commands/` |
-| Memory, auth, hooks, gateway, sessions | Tool private (`~/.claude`, `~/.hermes`, …) |
-
----
-
-## Publishing strategy for harness-flow
-
-**Yes — keep using `harness-flow` as the repo name.** It’s the delivery vehicle (“flow” = install → sync → doctor).
-
-Suggested layout of intent:
-
-| Layer | Visibility | Contents |
-|-------|------------|----------|
-| A. Method + starter | Can be public later | `docs/AGENT_HARNESS.md`, `templates/agents-harness/` |
-| B. Your machine kit | Prefer **private** | `claude/`, `hermes/`, AgentMonitor glue, personal skills |
-| C. Live runtime | Never “the git SSOT alone” | `~/.agents` on each machine (install *from* repo, then live-edit) |
-
-Until you strip secrets/personal IP: keep the GitHub repo **private**. Optionally later split `agents-harness` as a public sub-repo of layer A only.
+- Hermes identity / gateway → `agentmonitor` repo → `~/.hermes`
+- Claude hooks / memory plugins → `~/.claude` only
+- Secrets / Telegram tokens — never

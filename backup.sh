@@ -1,26 +1,32 @@
 #!/bin/bash
-# backup.sh: pull live machine settings into harness-flow before commit
-set -e
+# Pull live Agent Harness state into this repo before commit
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
 
-echo "=== Syncing machine settings → harness-flow ==="
+echo "=== backup ~/.agents → harness-flow ==="
 
-# 1. Cursor rules snapshot
+if [ -d "$HOME/.agents/skills" ]; then
+  rsync -a --delete "$HOME/.agents/skills/" "$ROOT/skills/"
+  echo "skills/"
+fi
+if [ -f "$HOME/.agents/AGENTS.md" ]; then
+  cp -f "$HOME/.agents/AGENTS.md" "$ROOT/AGENTS.md"
+  echo "AGENTS.md"
+fi
+if [ -d "$HOME/.agents/standards" ]; then
+  rsync -a "$HOME/.agents/standards/" "$ROOT/standards/"
+  echo "standards/"
+fi
+if [ -d "$HOME/.agents/commands" ]; then
+  rsync -a "$HOME/.agents/commands/" "$ROOT/commands/"
+  echo "commands/"
+fi
 if [ -d "$HOME/.cursor/rules" ]; then
-    echo "Syncing Cursor rules..."
-    mkdir -p .cursor/rules
-    cp -f "$HOME/.cursor/rules"/*.mdc .cursor/rules/ 2>/dev/null || echo "No local rules found."
-else
-    echo "No local Cursor rules folder."
+  mkdir -p .cursor/rules
+  cp -f "$HOME/.cursor/rules"/*.mdc .cursor/rules/ 2>/dev/null || true
+  echo ".cursor/rules/"
 fi
 
-# 2. Hermes SOUL (keep thin — do not dump AGENTS.md here)
-if [ -f "$HOME/.hermes/SOUL.md" ]; then
-    echo "Syncing Hermes SOUL.md..."
-    mkdir -p hermes
-    cp -f "$HOME/.hermes/SOUL.md" hermes/SOUL.md
-else
-    echo "No local Hermes SOUL.md."
-fi
-
-echo "=== Backup done. Review git status (do not commit secrets). ==="
-echo "Tip: live policy/skills stay in ~/.agents — not copied by this script."
+echo "=== done. Review git status (no secrets). ==="
+echo "Hermes/SOUL lives in the agentmonitor repo — not backed up here."

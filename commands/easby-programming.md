@@ -1,0 +1,1 @@
+../skills/easby/commands/easby-programming.md

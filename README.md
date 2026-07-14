@@ -1,132 +1,65 @@
-# harness-flow
+# harness-flow — Agent Harness
 
-Private machine kit + **shareable templates** for [Agent Harness](docs/AGENT_HARNESS.md): one content hub, thin adapters, no skill copies per tool.
+**Lingua franca + skills** for every coding agent. One install → `~/.agents/`.
 
 | Name | Meaning |
 |------|---------|
 | **Agent Harness** | The method |
-| **`AGENTS.md`** | Lingua franca (shared policy — keep this filename) |
-| **`~/.agents/`** | Live SSOT: skills, standards, commands, policy |
-| **harness-flow** | This repo: bootstrap, templates, personal Claude/Hermes packs |
+| **`AGENTS.md`** | Shared always-on policy |
+| **`~/.agents/`** | Live SSOT after install |
+| **harness-flow** | This git repo (source of that SSOT) |
+
+Office / Hermes live in a **separate** repo: [`agentmonitor`](https://github.com/pongsathonkheereekaew/agentmonitor) (Hermes kit + pixel office). Not required for clean coding setup.
 
 ```text
 tool safety → tool settings
   → ~/.agents/AGENTS.md
-  → adapter (~/.claude/CLAUDE.md, ~/.hermes/SOUL.md, Cursor .mdc)
+  → tool adapter
   → project ./AGENTS.md
   → skill → user → model
 ```
-
----
-
-## Day to day
-
-```bash
-# Add a skill once
-cp -R <skill> ~/.agents/skills/<name>
-~/.agents/scripts/harness sync
-
-# Shared writing / domain rules → Cursor .mdc
-~/.agents/scripts/harness rules
-
-# Drift check
-~/.agents/scripts/harness doctor
-```
-
-| Change | Edit |
-|--------|------|
-| Policy / loop / skill map | `~/.agents/AGENTS.md` |
-| Skills | `~/.agents/skills/` only |
-| Claude-only (mem, hooks, RTK) | `~/.claude/…` |
-| Hermes-only (cursor-agent, AgentMonitor) | `~/.hermes/SOUL.md` |
-| Hermes shared skills | `skills.external_dirs: [~/.agents/skills]` in `~/.hermes/config.yaml` |
-
----
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md) | Naming + how to use |
-| [`templates/agents-harness/`](templates/agents-harness/) | Portable starter for other people |
-| [`templates/project-wiki/`](templates/project-wiki/) | Per-repo engineering wiki scaffold |
-| [`claude/`](claude/) | Personal Claude packs (install → `~/.claude`) |
-| [`hermes/`](hermes/) | Hermes bootstrap (SOUL, install, launchd helpers) |
-| [`agentmonitor/`](agentmonitor/) | Pixel-office bridge / game / PWA |
-| [`MANIFEST.md`](MANIFEST.md) | External CLIs, plugins, packs |
-| [`NEW_MACHINE.md`](NEW_MACHINE.md) | Zero → phone coding checklist |
+| [`AGENTS.md`](AGENTS.md) | Lingua franca |
+| [`skills/`](skills/) | Shared Agent Skills |
+| [`standards/`](standards/) | Rule bodies (+ Cursor meta) |
+| [`commands/`](commands/) | Shared slash commands |
+| [`scripts/`](scripts/) | `harness` sync / rules / doctor |
+| [`adapters/`](adapters/) | Thin Claude / Hermes snippets |
+| [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md) | Naming & usage |
 
----
-
-## Install
-
-### A. Others / clean laptop (no personal skills)
-
-```bash
-bash templates/agents-harness/install.sh
-~/.agents/scripts/harness sync
-~/.agents/scripts/harness doctor
-```
-
-### B. Your full machine migrate
+## Clean setup (new machine)
 
 ```bash
 git clone git@github.com:pongsathonkheereekaew/harness-flow.git
 cd harness-flow
-./install.sh          # Agent Harness → ~/.agents + Claude packs + Cursor rules + Hermes files
-# then follow NEW_MACHINE.md (9router, Telegram pairing, projects)
+./install.sh
+~/.agents/scripts/harness doctor
 ```
 
-`./install.sh` will:
-
-1. Bootstrap Agent Harness into `~/.agents` (does not overwrite an existing `AGENTS.md`)
-2. Copy Cursor rules from `.cursor/rules/` (or regenerate later via `harness rules`)
-3. Install Claude workflow from `claude/`
-4. Copy Hermes kit files into `~/.hermes/` (review `SOUL.md` — keep it thin)
-
-Prefer **private** for this GitHub repo until personal packs are stripped.
-
----
-
-## Cursor rules
-
-Live source of truth for rule *bodies* is `~/.agents/standards/` (+ `cursor.meta.yaml`).  
-Repo `.cursor/rules/*.mdc` are snapshots for migrate / backup (`./backup.sh`).
-
-Easby-scoped rules only apply under `Downloads/Easby Plugins/` via globs — they do not pollute unrelated projects.
-
----
-
-## Hermes
-
-- Identity / desk coding / AgentMonitor protocol → `~/.hermes/SOUL.md` (do not duplicate `AGENTS.md`)
-- Shared skills → `skills.external_dirs` (see `templates/agents-harness/adapters/`)
-- Hermes-native skills stay under `~/.hermes/skills/`
-
----
-
-## AgentMonitor
-
-`agentmonitor/` — mission bridge + pixel office UI. Hard gate on green verify before boss merge.  
-See [`agentmonitor/README.md`](agentmonitor/README.md). Extractable via `agentmonitor/scripts/extract-repo.sh`.
-
----
-
-## Project wiki
-
-Per-repo `docs/wiki/` (incidents / patterns) — not a second memory system (claude-mem stays session memory).
+Day to day:
 
 ```bash
-bash templates/project-wiki/init-wiki.sh /path/to/your-repo
+# edit policy / skills in this repo (or in ~/.agents then backup)
+./install.sh                  # re-sync → ~/.agents
+~/.agents/scripts/harness sync
 ```
 
-This repo’s own wiki: [`docs/wiki/`](docs/wiki/).
-
----
-
-## Verify / sync back
+## Optional: AgentMonitor + Hermes
 
 ```bash
-bash ./verify.sh          # scripts + wiki scaffold + agentmonitor
-./backup.sh               # pull live Cursor rules + SOUL.md into this repo before commit
+git clone git@github.com:pongsathonkheereekaew/agentmonitor.git
+cd agentmonitor && ./install.sh
+```
+
+Primary UI: http://127.0.0.1:4777 — Telegram not required. Hermes reads skills via `skills.external_dirs → ~/.agents/skills`.
+
+## Verify / backup
+
+```bash
+bash ./verify.sh
+./backup.sh    # pull live ~/.agents + Cursor rules into this repo before commit
 ```

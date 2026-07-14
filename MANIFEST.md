@@ -1,80 +1,32 @@
-# MANIFEST — external dependencies
+# MANIFEST — Agent Harness
 
-**Live SSOT for portable skills & policy:** `~/.agents/` (Agent Harness).  
-**This repo:** bootstrap + personal Claude/Hermes packs + shareable templates.
+**This repo** is the git SSOT for portable policy + skills.  
+**Live path** after `./install.sh`: `~/.agents/`.
 
 | Layer | Location |
 |-------|----------|
-| Lingua franca + shared skills | `~/.agents/AGENTS.md`, `~/.agents/skills/` |
-| Portable starter for others | `templates/agents-harness/` |
-| Personal Claude packs (IP) | `claude/` in this repo → install via `./install.sh` |
-| Hermes identity / mission | `hermes/` + live `~/.hermes/SOUL.md` |
+| Lingua franca | `AGENTS.md` → `~/.agents/AGENTS.md` |
+| Skills | `skills/` → `~/.agents/skills/` |
+| Standards / commands | `standards/`, `commands/` |
+| CLI | `scripts/harness` → sync / rules / doctor |
+| Office + Hermes | **not here** — [`agentmonitor`](https://github.com/pongsathonkheereekaew/agentmonitor) |
 
-> Old standalone repo `claude-skills` is **deprecated**. Prefer `~/.agents` + `templates/agents-harness/`, and `./install.sh` for personal Claude glue.
-
-`install.sh` → `scripts/install-claude.sh` copies `claude/` into `~/.claude` and installs external packs. After that, keep new skills in `~/.agents/skills` and run `harness sync`.
-
-## 1. CLIs + apps (Homebrew)
+## Optional CLIs
 
 ```bash
-brew install jq node            # jq = hooks; node = claude-mem runtime
-brew install rtk lowfat         # token compressors (rtk-ai). If tap needed: brew tap rtk-ai/tap
-brew install --cask obsidian    # optional — graph view over ~/.claude/projects/-/memory
-npm i -g skills                 # skills.sh CLI for third-party packs
+brew install jq node
+npm i -g skills   # optional: third-party skill packs into ~/.agents/skills
 ```
 
-- **rtk** + **lowfat** power the `PreToolUse` Bash hook (`scripts/lowfat-rtk-router.sh`).
-  ⚠ If they are NOT on `PATH`, that hook errors on every Bash call — install them first, or delete the `PreToolUse` block from `~/.claude/settings.json`.
-
-## 2. Plugins
-
-`settings.json` already lists the marketplaces + enabled plugins. Launch `claude` and run:
-
-```text
-/plugin marketplace add forrestchang/andrej-karpathy-skills
-/plugin marketplace add JuliusBrussee/caveman
-/plugin marketplace add thedotmack/claude-mem
-/plugin marketplace add affaan-m/everything-claude-code
-
-/plugin install superpowers@claude-plugins-official
-/plugin install clangd-lsp@claude-plugins-official
-/plugin install caveman@caveman
-/plugin install claude-mem@thedotmack
-/plugin install andrej-karpathy-skills@karpathy-skills
-/plugin install ecc@ecc
-```
-
-## 3. Skills layout
-
-| Location | What |
-|---|---|
-| `claude/skills/` (this repo) | **Personal / bundled** — easby, graphify, insurance/nuiny, prompt-master, visual-plan, macos-design, ui-ux-pro-max, agents-sdk, scrutinize, … |
-| `~/.agents/skills/` | **Third-party** — mattpocock, google, caveman (via `skills add`) |
-| `~/.claude/skills/` | Runtime merge: personal copy + symlinks to `~/.agents/skills/` |
-
-Personal skills are your IP → **keep this repo PRIVATE.**
-
-## 4. External packs (auto via install.sh)
+After adding a skill into this repo’s `skills/`:
 
 ```bash
-skills add mattpocock/skills -g -y --all -a claude-code
-skills add google/skills -g -y --all -a claude-code
-skills add JuliusBrussee/caveman -g -y -s caveman -a claude-code
+./install.sh
+# or: rsync skills → ~/.agents/skills && ~/.agents/scripts/harness sync
 ```
 
-Then run `/setup-matt-pocock-skills` once in Claude/Cursor.
+## Out of scope
 
-## Verify after install
-
-```bash
-bash install.sh
-bash ./verify.sh
-rtk --version && lowfat --version && jq --version
-ls ~/.claude/{CLAUDE.md,settings.json,scripts,commands,templates}
-ls ~/.claude/skills/{easby,graphify,nuiny,handoff}
-ls ~/.claude/projects/-/memory
-```
-
-## Agents index
-
-`agents-keep.txt` ที่ repo root = รายชื่อ agents ที่ใช้งานจริง (ที่เหลือใน `claude/agents/` เป็น optional packs)
+- Claude hooks / claude-mem settings (tool-private under `~/.claude`)
+- Hermes gateway / AgentMonitor bridge (see `agentmonitor` repo)
+- API keys / Telegram tokens (never commit)
