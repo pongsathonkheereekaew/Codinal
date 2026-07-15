@@ -50,6 +50,7 @@ Prefer a matching skill under `~/.agents/skills/` by name (progressive disclosur
 | What | Path |
 |------|------|
 | Skills | `~/.agents/skills/<name>/` only |
+| Durable prefs / facts | `~/.agents/memory/` (index: `MEMORY.md`) |
 | Shared rules (bodies) | `~/.agents/standards/` |
 | Shared slash commands | `~/.agents/commands/` |
 | This policy | `~/.agents/AGENTS.md` |
@@ -87,6 +88,14 @@ Prefer skills under `~/.agents/skills/` when the task matches their `SKILL.md` d
 
 Everything else (UI, insurance, easby, GCP, …): match by skill description under `~/.agents/skills/` or ask `ask-matt`. Project overlays (`./AGENTS.md`) win for repo-specific constraints.
 
+## Durable memory (shared)
+
+Long-lived prefs and locked decisions live in `~/.agents/memory/` (not episodic chat recall).
+
+- When preference / stack / “never do X” / topology matters → read `MEMORY.md`, then only the relevant file(s).
+- Do **not** dump the whole memory folder every turn.
+- Do **not** add a second auto-capture memory system — episodic stays tool-private (e.g. claude-mem under `~/.claude`).
+
 ## Context hygiene
 
 - Don't re-read what is already in context. Prefer narrow reads over whole-file dumps.
@@ -99,6 +108,6 @@ Everything else (UI, insurance, easby, GCP, …): match by skill description und
 
 ## Out of scope for this file
 
-Claude-only memory (claude-mem), Claude hooks/goal-loop, plugin marketplaces, model IDs, and RTK hooks belong in `~/.claude/CLAUDE.md` (or that tool's settings) — not here.
+Claude-only **episodic** memory (claude-mem), Claude hooks/goal-loop, plugin marketplaces, model IDs, and RTK hooks belong in `~/.claude/CLAUDE.md` (or that tool's settings) — not here. Durable facts belong in `~/.agents/memory/`.
 
 Hermes + AgentMonitor live in the separate `agentmonitor` repo (install → `~/.hermes` + office). Skills attach via `skills.external_dirs` → `~/.agents/skills`.

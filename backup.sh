@@ -22,6 +22,11 @@ if [ -d "$HOME/.agents/commands" ]; then
   rsync -a "$HOME/.agents/commands/" "$ROOT/commands/"
   echo "commands/"
 fi
+if [ -d "$HOME/.agents/memory" ]; then
+  mkdir -p "$ROOT/memory"
+  rsync -a "$HOME/.agents/memory/" "$ROOT/memory/"
+  echo "memory/"
+fi
 if [ -d "$HOME/.cursor/rules" ]; then
   mkdir -p .cursor/rules
   cp -f "$HOME/.cursor/rules"/*.mdc .cursor/rules/ 2>/dev/null || true

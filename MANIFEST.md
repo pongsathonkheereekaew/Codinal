@@ -6,6 +6,7 @@
 | Layer | Location |
 |-------|----------|
 | Lingua franca | `AGENTS.md` → `~/.agents/AGENTS.md` |
+| Durable memory | `memory/` → `~/.agents/memory/` |
 | Skills | `skills/` → `~/.agents/skills/` |
 | Standards / commands | `standards/`, `commands/` |
 | CLI | `scripts/harness` → sync / rules / doctor |
@@ -27,6 +28,8 @@ After adding a skill into this repo’s `skills/`:
 
 ## Out of scope
 
-- Claude hooks / claude-mem settings (tool-private under `~/.claude`)
+- Claude hooks / **episodic** claude-mem (tool-private under `~/.claude`)
 - Hermes gateway / AgentMonitor bridge (see `agentmonitor` repo)
 - API keys / Telegram tokens (never commit)
+
+Durable prefs live in `memory/` (shared). Do not reintroduce a second auto-capture store.

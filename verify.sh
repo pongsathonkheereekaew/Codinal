@@ -9,6 +9,8 @@ echo "=== harness-flow verify ==="
 echo "== layout =="
 test -f AGENTS.md
 test -d skills
+test -d memory
+test -f memory/MEMORY.md
 test -d standards
 test -d scripts
 test -x install.sh
@@ -29,6 +31,11 @@ echo "== skills =="
 count=$(find skills -mindepth 1 -maxdepth 1 ! -name '.*' | wc -l | tr -d ' ')
 test "$count" -gt 0
 echo "skills: $count"
+
+echo "== memory =="
+mcount=$(find memory -mindepth 1 -maxdepth 1 -name '*.md' ! -name '.*' | wc -l | tr -d ' ')
+test "$mcount" -gt 0
+echo "memory: $mcount md"
 
 echo "== project wiki template (optional) =="
 if [ -f templates/project-wiki/init-wiki.sh ]; then
