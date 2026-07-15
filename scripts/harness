@@ -45,6 +45,9 @@ print("=== harness doctor ===")
 print(f"SSOT: {root}")
 print(f"skills: {sum(1 for p in skills.iterdir() if not p.name.startswith('.'))}")
 print(f"AGENTS.md: {'OK' if policy.is_file() else 'MISSING'}")
+mem = root / "memory"
+mem_ok = mem.is_dir() and (mem / "MEMORY.md").is_file()
+print(f"memory/: {'OK' if mem_ok else 'MISSING'} ({sum(1 for p in mem.iterdir() if not p.name.startswith('.')) if mem.is_dir() else 0} files)")
 
 claude_md = home / ".claude" / "CLAUDE.md"
 print(f"CLAUDE.md: {'OK' if claude_md.is_file() else 'MISSING'}")
@@ -54,6 +57,20 @@ if claude_md.is_file():
         print("CLAUDE.md → AGENTS.md: OK")
     else:
         print("CLAUDE.md → AGENTS.md: WARN")
+
+claude_mem = home / ".claude" / "projects" / "-" / "memory"
+if claude_mem.is_symlink():
+    target = Path(os.readlink(claude_mem))
+    if not target.is_absolute():
+        target = (claude_mem.parent / target).resolve()
+    want = (root / "memory").resolve()
+    print(f"Claude memory → durable: {'OK' if target.resolve() == want else 'WARN ' + str(target)}")
+elif claude_mem.is_dir():
+    print("Claude memory → durable: WARN (real dir; prefer symlink to ~/.agents/memory)")
+elif (home / ".claude").is_dir():
+    print("Claude memory → durable: MISSING")
+else:
+    print("Claude memory → durable: (no ~/.claude)")
 
 print("\n=== policy links ===")
 for dest in policy_links:

@@ -21,7 +21,7 @@ edit skills/ or AGENTS.md
 
 Or edit live `~/.agents` then `./backup.sh` before the next install overwrites policy.
 
-Always-on `AGENTS.md` stays **thin** (core skill router). Full packs live under `skills/` and are matched by description / `ask-matt`.
+Always-on `AGENTS.md` stays **thin** (core skill router). Full packs live under `skills/` and are matched by description / `ask-matt`. Durable prefs live under `~/.agents/memory/` (index `MEMORY.md`).
 
 ## Clean setup
 

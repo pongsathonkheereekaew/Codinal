@@ -27,7 +27,7 @@ tool safety → tool settings
 git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && cd ~/harness-flow && ./install.sh && ~/.agents/scripts/harness doctor
 ```
 
-จบแล้วได้ `~/.agents/` (นโยบาย, skills, standards, commands, scripts) + symlink ไป Claude / Cursor / Codex / Gemini ฯลฯ
+จบแล้วได้ `~/.agents/` (นโยบาย, skills, **memory**, standards, commands, scripts) + symlink ไป Claude / Cursor / Codex / Gemini ฯลฯ
 
 อัปเดตภายหลัง:
 
@@ -40,6 +40,7 @@ cd ~/harness-flow && git pull && ./install.sh
 ## ได้อะไรบ้าง
 
 - **นโยบายสั้นเสมอ** — classify งาน, ชี้ skill, verify ก่อนบอกทำเสร็จ
+- **Durable memory ร่วม** — `~/.agents/memory/` (preference / สแตกที่ล็อกไว้); episodic ยังอยู่เครื่องมือ (เช่น claude-mem)
 - **สกิล Agent Skills ~100+** ใต้ `skills/` (Matt Pocock, แพ็กโดเมน, …)
 - **standards + slash commands** ซิงก์เข้า adapter
 - **flow เริ่มต้น** (ใน `AGENTS.md`): งานมืด/ใหญ่ → `wayfinder`; ออกแบบ/แพลน → `grilling`; สร้างชัด → `implement`/`tdd`; ก่อนส่งแพลน/สเปก**สุดท้าย** → `scrutinize`
@@ -51,6 +52,7 @@ cd ~/harness-flow && git pull && ./install.sh
 | พาธ | บทบาท |
 |-----|--------|
 | [`AGENTS.md`](AGENTS.md) | lingua franca (แก้ที่นี่ แล้ว install) |
+| [`memory/`](memory/) | ข้อเท็จจริงถาวรร่วม (index: `MEMORY.md`) — ไม่ใช่ episodic |
 | [`skills/`](skills/) | Agent Skills (`SKILL.md`) |
 | [`standards/`](standards/) | เนื้อกฎ → Cursor `.mdc` ผ่าน `harness rules` |
 | [`commands/`](commands/) | slash commands ร่วม |

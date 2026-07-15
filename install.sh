@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 DEST="${AGENTS_HOME:-$HOME/.agents}"
 
 echo "=== harness-flow → $DEST ==="
-mkdir -p "$DEST"/{skills,standards,commands,scripts}
+mkdir -p "$DEST"/{skills,standards,commands,scripts,memory}
 
 # Policy: repo wins; backup live copy if it differs
 install_agents_md() {
@@ -37,6 +37,32 @@ echo "standards/ + commands/ ← repo"
 # Skills SSOT
 rsync -a --delete "$ROOT/skills/" "$DEST/skills/"
 echo "skills/ ← repo ($(ls -1 "$DEST/skills" | wc -l | tr -d ' ') entries)"
+
+# Durable shared memory (not episodic)
+rsync -a --delete "$ROOT/memory/" "$DEST/memory/"
+echo "memory/ ← repo ($(ls -1 "$DEST/memory" | wc -l | tr -d ' ') entries)"
+
+# Claude durable folder → live SSOT (keep episodic engine private)
+wire_claude_durable_memory() {
+  local claude_home="$HOME/.claude"
+  local dest_mem="$DEST/memory"
+  local claude_mem="$claude_home/projects/-/memory"
+  [[ -d "$claude_home" ]] || return 0
+  mkdir -p "$claude_home/projects/-"
+  if [[ -L "$claude_mem" ]]; then
+    ln -sfn "$dest_mem" "$claude_mem"
+    echo "Claude memory → $dest_mem (symlink refreshed)"
+  elif [[ -d "$claude_mem" ]]; then
+    local bak="${claude_mem}.bak.$(date +%Y%m%d%H%M%S)"
+    mv "$claude_mem" "$bak"
+    ln -sfn "$dest_mem" "$claude_mem"
+    echo "Claude memory → $dest_mem (old dir backed up: $bak)"
+  else
+    ln -sfn "$dest_mem" "$claude_mem"
+    echo "Claude memory → $dest_mem (linked)"
+  fi
+}
+wire_claude_durable_memory
 
 # Thin Claude adapter (prepend AGENTS if needed)
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
