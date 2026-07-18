@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Agent Harness (lingua franca + skills) → ~/.agents
+# Install Agent Harness → ~/.agents (zero-tweak coding desk)
 # Git SSOT = this repo. Live edits to AGENTS.md are backed up then replaced.
 set -euo pipefail
 
@@ -8,6 +8,7 @@ DEST="${AGENTS_HOME:-$HOME/.agents}"
 
 echo "=== harness-flow → $DEST ==="
 mkdir -p "$DEST"/{skills,standards,commands,scripts,memory}
+mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.local/bin"
 
 # Policy: repo wins; backup live copy if it differs
 install_agents_md() {
@@ -47,7 +48,6 @@ wire_claude_durable_memory() {
   local claude_home="$HOME/.claude"
   local dest_mem="$DEST/memory"
   local claude_mem="$claude_home/projects/-/memory"
-  [[ -d "$claude_home" ]] || return 0
   mkdir -p "$claude_home/projects/-"
   if [[ -L "$claude_mem" ]]; then
     ln -sfn "$dest_mem" "$claude_mem"
@@ -64,18 +64,33 @@ wire_claude_durable_memory() {
 }
 wire_claude_durable_memory
 
-# Thin Claude adapter (prepend AGENTS if needed)
-CLAUDE_MD="$HOME/.claude/CLAUDE.md"
-if [[ -f "$CLAUDE_MD" ]]; then
-  if ! grep -q 'AGENTS.md' "$CLAUDE_MD"; then
+# Claude adapter: create if missing; prepend @AGENTS.md if present but unwired
+wire_claude_md() {
+  local adapter="$ROOT/adapters/CLAUDE.md"
+  local legacy="$ROOT/adapters/CLAUDE.md.example"
+  [[ -f "$adapter" ]] || adapter="$legacy"
+  local dest="$HOME/.claude/CLAUDE.md"
+  mkdir -p "$HOME/.claude"
+  if [[ ! -f "$dest" ]]; then
+    cp -f "$adapter" "$dest"
+    echo "created ~/.claude/CLAUDE.md"
+  elif ! grep -q 'AGENTS.md' "$dest"; then
+    local tmp
     tmp="$(mktemp)"
-    { echo "# Shared policy — load first"; echo "@../.agents/AGENTS.md"; echo ""; cat "$CLAUDE_MD"; } >"$tmp"
-    mv "$tmp" "$CLAUDE_MD"
+    { echo "# Shared policy — load first"; echo "@../.agents/AGENTS.md"; echo ""; cat "$dest"; } >"$tmp"
+    mv "$tmp" "$dest"
     echo "prepended @AGENTS.md → ~/.claude/CLAUDE.md"
+  else
+    echo "CLAUDE.md: keep existing (already wired)"
   fi
-elif [[ -d "$HOME/.claude" ]]; then
-  cp "$ROOT/adapters/CLAUDE.md.example" "$CLAUDE_MD"
-  echo "created ~/.claude/CLAUDE.md"
+}
+wire_claude_md
+
+# Claude plugin defaults (non-destructive merge)
+if [[ -f "$ROOT/adapters/claude-settings.defaults.json" ]]; then
+  python3 "$DEST/scripts/merge-claude-settings.py" \
+    "$ROOT/adapters/claude-settings.defaults.json" \
+    "$HOME/.claude/settings.json"
 fi
 
 # Policy symlinks for other tools
@@ -97,14 +112,61 @@ link_policy "$HOME/.config/opencode/AGENTS.md" "../../.agents/AGENTS.md"
 mkdir -p "$HOME/.gemini"
 link_policy "$HOME/.gemini/GEMINI.md" "../.agents/AGENTS.md"
 
-# Cursor rules from standards
+# harness on PATH (no brew/npm required)
+ensure_harness_path() {
+  ln -sfn "$DEST/scripts/harness" "$HOME/.local/bin/harness"
+  echo "PATH: ~/.local/bin/harness → $DEST/scripts/harness"
+  local line='export PATH="$HOME/.local/bin:$PATH"'
+  local rc
+  for rc in "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.bashrc"; do
+    [[ -f "$rc" ]] || continue
+    if grep -qF '.local/bin' "$rc" 2>/dev/null; then
+      return 0
+    fi
+  done
+  # Prefer zsh on macOS; create .zshrc if none of the rc files exist yet
+  rc="$HOME/.zshrc"
+  if [[ ! -f "$HOME/.zshrc" && ! -f "$HOME/.bashrc" && ! -f "$HOME/.zprofile" ]]; then
+    touch "$rc"
+  elif [[ -f "$HOME/.zshrc" ]]; then
+    rc="$HOME/.zshrc"
+  elif [[ -f "$HOME/.zprofile" ]]; then
+    rc="$HOME/.zprofile"
+  else
+    rc="$HOME/.bashrc"
+  fi
+  {
+    echo ""
+    echo "# harness-flow — Agent Harness CLI"
+    echo "$line"
+  } >>"$rc"
+  echo "PATH: appended ~/.local/bin to $rc (new shells)"
+}
+ensure_harness_path
+
+# Cursor rules + skill/command symlinks
 if [[ -x "$DEST/scripts/harness" ]]; then
   "$DEST/scripts/harness" rules || true
   "$DEST/scripts/harness" sync
 fi
 
 echo ""
-echo "=== done ==="
-echo "  Doctor:  $DEST/scripts/harness doctor"
-echo "  Office:  optional — git clone …/agentmonitor && ./install.sh"
-echo "  Edit policy in this git repo, then re-run ./install.sh (live-only edits are overwritten after backup)."
+if "$DEST/scripts/harness" doctor; then
+  doctor_ok=1
+else
+  doctor_ok=0
+fi
+
+echo ""
+echo "=========================================="
+if [[ "$doctor_ok" -eq 1 ]]; then
+  echo " READY — open Cursor or Claude Code and work."
+  echo " No extra harness tweaks required."
+else
+  echo " INSTALLED with warnings — run: harness doctor"
+fi
+echo "=========================================="
+echo "  Update later:  cd ${ROOT/#$HOME/~} && git pull && ./install.sh"
+echo "  Or:            harness update"
+echo "  Office/Hermes: optional — see NEW_MACHINE.md"
+echo ""

@@ -1,0 +1,36 @@
+{
+  "enabledPlugins": {
+    "claude-mem@thedotmack": true,
+    "superpowers@claude-plugins-official": true,
+    "caveman@caveman": true,
+    "ecc@ecc": false,
+    "claude-code-harness@claude-code-harness-marketplace": false,
+    "claudeclaw@claudeclaw": false
+  },
+  "extraKnownMarketplaces": {
+    "thedotmack": {
+      "source": {
+        "source": "github",
+        "repo": "thedotmack/claude-mem"
+      }
+    },
+    "caveman": {
+      "source": {
+        "source": "github",
+        "repo": "JuliusBrussee/caveman"
+      }
+    },
+    "ecc": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/affaan-m/everything-claude-code.git"
+      }
+    },
+    "claude-code-harness-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "Chachamaru/claude-code-harness"
+      }
+    }
+  }
+}

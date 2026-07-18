@@ -18,7 +18,7 @@ test -f docs/AGENT_HARNESS.md
 echo "layout: OK"
 
 echo "== shell syntax =="
-for f in install.sh backup.sh verify.sh scripts/*; do
+for f in install.sh backup.sh verify.sh bootstrap.sh scripts/*; do
   [ -f "$f" ] || continue
   case "$f" in
     *.py) continue ;;
@@ -43,5 +43,16 @@ if [ -f templates/project-wiki/init-wiki.sh ]; then
   echo "project-wiki template: OK"
 fi
 
+echo "== bootstrap / install-and-go =="
+test -x bootstrap.sh
+test -f adapters/CLAUDE.md
+test -f adapters/claude-settings.defaults.json
+test -f scripts/merge-claude-settings.py
+python3 -c "import ast, pathlib; ast.parse(pathlib.Path('scripts/merge-claude-settings.py').read_text())"
+grep -q 'harness update' scripts/harness
+echo "bootstrap assets: OK"
+
 echo ""
 echo "harness-flow verify: PASS"
+echo "On a machine after install, also run: harness doctor"
+

@@ -1,15 +1,151 @@
 # harness-flow — Agent Harness
 
-**นโยบาย + สกิลร่วม** สำหรับทุก coding agent ติดตั้งครั้งเดียว → SSOT สดที่ `~/.agents/`
+**นโยบาย + สกิลร่วม** สำหรับทุก coding agent  
+ติดตั้งครั้งเดียว → เปิด Cursor / Claude / ZCode / Gemini แล้วทำงานได้เลย ไม่ต้องจูน harness ทีละตัว
 
 | คำ | ความหมาย |
 |----|----------|
-| **Agent Harness** | วิธีทำงาน: นโยบายสั้นที่โหลดเสมอ + สกิลเรียกเมื่อใช้ |
-| **`AGENTS.md`** | นโยบายร่วม (เก็บชื่อไฟล์นี้ — ให้สั้น) |
-| **`~/.agents/`** | SSOT สดหลังรัน `./install.sh` |
+| **Agent Harness** | นโยบายสั้นที่โหลดเสมอ + สกิลเรียกเมื่อใช้ |
+| **`AGENTS.md`** | นโยบายร่วม (lingua franca) |
+| **`~/.agents/`** | SSOT สดหลังติดตั้ง |
 | **harness-flow** | repo นี้ — git SSOT ของเนื้อหานั้น |
 
-ออฟฟิศ / Hermes อยู่ repo แยก: [`agentmonitor`](https://github.com/pongsathonkheereekaew/agentmonitor) — ไม่จำเป็นสำหรับเครื่องเขียนโค้ดล้วนๆ
+ออฟฟิศ / Hermes อยู่ repo แยก: [agentmonitor](https://github.com/pongsathonkheereekaew/agentmonitor) — **ไม่จำเป็น** สำหรับเครื่องเขียนโค้ดล้วนๆ
+
+---
+
+## ลำดับติดตั้งที่ถูก
+
+```text
+[1] ระบบ + git + python3
+[2] ติด AI ที่จะใช้ + login          ← Claude / Cursor / ZCode / Gemini / …
+[3] รัน harness bootstrap            ← ครั้งเดียว
+[4] เปิด AI แล้วทำงาน                ← ไม่ต้องจูน harness เพิ่ม
+```
+
+**ติดตั้ง AI ก่อน → แล้วค่อยติดตั้ง harness**
+
+Harness เป็นชั้นกลาง (`~/.agents`) ที่ผูกเข้ากับเครื่องมือ  
+ติด harness ก่อนก็ได้ (idempotent) แต่แนะนำให้แอปพร้อม login ก่อน แล้ว bootstrap ทีเดียวจบ
+
+สำเนาขั้นตอนยาว: [`NEW_MACHINE.md`](NEW_MACHINE.md)
+
+---
+
+## ขั้นที่ 1 — พื้นฐานเครื่อง
+
+| ต้องมี | หมายเหตุ |
+|--------|----------|
+| macOS หรือ Linux (bash) | |
+| `git` | `xcode-select --install` หรือ `brew install git` |
+| `python3` | macOS มีมาแล้ว |
+| GitHub SSH หรือ HTTPS | clone repo นี้ได้ |
+
+ไม่บังคับ: Homebrew, Node, `skills` CLI
+
+---
+
+## ขั้นที่ 2 — ติดตั้ง AI (เลือกเฉพาะตัวที่ใช้)
+
+ติดตั้งแอป / CLI แล้ว **login ให้เรียบร้อย** ก่อนรัน harness  
+เปิดแอปสักครั้งให้สร้างโฟลเดอร์ config ก็พอ — **ไม่ต้องตั้ง skill เอง**
+
+| เครื่องมือ | ทำอะไร | harness ผูกยังไง |
+|------------|--------|------------------|
+| **Claude Code** | ติด + login | `~/.claude/CLAUDE.md`, skills symlink, plugin defaults (claude-mem / superpowers / caveman) |
+| **Cursor** | ติด + login | `~/.cursor/skills`, rules, commands |
+| **ZCode** | ติด + login | `~/.zcode/AGENTS.md` + skills |
+| **Gemini CLI** | ติด + login | `~/.gemini/GEMINI.md` + skills |
+| **Codex** | ติด + login | อ่าน `~/.agents/skills` native + `AGENTS.md` |
+| **OpenCode** | ติด + login | `~/.config/opencode/AGENTS.md` |
+| **Openclaw** | ถ้าใช้ | skills symlink |
+| **Antigravity / AI อื่น** | ตามผู้ขาย | ไม่ใช่ adapter หลัก — ดูด้านล่าง |
+
+### Antigravity / AI นอกตาราง
+
+Harness **ไม่** ลิงก์ skill เข้า Antigravity อัตโนมัติ
+
+1. ถ้าเครื่องมืออ่าน `~/.agents/skills` เอง → รัน harness พอ  
+2. **อย่า** ใช้ `skills add -a '*'` ก๊อปปี้ไปทั่วเครื่อง  
+3. ให้ชี้ไป `~/.agents/skills` (symlink / `external_dirs`) หรือขอเพิ่ม adapter ใน harness
+
+---
+
+## ขั้นที่ 3 — ติดตั้ง harness (ครั้งเดียว)
+
+```bash
+git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh
+```
+
+SSH ไม่ได้ — ใช้ HTTPS:
+
+```bash
+git clone https://github.com/pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh
+```
+
+`bootstrap.sh` ทำครบ:
+
+1. clone / pull  
+2. `install.sh` → `~/.agents/` (นโยบาย, skills, memory, standards, commands)  
+3. ลิงก์เข้า Claude / Cursor / ZCode / Gemini / …  
+4. ใส่คำสั่ง `harness` ที่ `~/.local/bin`  
+5. เติม Claude plugin defaults (ไม่ทับของเดิม)  
+6. `verify` + `doctor` → ขึ้น **READY**
+
+ถ้า `harness: command not found` — เปิด shell ใหม่ หรือ:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### ถ้าติด harness ก่อน AI
+
+ใช้ได้ — พอติด AI ทีหลัง รันซ้ำ:
+
+```bash
+cd ~/harness-flow && ./install.sh
+```
+
+---
+
+## ขั้นที่ 4 — เปิด AI แล้วทำงาน
+
+1. เปิด **Cursor** หรือ **Claude Code** (หรือตัวอื่นที่ติดไว้) ในโปรเจกต์  
+2. Claude Code ครั้งแรก: ยอมให้ติดตั้งปลั๊กอินที่ settings เปิดไว้  
+3. เริ่มงานได้เลย — ไม่ต้องไปตั้ง skill / `AGENTS.md` ในแต่ละเครื่องมืออีก
+
+ตรวจเมื่อสงสัย:
+
+```bash
+harness doctor
+bash ~/harness-flow/verify.sh
+```
+
+---
+
+## อัปเดต harness ภายหลัง
+
+```bash
+harness update
+```
+
+หรือ:
+
+```bash
+cd ~/harness-flow && git pull && ./install.sh
+```
+
+---
+
+## ได้อะไรบ้าง
+
+- **นโยบายสั้นเสมอ** — classify งาน, ชี้ skill, verify ก่อนบอกทำเสร็จ  
+- **Durable memory ร่วม** — `~/.agents/memory/`  
+- **สกิล ~100+** — Matt spine, `skill-creator`, Superpowers แบบคัดแล้ว  
+- **standards + slash commands** ซิงก์เข้า adapter  
+- **Claude defaults** — claude-mem + superpowers + caveman  
+
+ลำดับ precedence:
 
 ```text
 tool safety → tool settings
@@ -19,98 +155,80 @@ tool safety → tool settings
   → skill ที่เรียก → ข้อความ user → model
 ```
 
-## ติดตั้งเครื่องใหม่ (คำสั่งเดียว)
-
-ต้องมี `git` (macOS แนะนำ Homebrew) และสิทธิ์ clone repo นี้
-
-```bash
-git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && cd ~/harness-flow && ./install.sh && ~/.agents/scripts/harness doctor
-```
-
-จบแล้วได้ `~/.agents/` (นโยบาย, skills, **memory**, standards, commands, scripts) + symlink ไป Claude / Cursor / Codex / Gemini ฯลฯ
-
-อัปเดตภายหลัง:
-
-```bash
-cd ~/harness-flow && git pull && ./install.sh
-```
-
-เช็กลิสต์ละเอียด: [`NEW_MACHINE.md`](NEW_MACHINE.md)
-
-## ได้อะไรบ้าง
-
-- **นโยบายสั้นเสมอ** — classify งาน, ชี้ skill, verify ก่อนบอกทำเสร็จ
-- **Durable memory ร่วม** — `~/.agents/memory/` (preference / สแตกที่ล็อกไว้); episodic ยังอยู่เครื่องมือ (เช่น claude-mem)
-- **สกิล Agent Skills ~100+** ใต้ `skills/` (Matt Pocock, แพ็กโดเมน, …)
-- **standards + slash commands** ซิงก์เข้า adapter
-- **flow เริ่มต้น** (ใน `AGENTS.md`): งานมืด/ใหญ่ → `wayfinder`; ออกแบบ/แพลน → `grilling`; สร้างชัด → `implement`/`tdd`; ก่อนส่งแพลน/สเปก**สุดท้าย** → `scrutinize`
-
-รายละเอียดดีไซน์: [`docs/DESIGN-thinking-flow.md`](docs/DESIGN-thinking-flow.md) · eval: [`docs/eval/thinking-flow/`](docs/eval/thinking-flow/) · ชื่อเรียก: [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md)
+---
 
 ## โครง repo
 
 | พาธ | บทบาท |
 |-----|--------|
-| [`AGENTS.md`](AGENTS.md) | lingua franca (แก้ที่นี่ แล้ว install) |
-| [`memory/`](memory/) | ข้อเท็จจริงถาวรร่วม (index: `MEMORY.md`) — ไม่ใช่ episodic |
-| [`skills/`](skills/) | Agent Skills (`SKILL.md`) |
-| [`standards/`](standards/) | เนื้อกฎ → Cursor `.mdc` ผ่าน `harness rules` |
-| [`commands/`](commands/) | slash commands ร่วม |
-| [`scripts/`](scripts/) | `harness` — `sync` / `rules` / `doctor` |
-| [`adapters/`](adapters/) | snippet บางๆ ต่อเครื่องมือ |
-| [`install.sh`](install.sh) | repo → `~/.agents` (+ลิงก์ adapter) |
-| [`backup.sh`](backup.sh) | สด `~/.agents` → repo นี้ |
-| [`verify.sh`](verify.sh) | ตรวจคร่าวๆ |
+| [`AGENTS.md`](AGENTS.md) | lingua franca |
+| [`memory/`](memory/) | ข้อเท็จจริงถาวร |
+| [`skills/`](skills/) | Agent Skills |
+| [`standards/`](standards/) | → Cursor `.mdc` |
+| [`commands/`](commands/) | slash commands |
+| [`scripts/`](scripts/) | `harness` CLI (`sync` / `rules` / `doctor` / `update`) |
+| [`adapters/`](adapters/) | CLAUDE.md + Claude settings defaults |
+| [`bootstrap.sh`](bootstrap.sh) | เครื่องใหม่ — คำสั่งเดียว |
+| [`install.sh`](install.sh) | repo → `~/.agents` |
+| [`verify.sh`](verify.sh) | ตรวจใน repo |
+| [`NEW_MACHINE.md`](NEW_MACHINE.md) | เช็กลิสต์เครื่องใหม่ (รายละเอียด) |
 
-## ใช้ประจำวัน
+---
 
-**แก้ใน git นี้ แล้ว install** (repo คือ SSOT):
+## ใช้ประจำวัน (แก้เนื้อหา harness)
+
+แก้ใน **git นี้** แล้ว install (repo คือ SSOT):
 
 ```bash
-# แก้ AGENTS.md / skills / standards / commands
 ./install.sh
-~/.agents/scripts/harness doctor
+harness doctor
 ```
-
-`install.sh` คัดลอกนโยบาย/skills/standards/commands/scripts เข้า `~/.agents` สร้าง Cursor rules และ symlink สกิล ถ้า `AGENTS.md` สดต่างจาก git จะสำรองเป็น `~/.agents/AGENTS.md.bak.<timestamp>` แล้วค่อยทับ
 
 ถ้าแก้ที่ `~/.agents` โดยตรง ให้ดึงกลับก่อน install ครั้งถัดไปทับ:
 
 ```bash
 ./backup.sh
-git status   # ตรวจแล้ว commit ใน repo นี้
-./install.sh # ซิงก์ adapter อีกครั้งถ้าต้องการ
+git status
+./install.sh
 ```
 
-CLI หลังติดตั้ง:
+CLI:
 
 ```bash
-~/.agents/scripts/harness sync    # symlink สกิลไป adapter
-~/.agents/scripts/harness rules   # standards → Cursor rules
-~/.agents/scripts/harness doctor  # ตรวจสุขภาพ
+harness sync      # symlink สกิล → adapter
+harness rules     # standards → Cursor rules
+harness doctor    # ตรวจสุขภาพ
+harness update    # pull + install
 ```
 
-## ทางเลือก: AgentMonitor + Hermes
+---
+
+## ทางเลือก — AgentMonitor + Hermes (ออฟฟิศ)
+
+ไม่จำเป็นสำหรับ desk เขียนโค้ด  
+ถ้าต้องการ Pixel office / Telegram — ทำ **หลัง** harness:
 
 ```bash
 git clone git@github.com:pongsathonkheereekaew/agentmonitor.git ~/agentmonitor && cd ~/agentmonitor && ./install.sh
 ```
 
-- Pixel office: http://127.0.0.1:4777
+- Pixel office: http://127.0.0.1:4777  
 - Hermes อ่านสกิลผ่าน `skills.external_dirs → ~/.agents/skills`
-- ไม่บังคับ Telegram
 
-## สิ่งที่ไม่ใส่ใน repo นี้
+---
+
+## สิ่งที่ harness ไม่ทำแทนคุณ
+
+| รายการ | ใครดูแล |
+|--------|---------|
+| Login / API key ของ Cursor, Claude, Gemini, … | คุณในแต่ละแอป |
+| RTK / lowfat | optional (`brew`) |
+| goal-loop hooks แบบเครื่องเก่า | Claude-private ถ้าต้องการภายหลัง |
+| Antigravity adapter เฉพาะ | ยังไม่อยู่ใน harness |
+| secrets / tokens | ห้าม commit |
 
 | อย่าใส่ใน harness-flow | เก็บที่ไหน |
 |------------------------|-----------|
-| Hermes identity / gateway / SOUL | `agentmonitor` → `~/.hermes` |
-| Claude hooks, claude-mem, RTK hooks | `~/.claude` เท่านั้น |
-| secrets / tokens / API keys | ห้าม commit |
-
-## ตรวจว่าติดแล้ว
-
-```bash
-bash ./verify.sh
-~/.agents/scripts/harness doctor
-```
+| Hermes / office | `agentmonitor` |
+| Claude hooks runtime bodies | `~/.claude` (defaults ใส่ให้อัตโนมัติ) |
+| API keys / Telegram tokens | นอก git |

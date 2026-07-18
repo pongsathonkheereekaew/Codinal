@@ -85,8 +85,11 @@ Prefer skills under `~/.agents/skills/` when the task matches their `SKILL.md` d
 | Before claiming done | `verification-before-completion` |
 | Compact for a fresh session | `handoff` |
 | Foggy / huge multi-session | `wayfinder` |
+| Create / optimize a skill | `skill-creator` (Anthropic); principles → `writing-great-skills` |
 
 Everything else (UI, insurance, easby, GCP, …): match by skill description under `~/.agents/skills/` or ask `ask-matt`. Project overlays (`./AGENTS.md`) win for repo-specific constraints.
+
+Do **not** install competing full spines into this folder (GSD whole pack, full Superpowers dump, ultra-review duplicates). Superpowers stays selective (`verification-before-completion`, worktrees, finish-branch) + Claude plugin for fan-out. claude-mem / context-mode stay Claude-private.
 
 ## Durable memory (shared)
 

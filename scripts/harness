@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # Universal ~/.agents harness entrypoint.
-# Usage: harness <sync|rules|doctor|help>
+# Usage: harness <sync|rules|doctor|update|help>
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve symlinks (e.g. ~/.local/bin/harness → ~/.agents/scripts/harness)
+_harness_src="${BASH_SOURCE[0]}"
+while [[ -L "$_harness_src" ]]; do
+  _harness_dir="$(cd -P "$(dirname "$_harness_src")" && pwd)"
+  _harness_src="$(readlink "$_harness_src")"
+  [[ "$_harness_src" != /* ]] && _harness_src="$_harness_dir/$_harness_src"
+done
+ROOT="$(cd -P "$(dirname "$_harness_src")/.." && pwd)"
 SCRIPTS="$ROOT/scripts"
+unset _harness_src _harness_dir
 
 cmd="${1:-help}"
 
@@ -14,6 +22,18 @@ sync_cmd() {
 
 rules_cmd() {
   exec "$SCRIPTS/gen-cursor-rules.sh"
+}
+
+update_cmd() {
+  local repo="${HARNESS_FLOW_HOME:-$HOME/harness-flow}"
+  if [[ ! -d "$repo/.git" ]]; then
+    echo "ERROR: no clone at $repo — run bootstrap once:" >&2
+    echo "  git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh" >&2
+    exit 1
+  fi
+  echo "=== harness update ($repo) ==="
+  git -C "$repo" pull --ff-only
+  "$repo/install.sh"
 }
 
 doctor_cmd() {
@@ -112,11 +132,37 @@ for name in ("verification-before-completion", "ask-matt"):
     if src.exists():
         print(f"optional {name}: OK")
 
-print("\n=== machine probes (non-fatal) ===")
+print("\n=== install-and-go probes ===")
 import shutil
+harness_bin = home / ".local" / "bin" / "harness"
+if harness_bin.is_symlink() or harness_bin.is_file():
+    print(f"PATH harness: OK {harness_bin}")
+else:
+    print("PATH harness: MISSING (~/.local/bin/harness) — re-run ./install.sh")
+which_harness = shutil.which("harness")
+if which_harness:
+    print(f"harness on PATH: OK {which_harness}")
+else:
+    print('harness on PATH: WARN (open a new shell, or export PATH="$HOME/.local/bin:$PATH")')
+skill_creator = skills / "skill-creator"
+print(f"skill-creator: {'OK' if skill_creator.exists() else 'MISSING'}")
+settings = home / ".claude" / "settings.json"
+if settings.is_file():
+    try:
+        import json
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        plugins = data.get("enabledPlugins") or {}
+        for need in ("claude-mem@thedotmack", "superpowers@claude-plugins-official"):
+            print(f"Claude plugin {need}: {'OK' if plugins.get(need) else 'WARN (open Claude Code once to install)'}")
+    except Exception as e:
+        print(f"Claude settings: WARN ({e})")
+else:
+    print("Claude settings: MISSING — re-run ./install.sh")
+
+print("\n=== machine probes (non-fatal) ===")
 for bin_name in ("rtk", "lowfat"):
     path = shutil.which(bin_name)
-    print(f"{bin_name}: {'OK ' + path if path else 'MISSING'}")
+    print(f"{bin_name}: {'OK ' + path if path else 'MISSING (optional)'}")
 
 hermes_cfg = home / ".hermes" / "config.yaml"
 if hermes_cfg.is_file():
@@ -140,7 +186,11 @@ Usage:
   harness sync     Symlink skills + wire AGENTS.md for all adapters
   harness rules    Regenerate ~/.cursor/rules/*.mdc from standards/
   harness doctor   Drift / health check
+  harness update   git pull ~/harness-flow && ./install.sh
   harness help     This text
+
+New machine (once):
+  git clone <repo> ~/harness-flow && ~/harness-flow/bootstrap.sh
 
 Install a skill (once):
   cp -R <skill-dir> ~/.agents/skills/<name>
@@ -159,6 +209,7 @@ case "$cmd" in
   sync) sync_cmd ;;
   rules) rules_cmd ;;
   doctor) doctor_cmd ;;
+  update) update_cmd ;;
   help|-h|--help) help_cmd ;;
   *)
     echo "unknown command: $cmd" >&2
