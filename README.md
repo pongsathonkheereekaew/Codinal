@@ -157,6 +157,24 @@ tool safety → tool settings
 
 ---
 
+## Skill priority / Level-1
+
+Anthropic Agent Skills โหลดแบบ progressive disclosure:
+
+1. **Level 1** — `name` + `description` ของทุก skill ที่ model เรียกได้ (อยู่ใน context ตอน startup)  
+2. **Level 2** — ตัว `SKILL.md` เต็ม เมื่อ skill ถูก trigger  
+3. **Level 3** — `references/` / scripts เมื่อจำเป็น  
+
+ที่ ~100 skill แบบ harness นี้ Level 1 ยังรับได้ — **ไม่ต้อง** ใช้ SkillPointer / hidden vault  
+Priority ที่ถูกสำหรับ desk นี้:
+
+- Router แกนอยู่ใน [`AGENTS.md`](AGENTS.md) และ `ask-matt`  
+- เขียน `description` ให้สั้นและชัด (trigger จริง ไม่ซ้ำใน body)  
+- skill ที่ใช้น้อยมาก ตั้ง `disable-model-invocation: true` เองได้ (ไม่บังคับอัตโนมัติ)  
+- ดูงบประมาณประมาณการ: `harness doctor` → ส่วน **Level-1 skill budget**
+
+---
+
 ## โครง repo
 
 | พาธ | บทบาท |

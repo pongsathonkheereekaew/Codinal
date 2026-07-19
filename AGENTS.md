@@ -108,6 +108,7 @@ Long-lived prefs and locked decisions live in `~/.agents/memory/` (not episodic 
 - **Depth:** trivial → short path; hard/ambiguous → plan first or a heavier model in the *tool adapter* — do not paste hidden chain-of-thought into the user reply.
 - **Survive context limits:** long work → `handoff` / GOAL before rotating the session.
 - **Stdout:** if `rtk` is on `PATH`, prefer `rtk <cmd>` for high-stdout commands (git, grep, find, ls, tree, docker). RTK *hooks* stay Claude-only — not here.
+- **Level-1 skills:** startup cost grows with *model-invoked* skill count (name + description only). Check `harness doctor` — do not install SkillPointer vaults into this folder.
 
 ## Out of scope for this file
 

@@ -16,4 +16,6 @@ git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow &
 4. เปิด AI แล้วทำงาน  
 5. อัปเดตภายหลัง: `harness update`
 
+Level-1 skill budget / priority → ส่วน **Skill priority / Level-1** ใน [`README.md`](README.md) (`harness doctor`)
+
 รายละเอียดตาราง AI / Antigravity / ออฟฟิศ → ดูใน README
