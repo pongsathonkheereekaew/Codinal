@@ -29,6 +29,7 @@ tool safety → tool settings → **this file** → tool adapter (e.g. `~/.claud
 - Never declare done on assumed behavior — prove it (command output, test pass, visible UI, measured value).
 - "Minimal" only above a passing verification floor — minimal **and** correct, never minimal-but-broken.
 - Before claiming complete / fixed / passing: use `verification-before-completion` (fresh command evidence).
+- **3-fail recovery:** if the same fix/debug path fails (or is still broken) across ≥3 turns, stop editing code. Name the assumption that may be wrong. Ask one diagnostic question. Hard bugs → `diagnosing-bugs` (red loop), not more blind patches.
 
 ## Default loop (non-trivial work)
 
@@ -74,6 +75,7 @@ Prefer a matching skill under `~/.agents/skills/` by name (progressive disclosur
 - Writing / typography: `~/.agents/standards/ui-writing.md`
 - Easby DSP / verify gates: `~/.agents/standards/easby-dsp.md`
 - Easby UI: `~/.agents/standards/easby-ui.md`
+- Destructive actions, secrets, verify gates, competing spines → `~/.agents/standards/agent-guardrails.md`
 
 Cursor also gets these via generated `~/.cursor/rules/*.mdc` (`harness rules`), including `agents-policy.mdc` (full `AGENTS.md` bridge — Cursor has no global AGENTS.md). On Easby plugins: never weaken `./verify.sh` / `Tools/verify.py` to force a green run.
 

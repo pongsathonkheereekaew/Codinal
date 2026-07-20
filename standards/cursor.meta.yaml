@@ -20,3 +20,9 @@ easby-ui:
   description: Specific visual identity, layout guidelines, and UI specs for Easby Studio plugins
   globs: "**/Downloads/Easby Plugins/**/*"
   alwaysApply: false
+
+agent-guardrails:
+  body: agent-guardrails.md
+  out: agent-guardrails.mdc
+  description: Destructive actions, secrets, verify gates, and install/spine guardrails
+  alwaysApply: false
