@@ -141,11 +141,19 @@ cd ~/harness-flow && git pull && ./install.sh
 
 ## ได้อะไรบ้าง
 
-- **นโยบายสั้นเสมอ** — classify งาน, ชี้ skill, verify ก่อนบอกทำเสร็จ  
+- **ตรา:** multi-AI harness alignment — นโยบายบางร่วมกัน + สกิลเรียกเมื่อใช้  
+- **นโยบายสั้นเสมอ** — classify งาน, ชี้ skill, verify ก่อนบอกทำเสร็จ, 3-fail recovery  
 - **Durable memory ร่วม** — `~/.agents/memory/`  
-- **สกิล ~100+** — Matt spine, `skill-creator`, Superpowers แบบคัดแล้ว  
-- **standards + slash commands** ซิงก์เข้า adapter  
+- **สกิล ~100+** — Matt spine, `skill-creator`, Superpowers แบบคัดแล้ว; แพ็ก GCP/Google เป็น **user-invoked** (ไม่กิน Level-1)  
+- **standards + slash commands** ซิงก์เข้า adapter (รวม `agent-guardrails` แบบ on-demand)  
+- **Cursor** ได้ policy ผ่าน `agents-policy.mdc` (ไม่มี global `AGENTS.md` ใน Cursor)  
 - **Claude defaults** — claude-mem + superpowers + caveman  
+
+### สกิลตัวอย่างที่ vendored
+
+| Skill | ใช้เมื่อ | หมายเหตุ |
+|-------|---------|----------|
+| [`mac-storage-cleanup`](skills/mac-storage-cleanup/) | สแกนพื้นที่ว่าง macOS / เสนอรายการลบ | audit ก่อนลบ; **อย่า** `npx codex-mac-storage-cleanup` (ทำลาย SSOT) — อัปเดตใน repo นี้แล้ว `harness sync` |
 
 ลำดับ precedence:
 
@@ -172,8 +180,9 @@ Priority ที่ถูกสำหรับ desk นี้:
 
 - Router แกนอยู่ใน [`AGENTS.md`](AGENTS.md) และ `ask-matt`  
 - เขียน `description` ให้สั้นและชัด (trigger จริง ไม่ซ้ำใน body)  
-- skill ที่ใช้น้อยมาก ตั้ง `disable-model-invocation: true` เองได้ (ไม่บังคับอัตโนมัติ)  
-- ดูงบประมาณประมาณการ: `harness doctor` → ส่วน **Level-1 skill budget**
+- skill ที่ใช้น้อยมาก ตั้ง `disable-model-invocation: true` เองได้ (GCP/Google packs ใน repo นี้ตั้งไว้แล้ว)  
+- ดูงบประมาณประมาณการ: `harness doctor` → ส่วน **Level-1 skill budget**  
+- หลังแก้ policy/rules: ดู smoke มือที่ [`docs/eval/harness-smoke/`](docs/eval/harness-smoke/)
 
 ---
 
