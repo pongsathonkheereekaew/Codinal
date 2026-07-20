@@ -1,5 +1,6 @@
 ---
 name: gke-backup-dr
+disable-model-invocation: true
 description: >-
   Configures GKE Backup Plans and restore workflows. Use for backup policies,
   disaster recovery, or GKE cluster restores. Don't use for database backups.

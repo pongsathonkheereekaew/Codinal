@@ -1,5 +1,6 @@
 ---
 name: gke-upgrades
+disable-model-invocation: true
 metadata:
   category: Containers
 description: >-

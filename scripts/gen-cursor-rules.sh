@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Generate ~/.cursor/rules/*.mdc from ~/.agents/standards body + cursor.meta.yaml
+# Generate ~/.cursor/rules/*.mdc from ~/.agents/standards + AGENTS.md bridge.
+# Cursor has no global AGENTS.md — policy is alwaysApply agents-policy.mdc.
 set -euo pipefail
 
 AGENTS_HOME="${AGENTS_HOME:-$HOME/.agents}"
 STANDARDS="$AGENTS_HOME/standards"
 META="$STANDARDS/cursor.meta.yaml"
+POLICY="$AGENTS_HOME/AGENTS.md"
 OUT_DIR="${CURSOR_RULES_DIR:-$HOME/.cursor/rules}"
 
-python3 - "$STANDARDS" "$META" "$OUT_DIR" <<'PY'
+python3 - "$STANDARDS" "$META" "$OUT_DIR" "$POLICY" <<'PY'
 import sys, os, re
 from pathlib import Path
 
-standards, meta_path, out_dir = map(Path, sys.argv[1:])
+standards, meta_path, out_dir, policy_path = map(Path, sys.argv[1:])
 out_dir.mkdir(parents=True, exist_ok=True)
 
 # Minimal YAML subset parser for our meta format (no PyYAML dependency).
@@ -72,4 +74,26 @@ for key, cfg in entries.items():
     out_path = out_dir / out_name
     out_path.write_text(header + "\n".join(fm) + "\n" + body, encoding="utf-8")
     print(f"wrote {out_path}")
+
+# Cursor has no global AGENTS.md (product gap). Bridge via alwaysApply rule.
+if not policy_path.is_file():
+    raise SystemExit(f"missing policy: {policy_path}")
+policy_body = policy_path.read_text(encoding="utf-8").lstrip("\n")
+if not policy_body.endswith("\n"):
+    policy_body += "\n"
+policy_header = (
+    "<!-- GENERATED from ~/.agents/AGENTS.md — do not edit by hand.\n"
+    "     Cursor has no global AGENTS.md; this alwaysApply rule is the bridge.\n"
+    "     Regenerate: ~/.agents/scripts/gen-cursor-rules.sh -->\n"
+)
+policy_fm = [
+    "---",
+    "description: Universal agent policy (bridged from ~/.agents/AGENTS.md)",
+    "alwaysApply: true",
+    "---",
+    "",
+]
+policy_out = out_dir / "agents-policy.mdc"
+policy_out.write_text(policy_header + "\n".join(policy_fm) + "\n" + policy_body, encoding="utf-8")
+print(f"wrote {policy_out}")
 PY

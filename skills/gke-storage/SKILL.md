@@ -1,5 +1,6 @@
 ---
 name: gke-storage
+disable-model-invocation: true
 description: >-
   Manages GKE storage, including PVCs, PersistentVolumes, Filestore, and GCS
   FUSE. Use when configuring GKE storage, creating PVCs, or setting up GCS FUSE

@@ -1,5 +1,6 @@
 ---
 name: cloud-run-basics
+disable-model-invocation: true
 metadata:
   category: Serverless
 description: >-

@@ -1,5 +1,6 @@
 ---
 name: google-cloud-recipe-onboarding
+disable-model-invocation: true
 metadata:
   category: GettingStarted
 description: >-

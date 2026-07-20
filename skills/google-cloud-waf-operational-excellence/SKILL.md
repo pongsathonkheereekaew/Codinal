@@ -1,5 +1,6 @@
 ---
 name: google-cloud-waf-operational-excellence
+disable-model-invocation: true
 metadata:
   category: WellArchitectedFramework
 description: >-

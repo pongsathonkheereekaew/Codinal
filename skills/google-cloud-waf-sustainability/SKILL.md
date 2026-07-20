@@ -1,5 +1,6 @@
 ---
 name: google-cloud-waf-sustainability
+disable-model-invocation: true
 metadata:
   category: WellArchitectedFramework
 description: >-

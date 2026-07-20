@@ -1,5 +1,6 @@
 ---
 name: agent-platform-migrate-from-ai-studio
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

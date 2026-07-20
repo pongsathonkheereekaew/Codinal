@@ -1,5 +1,6 @@
 ---
 name: workload-manager-basics
+disable-model-invocation: true
 metadata:
   category: CloudObservabilityAndMonitoring
 description: >-

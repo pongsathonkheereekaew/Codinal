@@ -1,5 +1,6 @@
 ---
 name: agent-platform-alert-configuration
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

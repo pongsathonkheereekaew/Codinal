@@ -1,5 +1,6 @@
 ---
 name: agent-platform-deploy
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

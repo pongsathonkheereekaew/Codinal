@@ -1,5 +1,6 @@
 ---
 name: gke-reliability
+disable-model-invocation: true
 description: >-
   Improves GKE workload reliability, using PDBs, health probes, and topology
   spread constraints. Use when configuring GKE workload reliability, setting up

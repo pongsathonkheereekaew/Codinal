@@ -1,5 +1,6 @@
 ---
 name: gke-cluster-autoscaler
+disable-model-invocation: true
 metadata:
   category: Containers
 description: >-

@@ -1,5 +1,6 @@
 ---
 name: detection-engineering-coverage-evaluation
+disable-model-invocation: true
 metadata:
   category: Security
 description: >-

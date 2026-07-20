@@ -1,5 +1,6 @@
 ---
 name: agent-platform-skill-registry
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >

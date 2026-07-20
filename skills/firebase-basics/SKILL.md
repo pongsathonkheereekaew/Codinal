@@ -1,5 +1,6 @@
 ---
 name: firebase-basics
+disable-model-invocation: true
 metadata:
   category: Serverless
 description: Use this skill whenever you are working on a project that uses Firebase products or services, especially for mobile or web apps.

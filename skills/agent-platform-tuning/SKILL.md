@@ -1,5 +1,6 @@
 ---
 name: agent-platform-tuning
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

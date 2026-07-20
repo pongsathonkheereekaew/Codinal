@@ -1,5 +1,6 @@
 ---
 name: gcloud
+disable-model-invocation: true
 metadata:
   category: DevOps
 description: >-

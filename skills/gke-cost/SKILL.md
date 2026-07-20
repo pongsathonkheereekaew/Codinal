@@ -1,5 +1,6 @@
 ---
 name: gke-cost
+disable-model-invocation: true
 description: >-
   Optimizes GKE costs, rightsizes workloads, and configures Spot VMs and CUDs.
   Use when optimizing GKE costs, rightsizing GKE workloads, or configuring GKE

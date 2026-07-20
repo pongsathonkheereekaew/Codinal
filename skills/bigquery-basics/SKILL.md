@@ -1,5 +1,6 @@
 ---
 name: bigquery-basics
+disable-model-invocation: true
 metadata:
   category: BigDataAndAnalytics
 description: >-

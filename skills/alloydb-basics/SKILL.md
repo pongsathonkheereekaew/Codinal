@@ -1,5 +1,6 @@
 ---
 name: alloydb-basics
+disable-model-invocation: true
 metadata:
   category: Databases
 description: >-

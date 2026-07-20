@@ -1,5 +1,6 @@
 ---
 name: iam-recommendations-fetcher
+disable-model-invocation: true
 metadata:
   category: Identity
 description: >-

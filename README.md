@@ -53,7 +53,7 @@ Harness เป็นชั้นกลาง (`~/.agents`) ที่ผูกเ
 | เครื่องมือ | ทำอะไร | harness ผูกยังไง |
 |------------|--------|------------------|
 | **Claude Code** | ติด + login | `~/.claude/CLAUDE.md`, skills symlink, plugin defaults (claude-mem / superpowers / caveman) |
-| **Cursor** | ติด + login | `~/.cursor/skills`, rules, commands |
+| **Cursor** | ติด + login | `~/.cursor/skills`, `rules` (รวม `agents-policy.mdc` จาก AGENTS.md), commands |
 | **ZCode** | ติด + login | `~/.zcode/AGENTS.md` + skills |
 | **Gemini CLI** | ติด + login | `~/.gemini/GEMINI.md` + skills |
 | **Codex** | ติด + login | อ่าน `~/.agents/skills` native + `AGENTS.md` |

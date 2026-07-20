@@ -1,5 +1,6 @@
 ---
 name: agent-platform-rag-engine-management
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

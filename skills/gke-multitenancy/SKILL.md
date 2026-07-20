@@ -1,5 +1,6 @@
 ---
 name: gke-multitenancy
+disable-model-invocation: true
 description: >-
   Plans and configures multi-tenancy on GKE. Covers namespace isolation, RBAC
   planning for teams, resource quotas, LimitRanges, network isolation, and

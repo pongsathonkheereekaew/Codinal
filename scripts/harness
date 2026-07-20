@@ -101,6 +101,18 @@ for dest in policy_links:
     else:
         print(f"MISSING {dest}")
 
+# Cursor: no global AGENTS.md — alwaysApply agents-policy.mdc is the bridge
+cursor_policy = home / ".cursor" / "rules" / "agents-policy.mdc"
+if cursor_policy.is_file():
+    ctext = cursor_policy.read_text(encoding="utf-8", errors="replace")
+    ok = (
+        "alwaysApply: true" in ctext
+        and "AGENTS.md — universal agent policy" in ctext
+    )
+    print(f"Cursor agents-policy.mdc: {'OK' if ok else 'WARN (stale — run: harness rules)'}")
+else:
+    print("Cursor agents-policy.mdc: MISSING (run: harness rules) — Cursor has no global AGENTS.md")
+
 print("\n=== native ~/.agents/skills readers (no adapter required) ===")
 print("  Codex, Gemini CLI, OpenCode — discover ~/.agents/skills directly")
 

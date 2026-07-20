@@ -1,5 +1,6 @@
 ---
 name: gke-basics
+disable-model-invocation: true
 metadata:
   category: Containers
 description: >-

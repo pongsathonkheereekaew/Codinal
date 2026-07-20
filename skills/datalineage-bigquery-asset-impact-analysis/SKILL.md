@@ -1,5 +1,6 @@
 ---
 name: datalineage-bigquery-asset-impact-analysis
+disable-model-invocation: true
 metadata:
   category: BigDataAndAnalytics
 description: >-

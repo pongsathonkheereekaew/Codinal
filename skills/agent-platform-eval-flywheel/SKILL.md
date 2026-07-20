@@ -1,5 +1,6 @@
 ---
 name: agent-platform-eval-flywheel
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

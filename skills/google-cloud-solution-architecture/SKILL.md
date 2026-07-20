@@ -1,5 +1,6 @@
 ---
 name: google-cloud-solution-architecture
+disable-model-invocation: true
 metadata:
   category: GettingStarted
 description: >-

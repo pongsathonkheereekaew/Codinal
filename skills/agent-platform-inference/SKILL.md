@@ -1,5 +1,6 @@
 ---
 name: agent-platform-inference
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

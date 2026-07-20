@@ -1,5 +1,6 @@
 ---
 name: agent-platform-endpoint-management
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

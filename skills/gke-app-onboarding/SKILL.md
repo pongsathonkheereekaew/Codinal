@@ -1,5 +1,6 @@
 ---
 name: gke-app-onboarding
+disable-model-invocation: true
 description: >-
   Manages GKE application onboarding, covering containerization, deployment
   manifests, and migration. Use when onboarding or deploying an application to

@@ -1,5 +1,6 @@
 ---
 name: google-cloud-waf-performance-optimization
+disable-model-invocation: true
 metadata:
   category: WellArchitectedFramework
 description: >-

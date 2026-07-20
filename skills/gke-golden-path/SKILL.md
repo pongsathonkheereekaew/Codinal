@@ -1,5 +1,6 @@
 ---
 name: gke-golden-path
+disable-model-invocation: true
 description: >-
   Provides GKE golden path configuration defaults, production readiness
   checklists, and cluster default patterns. Use when designing GKE clusters,

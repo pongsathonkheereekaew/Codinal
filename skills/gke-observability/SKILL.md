@@ -1,5 +1,6 @@
 ---
 name: gke-observability
+disable-model-invocation: true
 description: >-
   Configures GKE observability, including Cloud Logging, Cloud Monitoring, and
   managed Prometheus. Use when configuring GKE monitoring, setting up GKE logging,

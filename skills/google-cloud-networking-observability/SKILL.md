@@ -1,5 +1,6 @@
 ---
 name: google-cloud-networking-observability
+disable-model-invocation: true
 metadata:
   category: Compute
 description: >-

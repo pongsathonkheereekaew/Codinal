@@ -1,5 +1,6 @@
 ---
 name: gke-networking
+disable-model-invocation: true
 description: >-
   Plans, configures, and manages GKE networking. Covers private clusters, VPC-
   native configurations, Gateway API, DNS, ingress/egress, Dataplane V2, and

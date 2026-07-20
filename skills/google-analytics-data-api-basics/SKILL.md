@@ -1,5 +1,6 @@
 ---
 name: google-analytics-data-api-basics
+disable-model-invocation: true
 metadata:
   category: GoogleAnalytics
 description: >-

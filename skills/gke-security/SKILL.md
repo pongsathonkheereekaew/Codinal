@@ -1,5 +1,6 @@
 ---
 name: gke-security
+disable-model-invocation: true
 description: >-
   Plans, configures, and hardens Google Kubernetes Engine (GKE) security.
   Covers Workload Identity Federation, Secret Manager integration, RBAC

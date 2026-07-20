@@ -14,6 +14,10 @@ tool safety → tool settings → **this file** → tool adapter (e.g. `~/.claud
 - If you need more info, ask briefly.
 - If code is self-explanatory, don't explain it.
 - When suggesting edits: prefer specific diff hunks, not entire files. If a file is >100 lines, summarize structure before reading it whole. Don't dump large files into the reply.
+- **Action-first (execute path):** when the reply is a fix, command, or next step — first line is something doable now (command, path+line, or step 1). Skip preamble ("Great question", "Let me…", "Sure!"). Does not override `grilling`, "explain", or destructive-confirm paths.
+- **Multi-step:** number the steps; one bounded action per step.
+- **Open work:** if anything remains, end with one `Next:` line (under ~two minutes). No "hope this helps" / "let me know if…" closers.
+- **Lists:** cap at 5; if more, split **do now** vs **later** (or must vs nice-to-have).
 
 ## Autonomy & done
 
@@ -69,7 +73,7 @@ Prefer a matching skill under `~/.agents/skills/` by name (progressive disclosur
 - Easby DSP / verify gates: `~/.agents/standards/easby-dsp.md`
 - Easby UI: `~/.agents/standards/easby-ui.md`
 
-Cursor also gets these via generated `~/.cursor/rules/*.mdc` (`harness rules`). On Easby plugins: never weaken `./verify.sh` / `Tools/verify.py` to force a green run.
+Cursor also gets these via generated `~/.cursor/rules/*.mdc` (`harness rules`), including `agents-policy.mdc` (full `AGENTS.md` bridge — Cursor has no global AGENTS.md). On Easby plugins: never weaken `./verify.sh` / `Tools/verify.py` to force a green run.
 
 ## Skills (core router — keep always-on thin)
 

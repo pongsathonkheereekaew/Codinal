@@ -1,5 +1,6 @@
 ---
 name: gke-cluster-creation
+disable-model-invocation: true
 description: >-
   Plans and executes GKE cluster creation, provisioning, and production
   readiness audits. Use when creating GKE clusters, provisioning GKE

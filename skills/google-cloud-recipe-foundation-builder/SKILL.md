@@ -1,5 +1,6 @@
 ---
 name: google-cloud-recipe-foundation-builder
+disable-model-invocation: true
 metadata:
   category: GettingStarted
 description: >-

@@ -1,5 +1,6 @@
 ---
 name: bigquery-ai-ml
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

@@ -41,6 +41,8 @@ git clone …/agentmonitor && cd agentmonitor && ./install.sh
 tool safety → tool settings → ~/.agents/AGENTS.md → adapter → project AGENTS.md → skill → user → model
 ```
 
+**Cursor note:** product has no global `AGENTS.md`. `harness rules` writes `~/.cursor/rules/agents-policy.mdc` (`alwaysApply: true`) from `~/.agents/AGENTS.md`.
+
 ## What not to put here
 
 - Hermes identity / gateway → `agentmonitor` repo → `~/.hermes`

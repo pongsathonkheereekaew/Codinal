@@ -1,5 +1,6 @@
 ---
 name: google-agents-cli-onboarding
+disable-model-invocation: true
 metadata:
   category: DevOps
 description: >-

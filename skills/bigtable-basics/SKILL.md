@@ -1,5 +1,6 @@
 ---
 name: bigtable-basics
+disable-model-invocation: true
 metadata:
   category: Databases
 description: >-

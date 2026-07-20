@@ -1,5 +1,6 @@
 ---
 name: agent-platform-prompt-management
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

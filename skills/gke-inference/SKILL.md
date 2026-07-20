@@ -1,5 +1,6 @@
 ---
 name: gke-inference
+disable-model-invocation: true
 description: >-
   Deploys and optimizes AI/ML inference workloads on GKE, using GPUs, TPUs, and
   model servers. Use when deploying GKE inference servers, configuring GKE GPU

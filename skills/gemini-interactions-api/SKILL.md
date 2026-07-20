@@ -1,5 +1,6 @@
 ---
 name: gemini-interactions-api
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: Guides the usage of Gemini Interactions API on Gemini Enterprise Agent Platform. Use when the user wants to use the stateful, server-managed Interactions API for multi-turn conversations, background execution, streaming, structured output, and function calling on the Agent Platform.

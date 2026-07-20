@@ -1,5 +1,6 @@
 ---
 name: bigquery-bigframes
+disable-model-invocation: true
 metadata:
   category: BigDataAndAnalytics
 description: >-

@@ -1,5 +1,6 @@
 ---
 name: google-cloud-solution-agentic-ai-bidirectional-streaming
+disable-model-invocation: true
 metadata:
   category: AiAndMachineLearning
 description: >-

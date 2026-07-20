@@ -1,5 +1,6 @@
 ---
 name: gke-compute-classes
+disable-model-invocation: true
 description: >-
   Configures, optimizes, and troubleshoots GKE ComputeClasses. Use when configuring Spot VMs with on-demand fallback, targeting specific accelerators (GPUs/TPUs) or machine families, restricting ComputeClass access, or debugging pending pods related to node pool auto-creation. Do not use for cluster-level Node Auto Provisioning configuration or general GKE cluster creation.
 metadata:

@@ -1,5 +1,6 @@
 ---
 name: gke-scaling
+disable-model-invocation: true
 description: >-
   Configures GKE autoscaling, including HPA, VPA, and Node Auto-Provisioning
   (NAP). Use when configuring GKE autoscaling, setting up GKE HPA, setting up

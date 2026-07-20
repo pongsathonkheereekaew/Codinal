@@ -1,5 +1,6 @@
 ---
 name: gke-batch-hpc
+disable-model-invocation: true
 description: >-
   Runs batch and HPC workloads on GKE, utilizing job queues and parallel
   processing. Use when running GKE batch jobs, configuring GKE HPC, or setting
