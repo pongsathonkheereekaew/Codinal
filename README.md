@@ -1,5 +1,7 @@
 # harness-flow — Agent Harness
 
+**ตรา:** multi-AI harness alignment — นโยบายบางร่วมกันทุกเครื่องมือ + สกิลเรียกเมื่อใช้ (ไม่ยัดทุกโดเมนเข้า always-on)
+
 **นโยบาย + สกิลร่วม** สำหรับทุก coding agent  
 ติดตั้งครั้งเดียว → เปิด Cursor / Claude / ZCode / Gemini แล้วทำงานได้เลย ไม่ต้องจูน harness ทีละตัว
 

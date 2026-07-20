@@ -1,5 +1,7 @@
 # AGENTS.md — universal agent policy
 
+**Badge:** multi-AI harness alignment — one thin always-on policy + on-demand skills, same behavior across coding agents. Domain depth (UI, cloud, Easby, …) lives in skills, not in this file.
+
 Shared always-on instructions for **every** coding agent / CLI / IDE that can load this file (Claude Code, Cursor, Openclaw, and others). Tool-private runtime (hooks, auth, chats, plugin markets) stays outside `~/.agents/`.
 
 **Precedence (high → low within instruction layers):**  

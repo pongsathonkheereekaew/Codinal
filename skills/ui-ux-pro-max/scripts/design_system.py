@@ -222,8 +222,8 @@ class DesignSystemGenerator:
                 "notes": best_color.get("Notes", "")
             },
             "typography": {
-                "heading": best_typography.get("Heading Font", "Inter"),
-                "body": best_typography.get("Body Font", "Inter"),
+                "heading": best_typography.get("Heading Font", "Fraunces"),
+                "body": best_typography.get("Body Font", "Source Sans 3"),
                 "mood": best_typography.get("Mood/Style Keywords", reasoning.get("typography_mood", "")),
                 "best_for": best_typography.get("Best For", ""),
                 "google_fonts_url": best_typography.get("Google Fonts URL", ""),
@@ -591,8 +591,8 @@ def format_master_md(design_system: dict) -> str:
     # Typography
     lines.append("### Typography")
     lines.append("")
-    lines.append(f"- **Heading Font:** {typography.get('heading', 'Inter')}")
-    lines.append(f"- **Body Font:** {typography.get('body', 'Inter')}")
+    lines.append(f"- **Heading Font:** {typography.get('heading', 'Fraunces')}")
+    lines.append(f"- **Body Font:** {typography.get('body', 'Source Sans 3')}")
     if typography.get("mood"):
         lines.append(f"- **Mood:** {typography.get('mood', '')}")
     if typography.get("google_fonts_url"):
