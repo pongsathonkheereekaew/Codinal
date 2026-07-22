@@ -11,6 +11,6 @@ Solo developer + designer (programming/coding primary, design secondary). Thai s
 
 Strong preference for **token efficiency**: runs caveman (ultra) prose compression + rtk/lowfat bash compression. Wants extreme concision, modified snippets not full files, no filler (see ~/.claude/CLAUDE.md style rules).
 
-Values lean, deconflicted tooling over feature-piling — when offered "add a repo," the right default is usually subtract, not add. Has domain skills: insurance (Tokio Marine commission/premium, Thai financial statements), nuiny persona, graphify, easby (audio plugin RE/DSP).
+Values lean, deconflicted tooling over feature-piling — when offered "add a repo," the right default is usually subtract, not add. Domain entry: skill `desk-domains` (ของ = easby/DSP/music; คน = insurance/nuiny/management-talk). Also graphify.
 
 Works on macOS, opusplan model.
