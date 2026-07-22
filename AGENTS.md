@@ -1,125 +1,79 @@
 # AGENTS.md — universal agent policy
 
-**Badge:** multi-AI harness alignment — one thin always-on policy + on-demand skills, same behavior across coding agents. Domain depth (UI, cloud, Easby, …) lives in skills, not in this file.
+**Badge:** multi-AI harness alignment — thin always-on policy + on-demand skills. Domain depth lives in skills, not here.
 
-Shared always-on instructions for **every** coding agent / CLI / IDE that can load this file (Claude Code, Cursor, Openclaw, and others). Tool-private runtime (hooks, auth, chats, plugin markets) stays outside `~/.agents/`.
+**Precedence:** tool safety → tool settings → **this file** → tool adapter → project `./AGENTS.md` / `./CLAUDE.md` → skill → user → model.
 
-**Precedence (high → low within instruction layers):**  
-tool safety → tool settings → **this file** → tool adapter (e.g. `~/.claude/CLAUDE.md`, Cursor `.mdc`) → project `./AGENTS.md` or `./CLAUDE.md` → invoked skill → user message → model.
+Tool-private runtime (hooks, auth, plugin markets) stays outside `~/.agents/`.
 
 ---
 
 ## Communication
 
-- Be extremely concise. No yapping, no conversational filler.
-- Answer in the language of the user's message. Translate to Thai **only** when asked (e.g. "แปล", "ตอบไทย").
-- If you need more info, ask briefly.
-- If code is self-explanatory, don't explain it.
-- When suggesting edits: prefer specific diff hunks, not entire files. If a file is >100 lines, summarize structure before reading it whole. Don't dump large files into the reply.
-- **Action-first (execute path):** when the reply is a fix, command, or next step — first line is something doable now (command, path+line, or step 1). Skip preamble ("Great question", "Let me…", "Sure!"). Does not override `grilling`, "explain", or destructive-confirm paths.
-- **Multi-step:** number the steps; one bounded action per step.
-- **Open work:** if anything remains, end with one `Next:` line (under ~two minutes). No "hope this helps" / "let me know if…" closers.
-- **Lists:** cap at 5; if more, split **do now** vs **later** (or must vs nice-to-have).
+- Extremely concise. No filler. Language of the user; Thai only when asked.
+- Prefer specific diff hunks; if a file is >100 lines, summarize before reading whole.
+- **Action-first** (execute path): first line is doable now. Skip preamble.
+- Multi-step: numbered, one bounded action each. Open work → one `Next:` line (<~2 min).
+- Lists: cap 5; else split do-now vs later.
 
 ## Autonomy & done
 
-- Run long tasks to completion. Self-verify before declaring done (build fingerprint, tests, measurements, or the observation the task named).
-- Do not stall on "done?".
-- Surgical changes. Surface assumptions. Define verifiable success criteria before claiming success.
-- Never declare done on assumed behavior — prove it (command output, test pass, visible UI, measured value).
-- "Minimal" only above a passing verification floor — minimal **and** correct, never minimal-but-broken.
-- Before claiming complete / fixed / passing: use `verification-before-completion` (fresh command evidence).
-- **3-fail recovery:** if the same fix/debug path fails (or is still broken) across ≥3 turns, stop editing code. Name the assumption that may be wrong. Ask one diagnostic question. Hard bugs → `diagnosing-bugs` (red loop), not more blind patches.
+- Finish long tasks. Surgical changes. Surface assumptions. Name verifiable done criteria.
+- Never declare done on assumed behavior — prove it (command, test, UI, measurement).
+- Minimal **and** correct. Before complete/fixed/passing → `verification-before-completion`.
+- **3-fail recovery:** same path fails ≥3 turns → stop editing, name the bad assumption, ask one diagnostic. Hard bugs → `diagnosing-bugs`.
 
-## Default loop (non-trivial work)
+## Default loop
 
-Skip this only when the task is trivial (one file, ~<10 lines, no new behavior, no searching): do it, one obvious check, two sentences.
+Trivial (one file, ~<10 lines, no new behavior): do it, one check, two sentences.
 
-Otherwise:
+Else:
 
-1. **Classify** — one path (never force grilling + wayfinder together):
+1. **Classify** — one path (never `grilling` + `wayfinder` together):
    - question / assessment → answer; change nothing unless asked
    - foggy / greenfield / multi-week map missing → `wayfinder`
    - design / plan / ambiguous / irreversible → `grilling` (+ `domain-modeling` in-repo when useful)
    - clear build in a known repo → `implement` / `tdd`
    - hard bug → `diagnosing-bugs`
-2. **Final plan gate** — before presenting a plan/spec as final → run `scrutinize`; fix or mark rework. No `finalize-plan` skill.
-3. **Define done** — name the verification (test, build, measured value, visible result).
-4. **Evidence** — primary sources; parallel lookups when the harness allows; intent before behavior-changing edits.
-5. **Decide** — one recommendation; then act surgically (smallest correct change).
-6. **Verify** — observe the done criterion; use `verification-before-completion` before any success claim.
-7. **Report** — outcome first, honest caveats.
+2. Final plan/spec → `scrutinize` (no `finalize-plan`).
+3. Define done → evidence → decide → act surgically → verify → report (outcome first).
 
-Prefer a matching skill under `~/.agents/skills/` by name (progressive disclosure — don't paste Ask Matt every turn). Full graph: user invokes `ask-matt`.
+Match skills under `~/.agents/skills/` by description. Full graph: `ask-matt`. Your desk domains (ของ/คน): `desk-domains`.
 
-## Where content lives (one install place)
+## SSOT
 
 | What | Path |
 |------|------|
-| Skills | `~/.agents/skills/<name>/` only |
-| Durable prefs / facts | `~/.agents/memory/` (index: `MEMORY.md`) |
-| Shared rules (bodies) | `~/.agents/standards/` |
-| Shared slash commands | `~/.agents/commands/` |
-| This policy | `~/.agents/AGENTS.md` |
+| Skills / memory / standards / commands / this policy | `~/.agents/…` |
 
 ```bash
-~/.agents/scripts/harness sync    # after adding skills
-~/.agents/scripts/harness rules   # after editing standards
-~/.agents/scripts/harness doctor  # health check
+harness sync | rules | doctor | update
 ```
 
-**Never** maintain parallel real copies under tool skill dirs — those are symlink adapters (or native readers of `~/.agents/skills`). Never write into `~/.cursor/skills-cursor/` (product-managed).
+Symlink adapters only — never real copies under tool skill dirs; never write `~/.cursor/skills-cursor/`.
 
-## Standards (load when relevant)
+**Standards (on demand):** `ui-writing`, `easby-dsp`, `easby-ui`, `agent-guardrails`. Cursor: `harness rules` → `agents-policy.mdc` + standards. Easby: never weaken `./verify.sh` / `Tools/verify.py`.
 
-- Writing / typography: `~/.agents/standards/ui-writing.md`
-- Easby DSP / verify gates: `~/.agents/standards/easby-dsp.md`
-- Easby UI: `~/.agents/standards/easby-ui.md`
-- Destructive actions, secrets, verify gates, competing spines → `~/.agents/standards/agent-guardrails.md`
-
-Cursor also gets these via generated `~/.cursor/rules/*.mdc` (`harness rules`), including `agents-policy.mdc` (full `AGENTS.md` bridge — Cursor has no global AGENTS.md). On Easby plugins: never weaken `./verify.sh` / `Tools/verify.py` to force a green run.
-
-## Skills (core router — keep always-on thin)
-
-Prefer skills under `~/.agents/skills/` when the task matches their `SKILL.md` description. Do not install a second full suite that duplicates flows already there.
+## Skills router
 
 | Job | Skill |
 |-----|--------|
-| Unsure which flow (user) | `ask-matt` |
-| Design / stress-test a plan | `grilling` |
-| Before final plan / PR review | `scrutinize` |
-| Implement / TDD | `implement`, `tdd` |
-| Hard bugs | `diagnosing-bugs` |
-| Before claiming done | `verification-before-completion` |
-| Compact for a fresh session | `handoff` |
-| Foggy / huge multi-session | `wayfinder` |
-| Create / optimize a skill | `skill-creator` (Anthropic); principles → `writing-great-skills` |
+| Unsure which flow | `ask-matt` |
+| ของ (product/DSP/music) or คน (insurance/client/exec rewrite) | `desk-domains` |
+| Plan / grill | `grilling` → `scrutinize` before final |
+| Build / TDD / bugs | `implement`, `tdd`, `diagnosing-bugs` |
+| Done gate / handoff / fog | `verification-before-completion`, `handoff`, `wayfinder` |
+| New skill | `skill-creator`; craft → `writing-great-skills` |
 
-Everything else (UI, insurance, easby, GCP, …): match by skill description under `~/.agents/skills/` or ask `ask-matt`. Project overlays (`./AGENTS.md`) win for repo-specific constraints.
+No competing full spines in `~/.agents` (GSD whole pack, full Superpowers dump, 2nd episodic memory). Superpowers stays selective. claude-mem = Claude-private.
 
-Do **not** install competing full spines into this folder (GSD whole pack, full Superpowers dump, ultra-review duplicates). Superpowers stays selective (`verification-before-completion`, worktrees, finish-branch) + Claude plugin for fan-out. claude-mem / context-mode stay Claude-private.
+## Memory & context
 
-## Durable memory (shared)
+- Durable prefs: `~/.agents/memory/` — read `MEMORY.md`, then only relevant files. No whole-folder dump. No 2nd auto-capture stack.
+- Narrow reads. Broad explore (>~3 files) → subagent when available. Parallel independent sub-tasks.
+- Depth matches difficulty (adapter picks model/effort). Near context limit → `handoff`.
+- If `rtk` on `PATH`, prefer it for high-stdout cmds. Level-1: short descriptions; rare packs → `disable-model-invocation`; no SkillPointer vaults.
 
-Long-lived prefs and locked decisions live in `~/.agents/memory/` (not episodic chat recall).
+## Out of scope here
 
-- When preference / stack / “never do X” / topology matters → read `MEMORY.md`, then only the relevant file(s).
-- Do **not** dump the whole memory folder every turn.
-- Do **not** add a second auto-capture memory system — episodic stays tool-private (e.g. claude-mem under `~/.claude`).
-
-## Context hygiene
-
-- Don't re-read what is already in context. Prefer narrow reads over whole-file dumps.
-- Broad / unfamiliar exploration (>~3 files) → explore/subagent when available; return conclusions.
-- Independent sub-tasks → parallel when the harness allows.
-- Known exact file → read it directly.
-- **Depth:** trivial → short path; hard/ambiguous → plan first or a heavier model in the *tool adapter* — do not paste hidden chain-of-thought into the user reply.
-- **Survive context limits:** long work → `handoff` / GOAL before rotating the session.
-- **Stdout:** if `rtk` is on `PATH`, prefer `rtk <cmd>` for high-stdout commands (git, grep, find, ls, tree, docker). RTK *hooks* stay Claude-only — not here.
-- **Level-1 skills:** startup cost grows with *model-invoked* skill count (name + description only). Check `harness doctor` — do not install SkillPointer vaults into this folder.
-
-## Out of scope for this file
-
-Claude-only **episodic** memory (claude-mem), Claude hooks/goal-loop, plugin marketplaces, model IDs, and RTK hooks belong in `~/.claude/CLAUDE.md` (or that tool's settings) — not here. Durable facts belong in `~/.agents/memory/`.
-
-Hermes + AgentMonitor live in the separate `agentmonitor` repo (install → `~/.hermes` + office). Skills attach via `skills.external_dirs` → `~/.agents/skills`.
+Claude hooks / claude-mem / model IDs / RTK hooks → `~/.claude`. Hermes/office → `agentmonitor` (`skills.external_dirs` → `~/.agents/skills`).

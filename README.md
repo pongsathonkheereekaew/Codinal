@@ -178,7 +178,7 @@ Anthropic Agent Skills โหลดแบบ progressive disclosure:
 ที่ ~100 skill แบบ harness นี้ Level 1 ยังรับได้ — **ไม่ต้อง** ใช้ SkillPointer / hidden vault  
 Priority ที่ถูกสำหรับ desk นี้:
 
-- Router แกนอยู่ใน [`AGENTS.md`](AGENTS.md) และ `ask-matt`  
+- Router แกนอยู่ใน [`AGENTS.md`](AGENTS.md) และ `ask-matt`; โดเมนโต๊ะ (ของ/คน) → `desk-domains`  
 - เขียน `description` ให้สั้นและชัด (trigger จริง ไม่ซ้ำใน body)  
 - skill ที่ใช้น้อยมาก ตั้ง `disable-model-invocation: true` เองได้ (GCP/Google packs ใน repo นี้ตั้งไว้แล้ว)  
 - ดูงบประมาณประมาณการ: `harness doctor` → ส่วน **Level-1 skill budget**  
