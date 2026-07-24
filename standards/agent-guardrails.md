@@ -1,4 +1,5 @@
 # Agent Guardrails (on-demand)
+<!-- spec-version: 1.0.0 -->
 
 Load when doing destructive work, handling secrets, touching verify gates, installing skills/spines, proposing mass deletes, gating consequential tool actions, parking approvals, or running scheduled/unattended work. Not always-on.
 

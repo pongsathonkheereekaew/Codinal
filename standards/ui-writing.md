@@ -1,4 +1,5 @@
 # General Writing & Typography Standards
+<!-- spec-version: 1.0.0 -->
 
 ## 1. Typography
 - **Em Dash**: Always use the correct em dash symbol (`—`). Never use double hyphens (`--`) or single hyphens (`-`) for dashed pauses in text/documentation.

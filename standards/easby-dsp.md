@@ -1,4 +1,5 @@
 # DSP Programming Standards (Easby Plugins)
+<!-- spec-version: 1.0.0 -->
 
 ## 1. Safety & Audio Quality (Clamping Curves)
 - Ensure all gain coefficient calculations, feedback loops, and wave-shaping lookup tables are properly bounded.

@@ -1,5 +1,6 @@
 ---
 name: scrutinize
+version: 1.0.0
 description: Outsider end-to-end review of a plan, PR, or change — intent, simpler alternative, trace real paths, verify claims. Use on /scrutinize, review/audit/sanity-check requests, and proactively before a plan/spec is called final.
 ---
 

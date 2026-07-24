@@ -1,4 +1,5 @@
 # Easby Plugins UI & Design Standards
+<!-- spec-version: 1.0.0 -->
 
 ## 1. Visual & Layout Consistency (Easby UI System)
 - **Active Curves**: Use ES-Q's orange active curves for display rendering.

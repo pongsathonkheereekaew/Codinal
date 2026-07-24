@@ -1,4 +1,5 @@
 # Persona manifest (on-demand)
+<!-- spec-version: 1.0.0 -->
 
 Load when authoring or installing a **persona** — a thicker identity prompt than a normal skill. Personas are optional; most work stays on skills + thin `AGENTS.md`.
 

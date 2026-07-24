@@ -1,5 +1,6 @@
 ---
 name: orchestrating-workers
+version: 1.0.0
 description: Fan-out to small workers, parallel explore-then-report, multi-agent coordination, or สั่งงานตัวเล็ก. Use when tasks are independent, exploration spans many files, or the parent should route while workers return conclusions. Tool-agnostic — works across Cursor, Claude, Codex, Gemini, Hermes, and other hosts.
 ---
 

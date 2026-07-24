@@ -6,3 +6,4 @@ node_modules/
 
 # local e2e checkpoints
 test-e2e*.txt
+.zcode/
