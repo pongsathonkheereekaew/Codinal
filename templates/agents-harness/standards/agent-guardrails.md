@@ -30,18 +30,18 @@ Classify proposed tool actions before running them:
 | `exec` | Runs shell / process commands | Ask; never standing-auto |
 | `external` | Side effects off the machine (send message, API write, calendar change) | Ask; standing rules may apply |
 
-Anything but `read` is **consequential**.
+Anything but `read` is **consequential**. When the host tool has path roots, keep `write_local` inside writable roots even in auto mode.
 
-## Permission surface (host-real)
+## Permission modes (intent)
 
-There is no harness-defined mode enum. Hosts expose their own permission surface — a CLI flag, a session setting, a Cursor/Codex/Gemini approval prompt, or a Hermes SOUL rule. Use whichever the current host already provides; **do not invent a parallel permission product in this harness.**
+| Mode | Behavior |
+|------|----------|
+| `discuss` / `plan` | Read-only — deny consequential actions |
+| `interactive` | Default — ask before consequential actions |
+| `auto` | Allow consequential actions; still path-scope writes when roots exist |
+| `custom` | Auto-allow a named allowlist; ask for everything else |
 
-Operating rules, regardless of host surface:
-
-- Ask before `write_local` / `exec` / `external`. `read` is always allowed.
-- Path-scope `write_local` to writable roots when the host defines them.
-- Never grant silent standing-auto for `exec` / shell.
-- Read-only postures (however the host names them) still deny consequential classes.
+Use the mode the surface already exposes (CLI flag, session setting, Hermes SOUL). Do not invent a parallel permission product in this harness.
 
 ## Inbox contract (unattended / away)
 

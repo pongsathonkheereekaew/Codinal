@@ -3,7 +3,8 @@
 
 # Claude-only adapter (do not restate AGENTS.md router / done loop)
 
-# Claude plugin only (orchestration — not in SSOT)
+# Universal fan-out SSOT: ~/.agents/skills/orchestrating-workers
+# Claude mapping only (do not duplicate those rules here):
 - Multi-agent fan-out → superpowers: subagent-driven-development / dispatching-parallel-agents
 
 # Memory (Claude-private episodic)
@@ -16,6 +17,6 @@
 - Prefer `rtk` / `lowfat` for high-stdout shell; use `/compact` when the convo bloats.
 - caveman stays on when the plugin is enabled.
 
-# Delegation (Claude subagents)
+# Delegation (Claude subagents — maps orchestrating-workers)
 - Broad unfamiliar reads (>~3 files) → Explore subagent; return conclusions, not dumps.
 - Independent sub-tasks → dispatch concurrently in one message.

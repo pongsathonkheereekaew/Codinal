@@ -3,7 +3,7 @@
 ข้อเท็จจริงถาวรร่วมทุก agent — โหลด `MEMORY.md` แล้วเปิดเฉพาะไฟล์ที่เกี่ยวข้อง  
 ไม่ใช่ episodic capture (claude-mem อยู่ Claude-only)
 
-- [Workflow stack](workflow-stack.md) — locked tool-per-job winners + what's disabled and why
+- [Workflow stack](workflow-stack.md) — locked tool-per-job winners + what's disabled and why (incl. OpenWorker = policy/skills only)
 - [User profile](user-profile.md) — solo coder+designer, Thai, token-efficiency + caveman
 - [Memory SSOT rule](memory-ssot.md) — durable here + claude-mem episodic only; never a 2nd stack
 - [Goal-loop](goal-loop.md) — semi-auto handoff at 80% context via ctx-guard hook

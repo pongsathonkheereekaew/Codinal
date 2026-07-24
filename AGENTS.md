@@ -75,7 +75,8 @@ Prefer a matching skill under `~/.agents/skills/` by name (progressive disclosur
 - Writing / typography: `~/.agents/standards/ui-writing.md`
 - Easby DSP / verify gates: `~/.agents/standards/easby-dsp.md`
 - Easby UI: `~/.agents/standards/easby-ui.md`
-- Destructive actions, secrets, verify gates, competing spines → `~/.agents/standards/agent-guardrails.md`
+- Risk / inbox / standing / scheduler / destructive / spines → `~/.agents/standards/agent-guardrails.md`
+- Persona frontmatter (optional, on-demand) → `~/.agents/standards/persona-manifest.md`
 
 Cursor also gets these via generated `~/.cursor/rules/*.mdc` (`harness rules`), including `agents-policy.mdc` (full `AGENTS.md` bridge — Cursor has no global AGENTS.md). On Easby plugins: never weaken `./verify.sh` / `Tools/verify.py` to force a green run.
 
@@ -93,11 +94,12 @@ Prefer skills under `~/.agents/skills/` when the task matches their `SKILL.md` d
 | Before claiming done | `verification-before-completion` |
 | Compact for a fresh session | `handoff` |
 | Foggy / huge multi-session | `wayfinder` |
+| Fan-out / small workers | `orchestrating-workers` |
 | Create / optimize a skill | `skill-creator` (Anthropic); principles → `writing-great-skills` |
 
 Everything else (UI, insurance, easby, GCP, …): match by skill description under `~/.agents/skills/` or ask `ask-matt`. Project overlays (`./AGENTS.md`) win for repo-specific constraints.
 
-Do **not** install competing full spines into this folder (GSD whole pack, full Superpowers dump, ultra-review duplicates). Superpowers stays selective (`verification-before-completion`, worktrees, finish-branch) + Claude plugin for fan-out. claude-mem / context-mode stay Claude-private.
+Do **not** install competing full spines into this folder (GSD whole pack, full Superpowers dump, ultra-review duplicates). Superpowers stays selective (`verification-before-completion`, worktrees, finish-branch) in SSOT; Claude fan-out plugins stay in the Claude adapter. Universal fan-out policy is `orchestrating-workers`. claude-mem / context-mode stay Claude-private.
 
 ## Durable memory (shared)
 
@@ -107,11 +109,26 @@ Long-lived prefs and locked decisions live in `~/.agents/memory/` (not episodic 
 - Do **not** dump the whole memory folder every turn.
 - Do **not** add a second auto-capture memory system — episodic stays tool-private (e.g. claude-mem under `~/.claude`).
 
+## Orchestration
+
+- **Orchestrator ≠ worker** — parent routes and merges; workers return conclusions, not dumps. Hermes / main session routes; desk agent implements.
+- Fan-out (parallel explore, independent sub-tasks, สั่งงานตัวเล็ก) → `orchestrating-workers`.
+- Consequential actions follow risk classes in `agent-guardrails` (`read` / `write_local` / `exec` / `external`). Unattended ≠ higher autonomy.
+- Tool-private worker APIs and fan-out plugins live in adapters — do not restate vendor plugin names here.
+
+## Risk spine (always-on)
+
+Full essay on-demand: `standards/agent-guardrails.md`. Always-on distill:
+
+- Classify before running: `read` / `write_local` / `exec` / `external`. Anything but `read` is **consequential** — ask first.
+- Path-scope `write_local` to writable roots; never silent standing-auto for `exec`.
+- Unattended ≠ higher autonomy — park approvals/questions; first-responder-wins.
+
 ## Context hygiene
 
 - Don't re-read what is already in context. Prefer narrow reads over whole-file dumps.
-- Broad / unfamiliar exploration (>~3 files) → explore/subagent when available; return conclusions.
-- Independent sub-tasks → parallel when the harness allows.
+- Broad / unfamiliar exploration (>~3 files) → fan out (see Orchestration); return conclusions.
+- Independent sub-tasks → parallel when the harness allows (same skill).
 - Known exact file → read it directly.
 - **Depth:** trivial → short path; hard/ambiguous → plan first or a heavier model in the *tool adapter* — do not paste hidden chain-of-thought into the user reply.
 - **Survive context limits:** long work → `handoff` / GOAL before rotating the session.

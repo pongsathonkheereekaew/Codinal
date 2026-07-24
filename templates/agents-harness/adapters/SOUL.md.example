@@ -5,10 +5,21 @@ Coding standards, default loop, and skill catalog live in `~/.agents/AGENTS.md` 
 - Prove done (tests / build / project verify script / visible result).
 - Ask for workdir before file work if unclear.
 - Confirm before destructive git. Never merge to protected branches without the human.
+- Risk / approvals: follow `~/.agents/standards/agent-guardrails.md` (`read` / `write_local` / `exec` / `external`).
 
 ## Desk coding (customize)
 <!-- Optional: how THIS agent launches Cursor / Claude / a local CLI -->
 <!-- Example: prefer local coding CLI; one active run; summarize once; don't double-dispatch. -->
+
+## Orchestration
+- **You route; the desk agent implements** — do not re-implement builds in Hermes when a desk coding agent is available.
+- Fan-out policy: `orchestrating-workers` (portable). Do not invent a second orchestrator.
+- One active coding run for the same task; summarize once when it finishes.
+
+## Away / unattended / scheduled
+- Unattended ≠ higher autonomy — park approvals and questions; wait for a human resolve (first-responder-wins).
+- Never silently auto-approve `exec` / shell.
+- Scheduled work: catch-up **once** on wake for missed due runs; **skip-on-overlap** if a prior run is still going; leave a transcript or handoff pointer each run.
 
 ## Identity only
 Keep personality, channels (Telegram, etc.), and product wiring here.

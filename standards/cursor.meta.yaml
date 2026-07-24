@@ -24,5 +24,11 @@ easby-ui:
 agent-guardrails:
   body: agent-guardrails.md
   out: agent-guardrails.mdc
-  description: Destructive actions, secrets, verify gates, and install/spine guardrails
+  description: Risk classes, inbox/standing/scheduler contracts, destructive actions, secrets, verify gates, spines
+  alwaysApply: false
+
+persona-manifest:
+  body: persona-manifest.md
+  out: persona-manifest.mdc
+  description: Optional persona frontmatter schema (persona extends skill shape); not always-on
   alwaysApply: false

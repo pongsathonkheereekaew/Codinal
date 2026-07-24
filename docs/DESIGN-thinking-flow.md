@@ -77,7 +77,7 @@ flowchart TD
 Useful Fable-aligned harness rules (already partly in AGENTS):
 
 1. **Match depth to task** — trivial short path; hard → plan / heavier model in *adapter*.
-2. **Orchestrator ≠ worker** — Hermes / main agent routes; desk agent implements (you already do this).
+2. **Orchestrator ≠ worker** — Hermes / main agent routes; desk agent implements. SSOT: `AGENTS.md` Orchestration + skill `orchestrating-workers` (not Claude-only).
 3. **Don’t dump hidden CoT into the user reply** — report outcomes; keep reasoning internal.
 4. **Progressive disclosure** — skills on demand; keep AGENTS thin.
 5. **Handoff before smart-zone death** — Matt `handoff` = context survival.
