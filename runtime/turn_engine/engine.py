@@ -69,6 +69,11 @@ class TurnEngine:
         self.provider = provider
         self.registry = registry
         self.permissions = permissions
+        # SessionService and PermissionEngine must mutate the exact same root
+        # objects; keeping a shared list prevents UI grants from becoming
+        # display-only state that policy never observes.
+        self.roots = permissions.roots or []
+        self.permissions.roots = self.roots
         self.model = model
         self.approver = approver or deny_all
         self.max_iterations = max_iterations

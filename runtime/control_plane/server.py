@@ -14,6 +14,7 @@ from runtime.events import EventHub
 from runtime.oauth import OAuthCoordinator
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.settings import JsonPreferenceStore, SettingsService
+from runtime.turns import SessionNotFoundError
 
 from .app import create_control_plane_app
 from .auth import validate_session_token
@@ -34,6 +35,17 @@ class StandaloneServices:
     settings: SettingsService
     secrets: ProviderSecretService
     oauth: OAuthCoordinator
+    turns: "UnavailableTurns"
+
+
+class UnavailableTurns:
+    """Fail-closed placeholder until the persisted engine builder is composed."""
+
+    async def start(self, session_id: str, **_kwargs):
+        raise SessionNotFoundError(session_id)
+
+    def interrupt(self, _session_id: str) -> bool:
+        return False
 
 
 def load_server_config() -> ServerConfig:
@@ -83,6 +95,7 @@ def build_services(
         ),
         secrets=secrets or ProviderSecretService(),
         oauth=oauth or OAuthCoordinator(),
+        turns=UnavailableTurns(),
     )
 
 

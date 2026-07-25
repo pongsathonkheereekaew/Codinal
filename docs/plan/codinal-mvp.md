@@ -114,7 +114,11 @@ harness-flow/                       ← product repo "Codinal"
   control-plane turn wiring และ production tool implementations ยัง pending.
 - 2.2 vendor MCP transport + conversation storage
 - 2.3 tool registry: manifest ใน `harness/policy`, impl ใน `runtime/tools`
-- 2.4 wire runtime → control plane (subscribe model; ห้าม direct exec)
+- 2.4 wire runtime → control plane (subscribe model; ห้าม direct exec).
+  **Progress:** เพิ่ม authenticated bounded turn/interrupt routes +
+  one-active-turn-per-session coordinator ที่ stream typed events ไป session
+  WebSocket, sanitize unexpected failure และ persist ใน `finally`.
+  Standalone production engine/store composition ยัง fail closed และ pending.
 - 2.5 รัน conformance → ประกาศ Tier-1 เบื้องต้น (≥ 3 cloud; local = tier-best-effort ตามผล suite จริง)
 
 **Gate:** Tier-1 turn ครบ (prompt → tool-call → approval → result) โดยผ่าน policy port ทุกขั้น.

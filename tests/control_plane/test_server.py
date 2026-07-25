@@ -1,13 +1,17 @@
-import os
+import asyncio
 import io
+import os
 from pathlib import Path
 
 import pytest
 
 from runtime.control_plane.server import (
+    ServerConfig,
+    build_services,
     load_runtime_secrets,
     load_server_config,
 )
+from runtime.turns import SessionNotFoundError
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
@@ -101,5 +105,27 @@ def test_runtime_secrets_reject_unknown_bootstrap_channel(
         load_runtime_secrets(
             io.StringIO(
                 '{"sync_token":"' + SECRET_SYNC_TOKEN + '","profiles":{}}'
+            )
+        )
+
+
+def test_standalone_turn_service_fails_closed_until_runtime_is_composed(
+    tmp_path,
+) -> None:
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=tmp_path,
+            default_model="openai:gpt-test",
+        )
+    )
+
+    assert services.turns.interrupt("missing") is False
+    with pytest.raises(SessionNotFoundError):
+        asyncio.run(
+            services.turns.start(
+                "missing",
+                user_input="hello",
             )
         )

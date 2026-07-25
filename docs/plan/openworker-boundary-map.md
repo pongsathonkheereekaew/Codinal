@@ -152,6 +152,14 @@ interrupt, max-iteration rail และ PDF adaptation. `coworker/pdf_support.py
 ถูก adapt เป็น local-only fallback พร้อม pinned/hash-locked `pypdf` และ
 `pypdfium2`.
 
+**Phase 2.4 control-plane turn seam (2026-07-26):** เพิ่ม `runtime.turns`
+coordinator และ authenticated `POST /v1/sessions/{id}/turns|interrupt`.
+หนึ่ง session มี active turn ได้หนึ่งงาน; events จาก TurnEngine ถูก serialize
+เป็น `{type, ...data}` ไป session WebSocket และ snapshot ใน `finally`.
+Payload/session id ถูก bound และ unexpected error ไม่ echo exception.
+Standalone sidecar ยังใช้ unavailable/fail-closed turn service จนกว่า
+production JSON store + engine builder จะถูก compose ใน slice ถัดไป.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

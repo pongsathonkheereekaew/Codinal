@@ -47,15 +47,17 @@ class StreamingProvider(ProviderClient):
 
 
 def test_streaming_turn_emits_deltas_and_completes(tmp_path):
+    permissions = PermissionEngine(tmp_path, mode=Mode.INTERACTIVE)
     engine = TurnEngine(
         provider=StreamingProvider(),
         registry=ToolRegistry(ToolManifest()),
-        permissions=PermissionEngine(tmp_path, mode=Mode.INTERACTIVE),
+        permissions=permissions,
         model="openai:gpt-test",
     )
 
     events = asyncio.run(collect(engine))
 
+    assert engine.roots is permissions.roots
     assert [
         event.data["text"]
         for event in events

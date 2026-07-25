@@ -11,7 +11,8 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 - `settings/` — Phase 1.2 atomic non-secret preferences; provider credentials
   remain behind the Phase 1.4 Keychain port
 - `control_plane/` — Phase 1.3 FastAPI sidecar; loopback-only HTTP and
-  WebSocket endpoints protected by one process-scoped bearer token
+  WebSocket endpoints protected by one process-scoped bearer token; bounded
+  session turn/interrupt routes delegate only to the turn coordinator
 - `secrets/` — Phase 1.4 in-memory provider credential port; persistent
   storage is owned by the native Rust Keychain adapter
 - `oauth/` — Phase 1.5 bounded, expiring, one-time OAuth state registry and
@@ -22,6 +23,8 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   registry entry and a `PermissionEngine` decision before execution.
   Provider/tool exceptions are value-sanitized, and PDF fallback runs locally
   without mutating canonical conversation history
+- `turns/` — one-active-turn-per-session coordinator; bridges typed engine
+  events to the authenticated session WebSocket and persists in `finally`
 - `providers/` — Phase 2 provider contract and conformance bridge; normalized
   assistant tool calls are revalidated by the runtime policy parser before use;
   vendored OpenAI, Anthropic, and Gemini adapters resolve keys only from the

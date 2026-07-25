@@ -11,7 +11,16 @@ import base64
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, Protocol
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Iterable,
+    Optional,
+    Protocol,
+)
+
+from runtime.events import Event
 
 from .models import RootDir, SessionRecord
 
@@ -76,6 +85,13 @@ class SessionStore(Protocol):
 class SessionEngine(Protocol):
     messages: list[dict[str, Any]]
     roots: list[RootDir]
+
+    def run(
+        self,
+        user_input: str | list[dict[str, Any]],
+        *,
+        source: dict[str, Any] | None = None,
+    ) -> AsyncIterator[Event]: ...
 
     def request_interrupt(self) -> None: ...
 

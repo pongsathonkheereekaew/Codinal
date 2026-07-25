@@ -24,6 +24,7 @@ from .sessions.service import (
     SessionStore,
 )
 from .settings import JsonPreferenceStore, SettingsService
+from .turns import TurnCoordinator
 
 EventEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -45,6 +46,7 @@ class EngineBuilder(Protocol):
 @dataclass(frozen=True)
 class RuntimeServices:
     sessions: SessionService
+    turns: TurnCoordinator
     events: EventHub
     settings: SettingsService
     secrets: ProviderSecretService
@@ -127,8 +129,10 @@ def compose_runtime(
         default_model=default_model,
         default_model_provider=lambda: str(settings.view()["model"]),
     )
+    turns = TurnCoordinator(sessions=sessions, events=events)
     return RuntimeServices(
         sessions=sessions,
+        turns=turns,
         events=events,
         settings=settings,
         secrets=secrets,

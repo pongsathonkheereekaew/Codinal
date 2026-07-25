@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from contextlib import suppress
+from pathlib import Path
 from typing import Any, Protocol
 
 from fastapi import (
@@ -18,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from runtime.events import EventHub
+from runtime.turns import SessionBusyError, SessionNotFoundError
 
 from .auth import (
     WEBSOCKET_PROTOCOL,
@@ -59,11 +62,26 @@ class OAuthCallbacks(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class TurnControl(Protocol):
+    async def start(
+        self,
+        session_id: str,
+        *,
+        user_input: str,
+        workspace: str | None = None,
+        agent: str = "code",
+        source: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
+
+    def interrupt(self, session_id: str) -> bool: ...
+
+
 class ControlPlaneServices(Protocol):
     events: EventHub
     settings: SettingsView
     secrets: ProviderSecrets
     oauth: OAuthCallbacks
+    turns: TurnControl
 
 
 def create_control_plane_app(
@@ -124,6 +142,38 @@ def create_control_plane_app(
             status_code=200 if result.get("ok") else 400,
         )
 
+    @app.post("/v1/sessions/{session_id}/turns")
+    async def start_turn(
+        session_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _validate_public_session_id(session_id)
+        turn = await _read_turn(request)
+        try:
+            result = await services.turns.start(
+                session_id,
+                user_input=turn["input"],
+                workspace=turn.get("workspace"),
+                agent=turn.get("agent", "code"),
+                source=turn.get("source"),
+            )
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail="session not found") from None
+        except SessionBusyError:
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            ) from None
+        return JSONResponse(result, status_code=202)
+
+    @app.post("/v1/sessions/{session_id}/interrupt")
+    async def interrupt_turn(session_id: str) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        return {
+            "ok": services.turns.interrupt(session_id),
+            "session_id": session_id,
+        }
+
     @app.websocket("/ws/events")
     async def global_events(websocket: WebSocket) -> None:
         await _serve_events(websocket, services.events.subscribe_global)
@@ -150,6 +200,57 @@ def create_control_plane_app(
         allow_credentials=False,
     )
     return app
+
+
+_SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+_AGENT = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,31}")
+
+
+def _validate_public_session_id(session_id: str) -> None:
+    if session_id.startswith("__") or _SESSION_ID.fullmatch(session_id) is None:
+        raise HTTPException(status_code=400, detail="invalid session id")
+
+
+async def _read_turn(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid turn payload") from None
+    if (
+        not isinstance(body, dict)
+        or not {"input"} <= set(body) <= {
+            "input",
+            "workspace",
+            "agent",
+            "source",
+        }
+        or not isinstance(body["input"], str)
+        or not 1 <= len(body["input"].encode("utf-8")) <= 1_048_576
+        or (
+            "workspace" in body
+            and (
+                not isinstance(body["workspace"], str)
+                or not 1 <= len(body["workspace"]) <= 4096
+                or not Path(body["workspace"]).is_absolute()
+            )
+        )
+        or (
+            "agent" in body
+            and (
+                not isinstance(body["agent"], str)
+                or _AGENT.fullmatch(body["agent"]) is None
+            )
+        )
+        or (
+            "source" in body
+            and (
+                not isinstance(body["source"], dict)
+                or len(json.dumps(body["source"]).encode("utf-8")) > 16_384
+            )
+        )
+    ):
+        raise HTTPException(status_code=400, detail="invalid turn payload")
+    return body
 
 
 async def _read_api_key(request: Request) -> str:
