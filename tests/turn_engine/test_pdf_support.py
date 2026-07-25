@@ -1,5 +1,7 @@
 import base64
 import io
+import sys
+import time
 
 import pytest
 from pypdf import PdfWriter
@@ -33,6 +35,62 @@ def test_inspect_counts_pages_and_rejects_non_pdf():
     assert result["ok"] is True
     assert result["pages"] == 3
     assert pdf_support.inspect("plain text")["ok"] is False
+
+
+def test_pdf_decode_rejects_bytes_over_the_local_budget(monkeypatch):
+    monkeypatch.setattr(pdf_support, "MAX_PDF_BYTES", 5)
+    encoded = base64.b64encode(b"%PDF-too-large").decode()
+
+    result = pdf_support.inspect(
+        f"data:application/pdf;base64,{encoded}",
+    )
+
+    assert result == {"ok": False, "error": "not a PDF data URL"}
+
+
+def test_text_extraction_reads_at_most_the_page_budget(monkeypatch):
+    calls = 0
+
+    class Page:
+        def extract_text(self):
+            nonlocal calls
+            calls += 1
+            return "page"
+
+    class Reader:
+        pages = [Page() for _ in range(pdf_support.MAX_PDF_PAGES + 5)]
+
+    monkeypatch.setattr("pypdf.PdfReader", lambda *_args, **_kwargs: Reader())
+    encoded = base64.b64encode(b"%PDF-page-budget").decode()
+
+    extracted = pdf_support._extract_text_local(
+        f"data:application/pdf;base64,{encoded}",
+    )
+
+    assert extracted
+    assert calls == pdf_support.MAX_PDF_PAGES
+
+
+def test_timed_out_workers_do_not_prevent_the_next_job():
+    sleeper = [sys.executable, "-c", "import time; time.sleep(5)"]
+    started = time.monotonic()
+
+    assert (
+        pdf_support._run_worker_command(sleeper, "", timeout=0.05)
+        is None
+    )
+    assert (
+        pdf_support._run_worker_command(sleeper, "", timeout=0.05)
+        is None
+    )
+    output = pdf_support._run_worker_command(
+        [sys.executable, "-c", "print('ok')"],
+        "",
+        timeout=1,
+    )
+
+    assert output == "ok\n"
+    assert time.monotonic() - started < 1
 
 
 def test_scanned_pdf_becomes_visible_text_note():

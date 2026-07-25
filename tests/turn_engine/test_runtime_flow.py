@@ -174,3 +174,46 @@ def test_outbound_pdf_adaptation_does_not_mutate_history(
     assert outbound[-1]["content"][1]["type"] == "text"
     assert "local text" in outbound[-1]["content"][1]["text"]
     assert engine.messages[-1]["content"][1] is file_part
+
+
+def test_pdf_adaptation_does_not_block_the_event_loop(tmp_path, monkeypatch):
+    engine = TurnEngine(
+        provider=StreamingProvider(),
+        registry=ToolRegistry(ToolManifest()),
+        permissions=PermissionEngine(tmp_path, mode=Mode.INTERACTIVE),
+        model="openai:gpt-test",
+    )
+    content = [
+        {"type": "text", "text": "read"},
+        {
+            "type": "file",
+            "file": {
+                "filename": "doc.pdf",
+                "file_data": "data:application/pdf;base64,AA==",
+            },
+        },
+    ]
+
+    def slow_extract(_file_data):
+        time.sleep(0.25)
+        return "local text"
+
+    monkeypatch.setattr(
+        "runtime.turn_engine.pdf_support.extract_text",
+        slow_extract,
+    )
+
+    async def run_with_probe():
+        async def collect_content():
+            return [event async for event in engine.run(content)]
+
+        started = time.monotonic()
+        task = asyncio.create_task(collect_content())
+        await asyncio.sleep(0.02)
+        probe_elapsed = time.monotonic() - started
+        await task
+        return probe_elapsed
+
+    elapsed = asyncio.run(run_with_probe())
+
+    assert elapsed < 0.15

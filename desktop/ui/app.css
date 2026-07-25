@@ -765,6 +765,42 @@ select:focus-visible,
     0 0 0 3px var(--accent-soft);
 }
 
+.attachment-list {
+  display: flex;
+  gap: 6px;
+  padding: 2px 2px 9px;
+  overflow-x: auto;
+}
+
+.attachment-chip {
+  display: flex;
+  min-width: 0;
+  max-width: 230px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  font-size: 10px;
+}
+
+.attachment-kind {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip button {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .composer textarea {
   display: block;
   width: 100%;

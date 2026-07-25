@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from runtime.events import Event, EventType
@@ -36,6 +37,12 @@ from runtime.policy import (
 from runtime.providers import AssistantTurn, ProviderClient, ToolCall
 from runtime.providers.errors import friendly_model_error
 from runtime.tools import ToolRegistry
+
+_ATTACHMENT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="codinal-attachment",
+)
+_ATTACHMENT_TIMEOUT_SECONDS = 15
 
 
 class TurnEngine:
@@ -206,6 +213,14 @@ class TurnEngine:
             for msg in self.messages
             if isinstance(msg.get("content"), list)
             for p in msg["content"]
+        )
+
+    def _history_has_pdf(self) -> bool:
+        return any(
+            isinstance(part, dict) and part.get("type") == "file"
+            for message in self.messages
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
         )
 
     def _tail_is_retriable_error(self) -> bool:
@@ -384,11 +399,17 @@ class TurnEngine:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
         tools = self.registry.schemas() or None
-        model, messages, settings = (
-            self.model,
-            self._outbound_messages(),
-            self.model_settings,
-        )
+        if self._history_has_pdf():
+            messages = await asyncio.wait_for(
+                loop.run_in_executor(
+                    _ATTACHMENT_EXECUTOR,
+                    self._outbound_messages,
+                ),
+                timeout=_ATTACHMENT_TIMEOUT_SECONDS,
+            )
+        else:
+            messages = self._outbound_messages()
+        model, settings = self.model, self.model_settings
         provider = self.provider
 
         def produce():

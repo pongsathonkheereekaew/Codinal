@@ -97,13 +97,24 @@
         </section>
 
         <section class="composer-wrap" aria-label="Message composer">
-          <div id="drop-hint" class="drop-hint">Drop a project folder to open it</div>
+          <div id="drop-hint" class="drop-hint">
+            Drop a project folder, image, or PDF
+          </div>
           <div class="composer">
+            <div id="attachment-list" class="attachment-list is-hidden"
+              aria-label="Attachments"></div>
+            <input id="attachment-input" class="is-hidden" type="file" multiple
+              accept="image/png,image/jpeg,image/gif,image/webp,application/pdf" />
             <textarea id="prompt" rows="1"
               placeholder="Ask Codinal to build, debug, or explain…"
               aria-label="Message Codinal"></textarea>
             <div class="composer-toolbar">
               <div class="composer-options">
+                <button id="attach-files" class="tool-button" type="button"
+                  title="Attach image or PDF" aria-label="Attach image or PDF">
+                  <span aria-hidden="true">＋</span>
+                  Attach
+                </button>
                 <button id="choose-workspace" class="tool-button" type="button"
                   title="Choose workspace">
                   <span aria-hidden="true">⌁</span>

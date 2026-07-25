@@ -25,7 +25,6 @@ def capabilities_for(model: str) -> ModelCapabilities:
     if name.startswith(("gpt-5", "gpt-4")):
         return ModelCapabilities(
             vision=True,
-            pdf=True,
             streaming=True,
         )
     if name.startswith(("o1", "o3", "o4")):

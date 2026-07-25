@@ -7,6 +7,7 @@ from runtime.providers import (
     ProviderClient,
     StreamChunk,
 )
+from runtime.providers.capabilities import capabilities_for
 
 
 class FixtureProvider(ProviderClient):
@@ -61,3 +62,9 @@ def test_provider_default_stream_wraps_one_complete_turn() -> None:
     assert chunks == [
         StreamChunk(turn=AssistantTurn(text="fixture:hello"))
     ]
+
+
+def test_pdf_capability_matches_each_provider_wire_protocol() -> None:
+    assert capabilities_for("anthropic:claude-sonnet").pdf is True
+    assert capabilities_for("gemini:gemini-pro").pdf is True
+    assert capabilities_for("openai:gpt-5.6").pdf is False

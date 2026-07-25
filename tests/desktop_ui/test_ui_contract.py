@@ -16,6 +16,10 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="session-dialog"' in html
     assert 'id="new-task"' in html
     assert 'id="send-turn"' in html
+    assert 'id="attach-files"' in html
+    assert 'id="attachment-input"' in html
+    assert 'id="attachment-list"' in html
+    assert 'accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"' in html
     assert 'data-tauri-drag-region' in html
     assert "<style" not in html
     assert 'href="./app.css"' in html
@@ -33,6 +37,27 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "delete_provider_secret" in script
     assert '"DELETE"' in script
     assert "pick_workspace" in script
+    assert "FileReader" in script
+    assert "attachmentsPending" in script
+    assert "attachmentQueue" in script
+    assert "invalidateAttachments()" in script
+    assert "state.attachmentReader?.abort()" in script
+    assert "switchWorkspace(workspace)" in script
+    assert "switchWorkspace(path)" in script
+    workspace_switch = script.split(
+        "function switchWorkspace(workspace) {",
+        1,
+    )[1].split("\n}", 1)[0]
+    assert "if (state.busy)" in workspace_switch
+    assert "disconnectSocket()" in workspace_switch
+    assert "state.sessionId = `session-${crypto.randomUUID()}`" in workspace_switch
+    assert "state.messages = []" in workspace_switch
+    assert "state.workspace = workspace" in workspace_switch
+    assert 'el["new-task"].disabled = busy' in script
+    assert 'el["choose-workspace"].disabled = busy' in script
+    assert "queueAttachments(event.target.files)" in script
+    assert '"type": "image_url"' in script
+    assert '"type": "file"' in script
     assert "event.metaKey" in script
     assert ".innerHTML" not in script
 

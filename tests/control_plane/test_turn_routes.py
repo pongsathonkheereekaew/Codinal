@@ -1,8 +1,12 @@
+import asyncio
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 from runtime.control_plane import create_control_plane_app
+from runtime.control_plane.app import _read_turn
 from runtime.events import EventHub
 from runtime.oauth import OAuthCoordinator
 from runtime.secrets import ProviderSecretService
@@ -112,6 +116,117 @@ def test_turn_route_rejects_unknown_fields_and_internal_session():
     assert internal.status_code == 400
     assert relative_workspace.status_code == 400
     assert turns.started == []
+
+
+def test_turn_route_accepts_bounded_image_and_pdf_attachments(tmp_path):
+    client, turns = make_client()
+    content = [
+        {"type": "text", "text": "Explain these files"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,iVBORw0KGgo=",
+            },
+        },
+        {
+            "type": "file",
+            "file": {
+                "filename": "architecture.pdf",
+                "file_data": "data:application/pdf;base64,JVBERi0xLjQ=",
+            },
+        },
+    ]
+
+    response = client.post(
+        "/v1/sessions/session-1/turns",
+        headers=AUTH,
+        json={"input": content, "workspace": str(tmp_path)},
+    )
+
+    assert response.status_code == 202
+    assert turns.started[0][1] == content
+
+
+def test_turn_route_rejects_remote_invalid_and_unbounded_attachments():
+    client, turns = make_client()
+    invalid_inputs = [
+        [
+            {
+                "type": "image_url",
+                "image_url": {"url": "https://example.test/private.png"},
+            }
+        ],
+        [
+            {
+                "type": "file",
+                "file": {
+                    "filename": "../secret.pdf",
+                    "file_data": "data:application/pdf;base64,JVBERg==",
+                },
+            }
+        ],
+        [
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,not-base64!"},
+            }
+        ],
+        [
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/png;base64,JVBERi0xLjQ="},
+            }
+        ],
+        [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,"
+                    + ("A" * (14 * 1024 * 1024)),
+                },
+            }
+        ],
+    ]
+
+    for content in invalid_inputs:
+        response = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={"input": content},
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "invalid turn payload"}
+
+    assert turns.started == []
+
+
+def test_turn_reader_stops_stream_when_body_limit_is_exceeded():
+    chunks_read = 0
+
+    async def receive():
+        nonlocal chunks_read
+        chunks_read += 1
+        return {
+            "type": "http.request",
+            "body": b"x" * (1024 * 1024),
+            "more_body": chunks_read < 20,
+        }
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/sessions/session-1/turns",
+            "headers": [],
+        },
+        receive,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(_read_turn(request))
+
+    assert error.value.status_code == 400
+    assert chunks_read == 16
 
 
 def test_interrupt_route_delegates_without_direct_tool_execution():

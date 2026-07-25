@@ -4,6 +4,11 @@ const HTTP = window.__CODINAL_HTTP__;
 const WS = window.__CODINAL_WS__;
 const TOKEN = window.__CODINAL_TOKEN__;
 const invoke = window.__TAURI__?.core?.invoke;
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_ATTACHMENTS = 5;
+const ATTACHMENT_TYPES = new Set([
+  "image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf",
+]);
 
 const state = {
   online: false,
@@ -19,6 +24,11 @@ const state = {
   diff: "",
   managedSession: null,
   updateVersion: null,
+  attachments: [],
+  attachmentsPending: 0,
+  attachmentGeneration: 0,
+  attachmentQueue: Promise.resolve(),
+  attachmentReader: null,
 };
 
 const el = Object.fromEntries(
@@ -27,7 +37,8 @@ const el = Object.fromEntries(
     "session-search", "refresh-sessions", "session-list", "theme-toggle",
     "open-settings", "toggle-sidebar", "task-title", "workspace-path",
     "runtime-status", "review-button", "change-count", "conversation",
-    "empty-state", "message-list", "prompt", "choose-workspace",
+    "empty-state", "message-list", "prompt", "attach-files",
+    "attachment-input", "attachment-list", "choose-workspace",
     "workspace-label", "agent-mode", "model-select", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
@@ -198,6 +209,7 @@ async function selectSession(session) {
   state.sessionId = session.session_id;
   state.workspace = session.workspace;
   state.messages = [];
+  invalidateAttachments();
   state.liveAssistant = null;
   state.activities.clear();
   el["task-title"].textContent = session.title || "New task";
@@ -230,12 +242,26 @@ function selectModel(model) {
 }
 
 async function newTask() {
+  if (state.busy) {
+    toast("Stop the active turn before changing workspace", "error");
+    return;
+  }
   const workspace = await pickWorkspace();
   if (!workspace) return;
+  switchWorkspace(workspace);
+  el.prompt.focus();
+}
+
+function switchWorkspace(workspace) {
+  if (state.busy) {
+    toast("Stop the active turn before changing workspace", "error");
+    return false;
+  }
   disconnectSocket();
   state.sessionId = `session-${crypto.randomUUID()}`;
   state.workspace = workspace;
   state.messages = [];
+  invalidateAttachments();
   state.liveAssistant = null;
   state.activities.clear();
   state.diff = "";
@@ -245,7 +271,7 @@ async function newTask() {
   renderConversation();
   renderDiff();
   connectSocket();
-  el.prompt.focus();
+  return true;
 }
 
 async function pickWorkspace() {
@@ -265,6 +291,14 @@ function updateWorkspaceLabel() {
   el["workspace-path"].textContent = shortPath(state.workspace);
   el["workspace-label"].textContent = basename(state.workspace);
   updateComposer();
+}
+
+function invalidateAttachments() {
+  state.attachmentGeneration += 1;
+  state.attachments = [];
+  state.attachmentReader?.abort();
+  state.attachmentReader = null;
+  renderAttachments();
 }
 
 function connectSocket() {
@@ -297,6 +331,8 @@ function setBusy(busy) {
   state.busy = busy;
   el["model-select"].disabled = busy;
   el["agent-mode"].disabled = busy;
+  el["new-task"].disabled = busy;
+  el["choose-workspace"].disabled = busy;
   el["stop-turn"].classList.toggle("is-hidden", !busy);
   el["send-turn"].classList.toggle("is-hidden", busy);
   setRuntimeStatus(busy ? "Codinal is working" : "Local runtime", busy ? "busy" : "online");
@@ -382,9 +418,16 @@ function renderConversation() {
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content
+  const text = content
     .filter((part) => part && part.type === "text")
     .map((part) => part.text || "")
+    .join("\n");
+  const files = content
+    .filter((part) => part?.type === "image_url" || part?.type === "file")
+    .map((part) => part.type === "file" ? part.file?.filename : "Image")
+    .filter(Boolean);
+  return [text, files.length ? `Attached: ${files.join(", ")}` : ""]
+    .filter(Boolean)
     .join("\n");
 }
 
@@ -489,9 +532,33 @@ async function resolveApproval(card, approval, outcome) {
 
 async function sendTurn() {
   const input = el.prompt.value.trim();
-  if (!input || !state.workspace || !state.sessionId || state.busy) return;
-  state.messages.push({ role: "user", content: input });
+  if ((!input && !state.attachments.length)
+    || !state.workspace || !state.sessionId || state.busy
+    || state.attachmentsPending) return;
+  const attachments = state.attachments;
+  const parts = [];
+  if (input) parts.push({ "type": "text", "text": input });
+  for (const attachment of attachments) {
+    if (attachment.type === "application/pdf") {
+      parts.push({
+        "type": "file",
+        "file": {
+          "filename": attachment.name,
+          "file_data": attachment.data,
+        },
+      });
+    } else {
+      parts.push({
+        "type": "image_url",
+        "image_url": { "url": attachment.data },
+      });
+    }
+  }
+  const turnInput = attachments.length ? parts : input;
+  state.messages.push({ role: "user", content: turnInput });
   el.prompt.value = "";
+  state.attachments = [];
+  renderAttachments();
   resizePrompt();
   renderConversation();
   setBusy(true);
@@ -499,7 +566,7 @@ async function sendTurn() {
     await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/turns`, {
       method: "POST",
       body: JSON.stringify({
-        input,
+        input: turnInput,
         workspace: state.workspace,
         agent: el["agent-mode"].value,
         model: el["model-select"].value,
@@ -507,6 +574,8 @@ async function sendTurn() {
     });
   } catch (error) {
     state.messages.pop();
+    state.attachments = attachments;
+    renderAttachments();
     setBusy(false);
     renderConversation();
     toast(error.message, "error");
@@ -525,9 +594,102 @@ async function stopTurn() {
 }
 
 function updateComposer() {
-  const hasInput = Boolean(el.prompt.value.trim());
+  const hasInput = Boolean(el.prompt.value.trim() || state.attachments.length);
   el["send-turn"].disabled = !state.online || !state.workspace
-    || !state.sessionId || !hasInput || state.busy;
+    || !state.sessionId || !hasInput || state.busy
+    || state.attachmentsPending > 0;
+  el["attach-files"].disabled = state.busy
+    || state.attachmentsPending > 0;
+}
+
+function readAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    state.attachmentReader = reader;
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error(`Could not read ${file.name}`)));
+    reader.addEventListener("abort", () => reject(new Error("Attachment read cancelled")));
+    reader.addEventListener("loadend", () => {
+      if (state.attachmentReader === reader) state.attachmentReader = null;
+    });
+    reader.readAsDataURL(file);
+  });
+}
+
+async function addAttachments(files, generation) {
+  for (const file of Array.from(files)) {
+    if (generation !== state.attachmentGeneration) return;
+    if (state.attachments.length >= MAX_ATTACHMENTS) {
+      toast(`Attach up to ${MAX_ATTACHMENTS} files`, "error");
+      break;
+    }
+    if (!ATTACHMENT_TYPES.has(file.type)) {
+      toast(`${file.name} is not a supported image or PDF`, "error");
+      continue;
+    }
+    const nextBytes = state.attachments.reduce(
+      (total, attachment) => total + attachment.size,
+      file.size
+    );
+    if (file.size === 0 || nextBytes > MAX_ATTACHMENT_BYTES) {
+      toast("Attachments must total 10 MB or less", "error");
+      continue;
+    }
+    try {
+      const data = await readAttachment(file);
+      if (generation !== state.attachmentGeneration) return;
+      state.attachments.push({
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        data,
+      });
+    } catch (error) {
+      if (generation === state.attachmentGeneration) {
+        toast(error.message, "error");
+      }
+    }
+  }
+}
+
+function queueAttachments(files) {
+  const selected = Array.from(files);
+  if (!selected.length) return;
+  const generation = state.attachmentGeneration;
+  state.attachmentsPending += 1;
+  updateComposer();
+  state.attachmentQueue = state.attachmentQueue
+    .then(() => addAttachments(selected, generation))
+    .catch((error) => toast(error.message, "error"))
+    .finally(() => {
+      state.attachmentsPending = Math.max(0, state.attachmentsPending - 1);
+      renderAttachments();
+      el["attachment-input"].value = "";
+    });
+}
+
+function renderAttachments() {
+  el["attachment-list"].replaceChildren();
+  el["attachment-list"].classList.toggle("is-hidden", !state.attachments.length);
+  state.attachments.forEach((attachment, index) => {
+    const chip = node("div", "attachment-chip");
+    const kind = attachment.type === "application/pdf" ? "PDF" : "Image";
+    const remove = node("button", "", "×");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+    remove.addEventListener("click", () => {
+      state.attachments.splice(index, 1);
+      renderAttachments();
+      updateComposer();
+    });
+    chip.append(
+      node("span", "attachment-kind", kind),
+      node("span", "attachment-name", attachment.name),
+      remove
+    );
+    el["attachment-list"].append(chip);
+  });
+  updateComposer();
 }
 
 function resizePrompt() {
@@ -773,6 +935,7 @@ function wireEvents() {
         state.sessionId = null;
         state.workspace = null;
         state.messages = [];
+        invalidateAttachments();
         el["task-title"].textContent = "New task";
         updateWorkspaceLabel();
         renderConversation();
@@ -791,10 +954,7 @@ function wireEvents() {
   el["choose-workspace"].addEventListener("click", async () => {
     const workspace = await pickWorkspace();
     if (!workspace) return;
-    state.workspace = workspace;
-    if (!state.sessionId) state.sessionId = `session-${crypto.randomUUID()}`;
-    updateWorkspaceLabel();
-    connectSocket();
+    switchWorkspace(workspace);
   });
   el["model-select"].addEventListener("change", async () => {
     const session = state.sessions.find(
@@ -817,6 +977,12 @@ function wireEvents() {
     }
   });
   el.prompt.addEventListener("input", resizePrompt);
+  el["attach-files"].addEventListener("click", () => {
+    el["attachment-input"].click();
+  });
+  el["attachment-input"].addEventListener("change", (event) => {
+    queueAttachments(event.target.files);
+  });
   el.prompt.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && event.metaKey) {
       event.preventDefault();
@@ -860,12 +1026,14 @@ function wireEvents() {
   document.addEventListener("drop", (event) => {
     event.preventDefault();
     document.body.classList.remove("is-dragging");
-    const path = event.dataTransfer?.files?.[0]?.path;
+    const files = event.dataTransfer?.files;
+    if (files?.length && Array.from(files).some((file) => ATTACHMENT_TYPES.has(file.type))) {
+      queueAttachments(files);
+      return;
+    }
+    const path = files?.[0]?.path;
     if (path?.startsWith("/")) {
-      state.workspace = path;
-      if (!state.sessionId) state.sessionId = `session-${crypto.randomUUID()}`;
-      updateWorkspaceLabel();
-      connectSocket();
+      switchWorkspace(path);
     }
   });
 }

@@ -22,6 +22,10 @@ from fastapi.responses import JSONResponse
 from runtime.events import EventHub
 from runtime.git import GitWorkspaceError
 from runtime.mcp import MCPServerDef
+from runtime.control_plane.input_validation import (
+    MAX_TURN_BODY_BYTES,
+    valid_turn_input,
+)
 from runtime.policy import ApprovalOutcome
 from runtime.turns import (
     SessionBusyError,
@@ -532,7 +536,18 @@ def _validate_public_session_id(session_id: str) -> None:
 
 async def _read_turn(request: Request) -> dict[str, Any]:
     try:
-        body = await request.json()
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_TURN_BODY_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="invalid turn payload",
+                )
+            chunks.append(chunk)
+        payload = b"".join(chunks)
+        body = json.loads(payload)
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(status_code=400, detail="invalid turn payload") from None
     if (
@@ -544,8 +559,7 @@ async def _read_turn(request: Request) -> dict[str, Any]:
             "model",
             "source",
         }
-        or not isinstance(body["input"], str)
-        or not 1 <= len(body["input"].encode("utf-8")) <= 1_048_576
+        or not valid_turn_input(body["input"])
         or (
             "workspace" in body
             and (

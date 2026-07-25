@@ -9,16 +9,25 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import itertools
+import json
 import logging
 import struct
+import subprocess
+import sys
 import zlib
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 MAX_EXTRACT_CHARS = 200_000
+MAX_PDF_BYTES = 10 * 1024 * 1024
+MAX_PDF_PAGES = 20
+MAX_RASTER_PIXELS_PER_PAGE = 16_000_000
+MAX_WORKER_OUTPUT_BYTES = 40 * 1024 * 1024
+PDF_WORKER_TIMEOUT_SECONDS = 10
 RASTER_SCALE = 2.0
-RASTER_MAX_PAGES = 100
+RASTER_MAX_PAGES = MAX_PDF_PAGES
 FALLBACK_MODES = ("text", "images")
 
 _fallback_mode = "text"
@@ -55,7 +64,8 @@ def _pdf_bytes(file_data: str) -> Optional[bytes]:
     if not isinstance(file_data, str) or not file_data.startswith(prefix):
         return None
     try:
-        return base64.b64decode(file_data[len(prefix) :], validate=False)
+        raw = base64.b64decode(file_data[len(prefix) :], validate=True)
+        return raw if len(raw) <= MAX_PDF_BYTES else None
     except (ValueError, TypeError):
         return None
 
@@ -82,29 +92,82 @@ def inspect(file_data: str) -> dict[str, Any]:
         }
 
 
+def _extract_text_local(file_data: str) -> Optional[str]:
+    raw = _pdf_bytes(file_data)
+    if raw is None:
+        return None
+    try:
+        from pypdf import PdfReader
+
+        chunks: list[str] = []
+        total = 0
+        pages = PdfReader(io.BytesIO(raw), strict=False).pages
+        for page in itertools.islice(pages, MAX_PDF_PAGES):
+            text = page.extract_text() or ""
+            if text:
+                chunks.append(text)
+                total += len(text)
+                if total >= MAX_EXTRACT_CHARS:
+                    break
+        return "\n\n".join(chunks)[:MAX_EXTRACT_CHARS]
+    except Exception:
+        logger.warning("pdf text extraction failed", exc_info=True)
+        return None
+
+
+def _run_worker_command(
+    command: list[str],
+    input_text: str,
+    *,
+    timeout: float = PDF_WORKER_TIMEOUT_SECONDS,
+) -> Optional[str]:
+    try:
+        completed = subprocess.run(
+            command,
+            input=input_text,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        logger.warning("isolated PDF worker failed or timed out")
+        return None
+    if (
+        completed.returncode != 0
+        or len(completed.stdout.encode("utf-8")) > MAX_WORKER_OUTPUT_BYTES
+    ):
+        logger.warning("isolated PDF worker returned invalid output")
+        return None
+    return completed.stdout
+
+
+def _run_isolated(mode: str, file_data: str, max_pages: int) -> Any:
+    output = _run_worker_command(
+        [
+            sys.executable,
+            "-m",
+            "runtime.turn_engine.pdf_worker",
+            mode,
+            str(max_pages),
+        ],
+        file_data,
+    )
+    if output is None:
+        return None
+    try:
+        return json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("isolated PDF worker returned malformed JSON")
+        return None
+
+
 def extract_text(file_data: str) -> Optional[str]:
-    """Extract embedded PDF text locally, capped for provider context safety."""
+    """Extract PDF text in a killable worker, capped for context safety."""
 
     def compute() -> Optional[str]:
-        raw = _pdf_bytes(file_data)
-        if raw is None:
-            return None
-        try:
-            from pypdf import PdfReader
-
-            chunks: list[str] = []
-            total = 0
-            for page in PdfReader(io.BytesIO(raw), strict=False).pages:
-                text = page.extract_text() or ""
-                if text:
-                    chunks.append(text)
-                    total += len(text)
-                    if total >= MAX_EXTRACT_CHARS:
-                        break
-            return "\n\n".join(chunks)[:MAX_EXTRACT_CHARS]
-        except Exception:
-            logger.warning("pdf text extraction failed", exc_info=True)
-            return None
+        result = _run_isolated("text", file_data, MAX_PDF_PAGES)
+        return result if isinstance(result, str) else None
 
     return _cached((_digest(file_data), "text"), compute)
 
@@ -141,44 +204,75 @@ def _encode_png(
     )
 
 
+def _rasterize_local(
+    file_data: str,
+    max_pages: int,
+) -> Optional[list[str]]:
+    raw = _pdf_bytes(file_data)
+    if raw is None:
+        return None
+    try:
+        import pypdfium2
+
+        document = pypdfium2.PdfDocument(raw)
+        pages: list[str] = []
+        output_bytes = 0
+        try:
+            for index in range(min(len(document), max_pages)):
+                page = document[index]
+                width, height = page.get_size()
+                if (
+                    width
+                    * RASTER_SCALE
+                    * height
+                    * RASTER_SCALE
+                    > MAX_RASTER_PIXELS_PER_PAGE
+                ):
+                    return None
+                bitmap = page.render(
+                    scale=RASTER_SCALE,
+                    rev_byteorder=True,
+                )
+                png = _encode_png(
+                    bitmap.width,
+                    bitmap.height,
+                    bytes(bitmap.buffer),
+                    bitmap.stride,
+                    bitmap.n_channels,
+                )
+                image = (
+                    "data:image/png;base64,"
+                    + base64.b64encode(png).decode("ascii")
+                )
+                output_bytes += len(image.encode("ascii"))
+                if output_bytes > MAX_WORKER_OUTPUT_BYTES:
+                    return None
+                pages.append(image)
+        finally:
+            document.close()
+        return pages or None
+    except Exception:
+        logger.warning("pdf rasterization failed", exc_info=True)
+        return None
+
+
 def rasterize(
     file_data: str,
     max_pages: int = RASTER_MAX_PAGES,
 ) -> Optional[list[str]]:
-    """Render PDF pages locally as PNG data URLs."""
+    """Render PDF pages in a killable worker as PNG data URLs."""
 
     def compute() -> Optional[list[str]]:
-        raw = _pdf_bytes(file_data)
-        if raw is None:
+        result = _run_isolated(
+            "images",
+            file_data,
+            min(max_pages, RASTER_MAX_PAGES),
+        )
+        if not isinstance(result, list) or not all(
+            isinstance(item, str) for item in result
+        ):
             return None
-        try:
-            import pypdfium2
-
-            document = pypdfium2.PdfDocument(raw)
-            pages: list[str] = []
-            try:
-                for index in range(min(len(document), max_pages)):
-                    bitmap = document[index].render(
-                        scale=RASTER_SCALE,
-                        rev_byteorder=True,
-                    )
-                    png = _encode_png(
-                        bitmap.width,
-                        bitmap.height,
-                        bytes(bitmap.buffer),
-                        bitmap.stride,
-                        bitmap.n_channels,
-                    )
-                    pages.append(
-                        "data:image/png;base64,"
-                        + base64.b64encode(png).decode("ascii")
-                    )
-            finally:
-                document.close()
-            return pages or None
-        except Exception:
-            logger.warning("pdf rasterization failed", exc_info=True)
-            return None
+        return result
 
     return _cached((_digest(file_data), f"images:{max_pages}"), compute)
 

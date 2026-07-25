@@ -1,3 +1,6 @@
+import base64
+import copy
+import io
 import platform
 import subprocess
 import sys
@@ -7,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfWriter
 
 from runtime.control_plane import (
     create_control_plane_app,
@@ -45,6 +49,200 @@ class ReadThenAnswerProvider(ProviderClient):
 
     def capabilities(self, _model):
         return ModelCapabilities()
+
+
+class AttachmentCaptureProvider(ProviderClient):
+    def __init__(self):
+        self.calls = []
+
+    def complete(self, *, model, messages, **_kwargs):
+        self.calls.append(
+            {
+                "model": model,
+                "messages": copy.deepcopy(messages),
+            }
+        )
+        return AssistantTurn(text="attachment inspected")
+
+    def capabilities(self, model):
+        return ModelCapabilities(
+            vision=True,
+            pdf=model.startswith("anthropic:"),
+        )
+
+
+def _blank_pdf_url():
+    buffer = io.BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.write(buffer)
+    return (
+        "data:application/pdf;base64,"
+        + base64.b64encode(buffer.getvalue()).decode("ascii")
+    )
+
+
+def test_production_attachments_survive_restart_and_model_switch(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    provider = AttachmentCaptureProvider()
+    services = build_services(config, provider=provider)
+    canonical = [
+        {"type": "text", "text": "Inspect both attachments"},
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": "data:image/png;base64,iVBORw0KGgo=",
+            },
+        },
+        {
+            "type": "file",
+            "file": {
+                "filename": "design.pdf",
+                "file_data": _blank_pdf_url(),
+            },
+        },
+    ]
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/attachment-session",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            first = client.post(
+                "/v1/sessions/attachment-session/turns",
+                headers=AUTH,
+                json={
+                    "input": canonical,
+                    "workspace": str(workspace),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+
+            switched = client.patch(
+                "/v1/sessions/attachment-session",
+                headers=AUTH,
+                json={"model": "anthropic:claude-test"},
+            )
+            second = client.post(
+                "/v1/sessions/attachment-session/turns",
+                headers=AUTH,
+                json={"input": "Review the PDF again"},
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+
+    assert first.status_code == 202
+    assert switched.status_code == 200
+    assert second.status_code == 202
+    first_user = next(
+        message
+        for message in provider.calls[0]["messages"]
+        if message["role"] == "user"
+    )
+    assert [part["type"] for part in first_user["content"]] == [
+        "text",
+        "image_url",
+        "text",
+    ]
+    second_first_user = next(
+        message
+        for message in provider.calls[1]["messages"]
+        if message["role"] == "user"
+    )
+    assert second_first_user["content"] == canonical
+
+    persisted = services.sessions.messages("attachment-session")
+    assert next(
+        message["content"]
+        for message in persisted
+        if message["role"] == "user"
+        and isinstance(message["content"], list)
+    ) == canonical
+    restarted = build_services(
+        config,
+        provider=AttachmentCaptureProvider(),
+    )
+    assert restarted.sessions.messages("attachment-session") == persisted
+
+
+def test_workspace_switch_uses_a_new_session_and_permission_root(tmp_path):
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=AttachmentCaptureProvider(),
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        for session_id, workspace, prompt in (
+            ("session-a", workspace_a, "workspace A"),
+            ("session-b", workspace_b, "workspace B"),
+        ):
+            with client.websocket_connect(
+                f"/ws/session/{session_id}",
+                subprotocols=[
+                    "codinal.v1",
+                    websocket_auth_protocol(TOKEN),
+                ],
+            ) as socket:
+                response = client.post(
+                    f"/v1/sessions/{session_id}/turns",
+                    headers=AUTH,
+                    json={
+                        "input": prompt,
+                        "workspace": str(workspace),
+                    },
+                )
+                event = socket.receive_json()
+                while event["type"] != "turn_end":
+                    event = socket.receive_json()
+                assert response.status_code == 202
+
+    listed = {
+        session["session_id"]: session
+        for session in services.sessions.list_sessions()
+    }
+    assert listed["session-a"]["workspace"] == str(workspace_a)
+    assert listed["session-b"]["workspace"] == str(workspace_b)
+    engine_b = services.sessions.get_engine("session-b")
+    assert engine_b is not None
+    assert engine_b.source_workspace == workspace_b.resolve()
+    assert engine_b.permissions.roots[0].path == workspace_b.resolve()
+    assert next(
+        message["content"]
+        for message in services.sessions.messages("session-a")
+        if message["role"] == "user"
+    ) == "workspace A"
+    assert next(
+        message["content"]
+        for message in services.sessions.messages("session-b")
+        if message["role"] == "user"
+    ) == "workspace B"
 
 
 def test_production_sidecar_turn_streams_tools_and_survives_restart(
