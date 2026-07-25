@@ -42,6 +42,11 @@ Vendor-copy จาก OpenWorker เฉพาะ: React/Tauri UI components, Tur
 
 Handoff อ้าง "SessionManager ~3,300" ถูกขนาด แต่ผิดไฟล์: จริงคือ `server/manager.py` ไม่ใช่ `sessions.py` (36 บรรทัด).
 
+**Phase 1 execution amendment (2026-07-26):** checkout source commit ที่ pin ไว้ใน
+`/tmp` เป็น read-only staging reference แล้ว copy เฉพาะ module ที่เลือกเข้า path จริงพร้อม
+per-file provenance header; ไม่ commit OpenWorker source tree ทั้งก้อน. การ extract
+`SessionManager` ทำเป็น vertical slice ทีละส่วน เริ่มจาก `sessions`, test และ commit แยกกัน.
+
 ### D4 — Security boundary: macOS sandbox + harness risk class + in-process policy
 - **Shell sandbox (v1):** direct distribution (ไม่ Mac App Store) + **ไม่ใช้ App Sandbox** เพราะ coding agent ต้อง shell-out ไปยัง CLIs ของ user (homebrew git, nvm, cargo…) ซึ่ง App Sandbox จำกัด; ใช้ `sandbox-exec` profile จำกัดเฉพาะ Python sidecar shell worker (workspace + tmp writable, network off default) — แก้ P0 shell-prefix bypass ตรง ๆ (sandbox ไม่ใช่ allowlist). **รับความเสี่ยง deprecation** ของ `sandbox-exec`. **DE-RISKED 2026-07-25 (Phase 0a.2):** spike notarization status=Accepted, `spctl: accepted (Notarized Developer ID)` — Apple ยอมรับ sandbox-exec usage ใน signed/notarized app (F3 ปิด)
 - Approval ตาม harness risk class: `read` auto · `write_local` per-session scope · `exec` & `external` ถามเสมอ (from `standards/agent-guardrails`)
@@ -78,6 +83,9 @@ Handoff อ้าง "SessionManager ~3,300" ถูกขนาด แต่ผ�
 - **Python runtime packaging (v1):** embedded Python (`python-build-standalone`) + pinned deps บรรจุใน `.app/Resources`, codesign ทุก binary ใน bundle, notarize ครั้งเดียว — เลือกแทน pyinstaller/venv-at-install เพราะ venv-at-install สร้าง binary ไม่ signed หลังติดตั้ง (ฝ่าฝืน notarization); pyinstaller reproducibility ยาก. **DE-RISKED 2026-07-25 (Phase 0a.3):** cpython-3.12.13 bundle + pip dep (requests) codesign --deep + notarization status=Accepted, `spctl: accepted`, runs post-notarize (F5 ปิด)
 - Tauri เก็บทาง cross-platform โดยไม่ lock-in (Windows/Linux รอบหลัง)
 - "OpenWorker" เป็น attribution ใน license/notice เท่านั้น — ห้ามใช้เป็นชื่อ product/trademark
+- **Phase 1 host amendment (2026-07-26):** สร้าง Tauri skeleton ขั้นต่ำใน Phase 1.3
+  เพื่อให้ Rust host เป็นผู้ mint bearer token และ inject เข้า Python sidecar ตั้งแต่ต้น;
+  ไม่เลื่อนไป Phase 4 และไม่สร้าง temporary token owner ที่ต้องรื้อภายหลัง.
 
 ### D9 — MVP scope: Lean coding
 **In:**

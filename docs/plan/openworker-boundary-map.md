@@ -20,7 +20,7 @@ source: andrewyng/openworker@54b4bfd82d75704a4079ecea4f8f622aa152dbde
 | `coworker/tools/*` | — | **EXTRACT/REWRITE** | tool impl ใช้ได้; manifest ย้ายไป harness/policy |
 | `coworker/permissions.py` `risk.py` | 296 | **VENDOR + light-adapt** | already risk-class-based + stdlib-only; Codinal adaptation = drop the `connectors.tool_defs` import in `standing_rule_candidate` (connectors deferred). Vendored 2026-07-25 into `runtime/policy/` (20 tests green). |
 | `coworker/mcp/*` | — | **VENDOR (transport)** | แยก transport จาก policy |
-| `coworker/server/manager.py` (SessionManager) | 3,505 | **EXTRACT 5 slices + REWRITE glue** | god-object 1 class ~110 methods — see §server |
+| `coworker/server/manager.py` (SessionManager) | 3,505 | **EXTRACT 5 slices + REWRITE glue** | `sessions` → `runtime/sessions/` ✅; อีก 4 slices + glue pending — see §server |
 | `coworker/server/app.py` (control plane) | 1,773 | **REWRITE (reject as unit)** | ทุก `/v1/*` unauthenticated; 2 WS เช็คแค่ spoofable Origin; `/oauth/callback` CSRF P0 |
 | `coworker/server/run.py` orphan-watcher | 156 | **REUSE logic** | orphan-kill; launcher entry ทิ้ง |
 | `coworker/connectors/integration_tools.py` | 4,892 | **REWRITE / out-of-scope v1** | connector นอก PR/issue เป็น non-goal |
@@ -67,6 +67,11 @@ Model swap mid-session ทำได้แล้ว: `engine.switch_model` (engin
 REUSE stateless helpers: `_redact`, `_recent_files`, `_artifact_kind`, `_git_branch`, `_last_assistant_text`, Ollama/curated probes, `_grants_of`/`_approval_body`.
 
 REWRITE (entangled): `__init__` (105-226 wires-everything), policy/approval glue (mint_task_rule, _scheduled_approver, approval_outcome, _apply_grants), inbox callbacks (650-760).
+
+**Phase 1.2 progress (2026-07-26):** `sessions` ถูก extract เป็น public
+`runtime.sessions.SessionService` หลัง injected `SessionStore`, engine factory/snapshotter,
+delete callbacks และ artifact opener. Runtime ไม่ own provider/MCP และไม่เรียก OS opener
+โดยตรง. อีก 4 slices และ composition glue ยังไม่เริ่ม.
 
 ### server/app.py — REJECT as unit (P0s ครบ)
 

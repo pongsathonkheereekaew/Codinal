@@ -1,7 +1,9 @@
 # runtime/
 
-Codinal Python sidecar (OpenWorker-derived mechanics). Populated in Phase 2.
+Codinal Python sidecar (OpenWorker-derived mechanics).
 
+- `sessions/` — Phase 1.2 session lifecycle boundary (injected store/engine,
+  roots, artifacts)
 - `turn_engine/` — vendored from `coworker/engine.py` (TurnEngine, zero server deps)
 - `providers/` — vendored `{base,router,anthropic,openai,gemini}_provider.py`
 - `mcp/` — vendored transport
