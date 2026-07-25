@@ -19,8 +19,40 @@ _DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
 _PROFILE = """
 (version 1)
 (deny default)
+(import "system.sb")
 (allow process*)
-(allow file-read*)
+(allow file-read-metadata file-test-existence
+    (path-ancestors (param "WORKSPACE"))
+    (path-ancestors (param "SESSION_TMP"))
+    (path-ancestors "/Applications/Xcode.app")
+    (path-ancestors "/opt/homebrew")
+    (path-ancestors "/System/Volumes/Data/opt/homebrew"))
+(allow file-read*
+    (subpath (param "WORKSPACE"))
+    (subpath (param "SESSION_TMP"))
+    (subpath "/Applications/Xcode.app")
+    (subpath "/Library/Apple")
+    (subpath "/Library/Developer")
+    (subpath "/Library/Frameworks")
+    (subpath "/System")
+    (subpath "/System/Volumes/Data/opt/homebrew")
+    (subpath "/bin")
+    (subpath "/dev")
+    (subpath "/opt/homebrew")
+    (literal "/private/etc/gitconfig")
+    (subpath "/private/var/select")
+    (subpath "/sbin")
+    (subpath "/usr"))
+(allow file-map-executable
+    (subpath (param "WORKSPACE"))
+    (subpath "/Applications/Xcode.app")
+    (subpath "/Library/Apple")
+    (subpath "/Library/Developer")
+    (subpath "/Library/Frameworks")
+    (subpath "/System")
+    (subpath "/System/Volumes/Data/opt/homebrew")
+    (subpath "/opt/homebrew")
+    (subpath "/usr"))
 (allow sysctl-read)
 (allow file-write*
     (subpath (param "WORKSPACE"))
@@ -227,6 +259,16 @@ class SandboxedShell:
             for key in _SAFE_ENV_KEYS
             if self._source_environment.get(key)
         }
+        developer_bins = [
+            path
+            for path in (
+                "/Applications/Xcode.app/Contents/Developer/usr/bin",
+                "/Library/Developer/CommandLineTools/usr/bin",
+            )
+            if Path(path).is_dir()
+        ]
+        source_path = safe.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        safe["PATH"] = os.pathsep.join([*developer_bins, source_path])
         safe.update(
             {
                 "HOME": str(self.temp_dir),
@@ -245,3 +287,8 @@ class SandboxedShell:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             return
+        except PermissionError:
+            try:
+                process.kill()
+            except (ProcessLookupError, PermissionError):
+                return

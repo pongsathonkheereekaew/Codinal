@@ -139,7 +139,12 @@ transactional snapshot/restart. การประกาศ live Tier-1 ยั�
 **Gate:** Tier-1 turn ครบ (prompt → tool-call → approval → result) โดยผ่าน policy port ทุกขั้น.
 
 ### Phase 3 — Shell + Git services  (gate: sandbox block + worktree lifecycle + Apply สมบูรณ์)
-- 3.1 **Sandbox (F3):** `sandbox-exec` profile จำกัดเฉพาะ Python sidecar shell worker (workspace+tmp writable, network off default); **notarization spike ก่อนเขียนเต็ม** — ยืนยันว่า signed/notarized build ที่ใช้ `sandbox-exec` ผ่าน Gatekeeper จริง; ถ้าไม่ผ่านย้อน App Sandbox (พร้อมข้อจำกัด shell-out) หรือ Seatbelt API ที่ supported — แก้ P0 shell-prefix + P1 no-sandbox
+- 3.1 ✅ **Sandbox (F3, 2026-07-26):** production `run_shell` ใช้ direct argv
+  ผ่าน `sandbox-exec`; workspace+private session tmp writable, network off,
+  safe env, bounded output/timeout และ process-group interrupt. Atomic
+  `write_file`/`replace_in_file` กัน root/symlink/concurrent-edit escape.
+  Notarization spike ผ่าน Gatekeeper แล้วใน Phase 0a.2 — ปิด P0 shell-prefix
+  และ P1 no-sandbox
 - 3.2 `harness/git` worktree service: 1 session = 1 worktree = 1 branch
 - 3.3 git status/diff/stage backend + **Apply-back endpoint (F4):** ผู้ใช้กด Apply → merge session branch เข้า working branch (default = branch ที่ forked จาก: fast-forward ถ้าได้ มิฉะนั้น merge commit); optional "Open as PR" ผ่าน `gh`; ไม่ auto-push
 - 3.4 **Conflict = abort + flag (F9):** conflict ตอน Apply (merge session→working) → abort Apply, session branch + worktree intact; ห้าม auto-resolve

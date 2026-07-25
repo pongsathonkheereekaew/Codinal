@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,9 +18,10 @@ from runtime.oauth import OAuthCoordinator
 from runtime.policy import Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
+from runtime.sandbox import SandboxedShell
 from runtime.sessions import SessionRecord
 from runtime.storage import ConversationStore
-from runtime.tools import build_core_registry
+from runtime.tools import build_core_registry, register_mutation_tools
 from runtime.turn_engine import TurnEngine
 
 from .app import create_control_plane_app
@@ -79,16 +82,42 @@ def build_services(
     secret_service = secrets or ProviderSecretService()
     store = ConversationStore(config.data_dir)
     provider_client = provider or ProviderRouter(secret_service)
+    sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
+
+    def sandbox_directory(session_id: str) -> Path:
+        return sandbox_base / hashlib.sha256(
+            session_id.encode("utf-8")
+        ).hexdigest()
+
+    def delete_sandbox(session_id: str) -> None:
+        target = sandbox_directory(session_id)
+        if target.parent != sandbox_base or target == sandbox_base:
+            raise ValueError("invalid sandbox cleanup target")
+        if target.is_symlink():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
 
     def build_engine(context):
+        shell = SandboxedShell(
+            workspace=context.request.workspace,
+            temp_dir=sandbox_directory(context.request.session_id),
+        )
+        registry = build_core_registry(context.roots)
+        register_mutation_tools(
+            registry,
+            roots=context.roots,
+            shell=shell,
+        )
         engine = TurnEngine(
             provider=provider_client,
-            registry=build_core_registry(context.roots),
+            registry=registry,
             permissions=context.permissions,
             model=context.request.model,
             instructions=_coding_instructions(),
             approver=context.approver,
             messages=context.request.messages,
+            interrupt_hooks=[shell.interrupt],
         )
         engine.agent = context.request.agent
         return engine
@@ -131,6 +160,7 @@ def build_services(
         snapshotter=snapshot,
         default_model=config.default_model,
         approver=approver,
+        delete_callbacks=(delete_sandbox,),
         provider_secrets=secret_service,
         oauth=oauth or OAuthCoordinator(),
         mcp_manager=mcp_manager or MCPManager(),
@@ -140,9 +170,11 @@ def build_services(
 def _coding_instructions() -> str:
     return (
         "You are Codinal, a local coding agent. Inspect the workspace with "
-        "the provided tools, cite concrete file paths and line numbers, and "
-        "state clearly when the available tool set cannot perform a requested "
-        "mutation. Never claim a file changed unless a tool result proves it."
+        "the provided tools, make requested changes with the mutation tools, "
+        "and cite concrete file paths and line numbers. Shell commands run as "
+        "direct argv in a network-denied workspace sandbox and do not support "
+        "shell operators. Never claim a file changed unless a tool result "
+        "proves it."
     )
 
 

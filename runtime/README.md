@@ -37,9 +37,15 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   session connect mutates only an idle engine registry, and app shutdown closes
   every live transport/child process
 - `tools/` — manifest-bound implementation registry; requires explicit strict
-  schemas and refuses undeclared tools; production currently exposes bounded
-  root-scoped `read_file`, `list_files`, and literal `grep` without spawning
-  subprocesses (write/shell tools wait for the Phase 3 sandbox)
+  schemas and refuses undeclared tools; production exposes bounded root-scoped
+  reads plus atomic `write_file`/`replace_in_file` mutations. File writes use
+  directory file descriptors, refuse symlinks, preserve ordinary permissions,
+  and reject concurrent replace races
+- `sandbox/` — Phase 3.1 direct-argv executor. A mandatory macOS Seatbelt
+  profile limits writes to the primary workspace and per-session private temp,
+  limits reads to those roots plus system/toolchain paths, denies network,
+  strips inherited credential environment variables, caps output/time, and
+  kills the process group on interrupt
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes
   harness-owned cases through injected adapters and reports Tier 1/Tier 2/
   incompatible without exposing raw provider responses
@@ -57,8 +63,9 @@ later tool subprocesses cannot inherit it.
 
 Standalone startup now composes the transactional conversation store,
 provider router, policy-bound TurnEngine, live-root read registry, session
-coordinator, and authenticated HTTP/WebSocket surfaces. A new public session
-is created only when its first turn supplies an absolute existing workspace.
+coordinator, sandboxed mutation registry, and authenticated HTTP/WebSocket
+surfaces. A new public session is created only when its first turn supplies an
+absolute existing workspace.
 
 Native `codinal://oauth/callback` links are strictly parsed by the Tauri host
 and relayed to the sidecar with both the control-plane bearer and the

@@ -176,6 +176,15 @@ block parent/symlink escape, จำกัด bytes/lines/files/results/time แ�
 subprocess. E2E test พิสูจน์ bearer turn → session WebSocket tool lifecycle →
 snapshot → restart/load history. Mutation/shell tools รอ Phase 3 sandbox.
 
+**Phase 3.1 mutation sandbox (2026-07-26):** production registry เพิ่ม
+`write_file`/`replace_in_file` แบบ atomic, writable-root scoped และตรวจ
+concurrent edit ก่อน replace. `run_shell` parse เป็น argv โดยตรง (ไม่มี
+shell expansion) แล้วบังคับผ่าน `/usr/bin/sandbox-exec`: workspace+session
+tmp เขียนได้, network ปิด, env secret ไม่สืบทอด, output/timeout bounded และ
+interrupt ฆ่าทั้ง process group. Read scope จำกัดที่ workspace/tmp +
+system/toolchain paths. Negative tests พิสูจน์ parent/leaf symlink escape,
+outside read/write และ loopback network ถูก block.
+
 **Phase 2.2 MCP transport (2026-07-26):** adapt `coworker/mcp/{client,config,
 tools}.py` บน official `mcp==1.28.1` ที่ pin/hash-lock. ตัด env/`.env` secret
 resolution และ OAuth store ของ upstream ออก; connect ต้องรับ explicit host

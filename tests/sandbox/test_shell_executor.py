@@ -16,6 +16,8 @@ from runtime.sandbox import (
     SandboxUnavailableError,
 )
 
+PYTHON_EXECUTABLE = Path(sys.executable).resolve()
+
 requires_seatbelt = pytest.mark.skipif(
     platform.system() != "Darwin"
     or not Path("/usr/bin/sandbox-exec").is_file(),
@@ -73,7 +75,7 @@ def test_does_not_inherit_provider_secrets(
 @requires_seatbelt
 def test_caps_captured_output(shell: SandboxedShell) -> None:
     result = shell.run(
-        f"{sys.executable} -c \"import sys; "
+        f"{PYTHON_EXECUTABLE} -c \"import sys; "
         "sys.stdout.write('o' * 5000); sys.stderr.write('e' * 5000)\""
     )
 
@@ -85,7 +87,7 @@ def test_caps_captured_output(shell: SandboxedShell) -> None:
 @requires_seatbelt
 def test_timeout_kills_the_command(shell: SandboxedShell) -> None:
     result = shell.run(
-        f"{sys.executable} -c \"import time; time.sleep(10)\"",
+        f"{PYTHON_EXECUTABLE} -c \"import time; time.sleep(10)\"",
         timeout_seconds=0.05,
     )
 
@@ -98,7 +100,10 @@ def test_interrupt_kills_the_active_command(shell: SandboxedShell) -> None:
     outcome: list[object] = []
     thread = threading.Thread(
         target=lambda: outcome.append(
-            shell.run(f"{sys.executable} -c \"import time; time.sleep(10)\"")
+            shell.run(
+                f"{PYTHON_EXECUTABLE} -c "
+                "\"import time; time.sleep(10)\""
+            )
         )
     )
     thread.start()
@@ -135,6 +140,28 @@ def test_seatbelt_allows_workspace_and_temp_writes_only(
 
 
 @requires_seatbelt
+def test_seatbelt_denies_read_outside_declared_roots(
+    shell: SandboxedShell,
+    tmp_path: Path,
+) -> None:
+    outside_file = tmp_path / "outside-secret"
+    outside_file.write_text("must-not-reach-model", encoding="utf-8")
+
+    result = shell.run(f"/bin/cat {outside_file}")
+
+    assert result.exit_code != 0
+    assert "must-not-reach-model" not in result.stdout
+
+
+@requires_seatbelt
+def test_seatbelt_can_run_workspace_git(shell: SandboxedShell) -> None:
+    result = shell.run("git init")
+
+    assert result.exit_code == 0
+    assert (shell.workspace / ".git").is_dir()
+
+
+@requires_seatbelt
 def test_seatbelt_blocks_write_through_symlink(
     shell: SandboxedShell,
     tmp_path: Path,
@@ -156,7 +183,7 @@ def test_seatbelt_denies_network(shell: SandboxedShell) -> None:
     listener.listen()
     port = listener.getsockname()[1]
     command = (
-        f"{sys.executable} -c \"import socket; "
+        f"{PYTHON_EXECUTABLE} -c \"import socket; "
         f"socket.create_connection(('127.0.0.1', {port}), timeout=0.2)\""
     )
     try:
