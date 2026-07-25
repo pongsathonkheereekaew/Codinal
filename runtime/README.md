@@ -19,8 +19,8 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 - `turn_engine/` — vendored from `coworker/engine.py` (TurnEngine, zero server deps)
 - `providers/` — Phase 2 provider contract and conformance bridge; normalized
   assistant tool calls are revalidated by the runtime policy parser before use;
-  the vendored OpenAI Chat Completions adapter resolves keys only from the
-  native-backed memory store (Anthropic/Gemini/router remain pending)
+  vendored OpenAI and Anthropic adapters resolve keys only from the
+  native-backed memory store (Gemini/router remain pending)
 - `mcp/` — vendored transport
 - `tools/` — tool implementations (manifest lives in `harness/policy`)
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes

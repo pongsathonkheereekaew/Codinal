@@ -118,6 +118,12 @@ Codinal adaptation ลบ `OPENAI_API_KEY` environment fallback: production key
 resolve จาก `ProviderSecretService` memory mirror เท่านั้น; error และ outbound
 message ไม่ echo key/foreign provider sidecar.
 
+**Phase 2.1 Anthropic adapter progress (2026-07-26):** vendor native Messages
+adapter พร้อม provenance และ pin Anthropic SDK ใน hashed runtime lock. Converter
+รักษา system role, parallel tool-result folding, thinking sidecar และ tool-use
+normalization; Codinal ลบ `ANTHROPIC_API_KEY` env fallback และ resolve key จาก
+memory-only service เท่านั้น.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

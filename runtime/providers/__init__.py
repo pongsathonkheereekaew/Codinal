@@ -2,6 +2,7 @@
 
 from runtime.policy import ToolCall
 
+from .anthropic_provider import AnthropicProvider
 from .base import (
     AssistantTurn,
     ModelCapabilities,
@@ -13,6 +14,7 @@ from .openai_provider import OpenAIProvider, resolve_api_key
 
 __all__ = [
     "AssistantTurn",
+    "AnthropicProvider",
     "ModelCapabilities",
     "OpenAIProvider",
     "ProviderClient",
