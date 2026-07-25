@@ -10,11 +10,13 @@ from .base import (
     StreamChunk,
 )
 from .conformance import ProviderConformanceAdapter
+from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider, resolve_api_key
 
 __all__ = [
     "AssistantTurn",
     "AnthropicProvider",
+    "GeminiProvider",
     "ModelCapabilities",
     "OpenAIProvider",
     "ProviderClient",

@@ -124,6 +124,12 @@ adapter พร้อม provenance และ pin Anthropic SDK ใน hashed run
 normalization; Codinal ลบ `ANTHROPIC_API_KEY` env fallback และ resolve key จาก
 memory-only service เท่านั้น.
 
+**Phase 2.1 Gemini adapter progress (2026-07-26):** vendor native Google GenAI
+adapter พร้อม provenance และ pin `google-genai` ใน hashed runtime lock.
+Function-call/thought-signature normalization เดิมถูก revalidate ที่ provider
+contract; Codinal ลบทั้ง `GEMINI_API_KEY` และ `GOOGLE_API_KEY` env fallback
+และ resolve key จาก memory-only service เท่านั้น.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)
