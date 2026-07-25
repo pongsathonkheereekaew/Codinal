@@ -41,7 +41,7 @@ else
 fi
 
 cd "$DEST"
-chmod +x install.sh verify.sh bootstrap.sh scripts/* 2>/dev/null || true
+chmod +x install.sh verify.sh bootstrap.sh harness/scripts/* 2>/dev/null || true
 ./install.sh
 bash ./verify.sh
 

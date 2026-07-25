@@ -1,0 +1,34 @@
+# NOTICE — Codinal
+
+Codinal is licensed under the MIT License (see `LICENSE`).
+
+This product includes vendored or derived material from the following
+third-party projects. Their copyright and license terms are preserved as
+required.
+
+## OpenWorker — https://github.com/andrewyng/openworker
+Used at commit `54b4bfd82d75704a4079ecea4f8f622aa152dbde` (MIT).
+Copyright (c) 2024 Andrew Ng.
+
+Vendored / extracted (per `docs/plan/openworker-boundary-map.md`):
+- `coworker/engine.py` (TurnEngine) — vendored
+- `coworker/sessions.py`, `coworker/providers/{base,router,anthropic,openai,gemini}_provider.py` — vendored
+- `coworker/mcp/*` transport — vendored
+- `surfaces/gui/src/components/*` (React + Tauri v2 UI) — vendored (rewired at the seam: `api.ts`, `App.tsx` WS switch, `itemsFromMessages.ts`, `src-tauri/src/lib.rs`)
+- 5 cohesive slices extracted from `coworker/server/manager.py:SessionManager` (sessions / events / automations / connectors-gateway / settings)
+
+Rejected / rewritten from scratch (do not derive from OpenWorker):
+- `coworker/server/app.py` control plane (P0 security: unauthenticated routes, spoofable-Origin WS, `/oauth/callback` CSRF)
+- `coworker/permissions.py`, `coworker/risk.py` — replaced by harness risk-class policy
+
+Each vendored file carries a provenance header citing the OpenWorker commit and copyright.
+
+## python-build-standalone — https://github.com/astral-sh/python-build-standalone
+Embedded CPython runtime shipped inside the macOS `.app` bundle
+(MPL-2.0 / Python Software Foundation License — see upstream). Used for the
+Phase 0a.3 spike at cpython-3.12.13+20260718 (aarch64-apple-darwin).
+
+## Harness content
+The `harness/` subpath (policy, skills, memory, standards, commands) is
+original work of this repository's authors (MIT) unless an individual
+file declares otherwise.

@@ -10,9 +10,11 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-# Make scripts/lib + scripts/adapters importable in the dev tree.
+HARNESS = REPO / "harness"
+# Make scripts/lib + scripts/adapters importable in the dev tree
+# (harness content moved under harness/ in the Codinal migration).
 for sub in ("scripts",):
-    p = REPO / sub
+    p = HARNESS / sub
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
@@ -24,12 +26,12 @@ def repo_root() -> Path:
 
 @pytest.fixture()
 def manifest_path(repo_root: Path) -> Path:
-    return repo_root / "config" / "hosts.yaml"
+    return HARNESS / "config" / "hosts.yaml"
 
 
 @pytest.fixture()
 def schema_path(repo_root: Path) -> Path:
-    return repo_root / "schemas" / "host-capability.schema.json"
+    return HARNESS / "schemas" / "host-capability.schema.json"
 
 
 @pytest.fixture()
@@ -61,8 +63,8 @@ def tmp_agents_home(tmp_path: Path) -> Path:
     (home / "commands").mkdir()
     (home / "commands" / "harness-sync.md").write_text("# sync\n")
     # staged manifest + schema so the CLI can load from agents_home
-    shutil.copytree(REPO / "config", home / "config")
-    shutil.copytree(REPO / "schemas", home / "schemas")
+    shutil.copytree(HARNESS / "config", home / "config")
+    shutil.copytree(HARNESS / "schemas", home / "schemas")
     # runtime state
     (home / "state").mkdir()
     (home / "backups").mkdir()

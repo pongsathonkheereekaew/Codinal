@@ -7,6 +7,28 @@ bump independently.
 
 ## [Unreleased]
 
+### Changed — repo repurposed to Codinal (Phase 0b migration)
+- This repo is now the **Codinal** product repo (macOS coding-agent desktop).
+  Harness content moved from repo root into `harness/` subpath. The `~/.agents/`
+  install target and its layout are **unchanged**; only the in-repo source
+  layout changed.
+- `install.sh`, `bootstrap.sh`, `verify.sh`, `backup.sh` updated to read from
+  `harness/`.
+- Removed stray `hermes/REVIEW-HOME.md` (hermes lives in `agentmonitor`).
+- Added: `LICENSE` (MIT), `NOTICE` (attribution: OpenWorker © 2024 Andrew Ng,
+  python-build-standalone), `MIGRATING.md`, `desktop/` + `runtime/` skeletons,
+  `docs/decisions/0001-codinal-foundation.md` (ADR),
+  `docs/plan/codinal-mvp.md`, `docs/plan/openworker-boundary-map.md`.
+- Tagged `last-harness-only` at the final harness-only commit for rollback.
+
+### Phase 0a de-risking spikes (all PASSED 2026-07-25)
+- 0a.1 control-plane auth (loopback HTTP+WS + bearer token + PermissionEngine
+  no-bypass): 4/4.
+- 0a.2 sandbox-exec notarization: Accepted + `spctl: Notarized Developer ID`.
+- 0a.3 embedded-Python bundle notarization: Accepted + runs post-notarize.
+- 0a.4 OpenWorker boundary map → re-opened F1 (control plane back to
+  loopback+token; in-process stdio would have forced full UI bridge rewrite).
+
 ### Added — capability-driven harness (Phases 1–3 of the cross-agent plan)
 - `config/hosts.yaml` + `schemas/host-capability.schema.json`: central
   capability manifest. Each host declares tier, paths, discovery rules, native

@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # Install Agent Harness → ~/.agents (zero-tweak coding desk)
-# Git SSOT = this repo. Live edits to AGENTS.md are backed up then replaced.
+# Git SSOT = this repo (Codinal). Harness content lives under harness/.
+# Live edits to AGENTS.md are backed up then replaced.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+HARNESS="$ROOT/harness"
 DEST="${AGENTS_HOME:-$HOME/.agents}"
 
-echo "=== harness-flow → $DEST ==="
+echo "=== harness-flow (Codinal) → $DEST ==="
 mkdir -p "$DEST"/{skills,standards,commands,scripts,memory}
 mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.local/bin"
 
 # Policy: repo wins; backup live copy if it differs
 install_agents_md() {
-  local src="$ROOT/AGENTS.md"
+  local src="$HARNESS/AGENTS.md"
   local dest="$DEST/AGENTS.md"
   if [[ -f "$dest" ]] && ! cmp -s "$src" "$dest"; then
     local bak="$DEST/AGENTS.md.bak.$(date +%Y%m%d%H%M%S)"
@@ -26,26 +28,26 @@ install_agents_md() {
 install_agents_md
 
 # Scripts CLI (recursive — carries scripts/lib + scripts/adapters Python packages)
-rsync -a --delete "$ROOT/scripts/" "$DEST/scripts/"
+rsync -a --delete "$HARNESS/scripts/" "$DEST/scripts/"
 chmod +x "$DEST/scripts/"*
 echo "scripts/ ← repo"
 
 # Capability manifest + schema (read by harness host/verify)
-rsync -a --delete "$ROOT/config/" "$DEST/config/" 2>/dev/null || mkdir -p "$DEST/config"
-rsync -a --delete "$ROOT/schemas/" "$DEST/schemas/" 2>/dev/null || mkdir -p "$DEST/schemas"
+rsync -a --delete "$HARNESS/config/" "$DEST/config/" 2>/dev/null || mkdir -p "$DEST/config"
+rsync -a --delete "$HARNESS/schemas/" "$DEST/schemas/" 2>/dev/null || mkdir -p "$DEST/schemas"
 echo "config/ + schemas/ ← repo"
 
 # Standards + commands
-rsync -a --delete "$ROOT/standards/" "$DEST/standards/"
-rsync -a --delete "$ROOT/commands/" "$DEST/commands/" 2>/dev/null || mkdir -p "$DEST/commands"
+rsync -a --delete "$HARNESS/standards/" "$DEST/standards/"
+rsync -a --delete "$HARNESS/commands/" "$DEST/commands/" 2>/dev/null || mkdir -p "$DEST/commands"
 echo "standards/ + commands/ ← repo"
 
 # Skills SSOT
-rsync -a --delete "$ROOT/skills/" "$DEST/skills/"
+rsync -a --delete "$HARNESS/skills/" "$DEST/skills/"
 echo "skills/ ← repo ($(ls -1 "$DEST/skills" | wc -l | tr -d ' ') entries)"
 
 # Durable shared memory (not episodic)
-rsync -a --delete "$ROOT/memory/" "$DEST/memory/"
+rsync -a --delete "$HARNESS/memory/" "$DEST/memory/"
 echo "memory/ ← repo ($(ls -1 "$DEST/memory" | wc -l | tr -d ' ') entries)"
 
 # Claude durable folder → live SSOT (keep episodic engine private)
@@ -71,8 +73,8 @@ wire_claude_durable_memory
 
 # Claude adapter: create if missing; prepend @AGENTS.md if present but unwired
 wire_claude_md() {
-  local adapter="$ROOT/adapters/CLAUDE.md"
-  local legacy="$ROOT/adapters/CLAUDE.md.example"
+  local adapter="$HARNESS/adapters/CLAUDE.md"
+  local legacy="$HARNESS/adapters/CLAUDE.md.example"
   [[ -f "$adapter" ]] || adapter="$legacy"
   local dest="$HOME/.claude/CLAUDE.md"
   mkdir -p "$HOME/.claude"
@@ -92,9 +94,9 @@ wire_claude_md() {
 wire_claude_md
 
 # Claude plugin defaults (non-destructive merge)
-if [[ -f "$ROOT/adapters/claude-settings.defaults.json" ]]; then
+if [[ -f "$HARNESS/adapters/claude-settings.defaults.json" ]]; then
   python3 "$DEST/scripts/merge-claude-settings.py" \
-    "$ROOT/adapters/claude-settings.defaults.json" \
+    "$HARNESS/adapters/claude-settings.defaults.json" \
     "$HOME/.claude/settings.json"
 fi
 
