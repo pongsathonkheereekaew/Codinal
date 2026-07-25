@@ -15,8 +15,9 @@ Vendored / extracted (per `docs/plan/openworker-boundary-map.md`):
 - `coworker/sessions.py`, `coworker/providers/{base,router,anthropic,openai,gemini}_provider.py` — vendored
 - `coworker/mcp/*` transport — vendored
 - `surfaces/gui/src/components/*` (React + Tauri v2 UI) — vendored (rewired at the seam: `api.ts`, `App.tsx` WS switch, `itemsFromMessages.ts`, `src-tauri/src/lib.rs`)
-- `sessions` slice extracted from `coworker/server/manager.py:SessionManager`;
-  events / automations / connectors-gateway / settings remain planned
+- `sessions` and `events` slices extracted from
+  `coworker/server/manager.py:SessionManager`;
+  automations / connectors-gateway / settings remain planned
 
 Rejected / rewritten from scratch (do not derive from OpenWorker):
 - `coworker/server/app.py` control plane (P0 security: unauthenticated routes, spoofable-Origin WS, `/oauth/callback` CSRF)

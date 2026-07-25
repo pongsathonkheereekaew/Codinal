@@ -4,6 +4,7 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 
 - `sessions/` — Phase 1.2 session lifecycle boundary (injected store/engine,
   roots, artifacts)
+- `events/` — Phase 1.2 global/per-session async event fan-out
 - `turn_engine/` — vendored from `coworker/engine.py` (TurnEngine, zero server deps)
 - `providers/` — vendored `{base,router,anthropic,openai,gemini}_provider.py`
 - `mcp/` — vendored transport
