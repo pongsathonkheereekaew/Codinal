@@ -18,7 +18,7 @@ source: andrewyng/openworker@54b4bfd82d75704a4079ecea4f8f622aa152dbde
 | `coworker/providers/{base,router,anthropic,openai,gemini}_provider.py` | ~1,800 | **VENDOR** | zero `coworker.server` leakage; `secrets:Any`; tool-call normalize 1 shape |
 | `coworker/providers/capabilities.py` `registry.py` | ~450 | **EXTRACT** | heuristic table + descriptor menu — edit ตอน probe models |
 | `coworker/tools/*` | — | **EXTRACT/REWRITE** | tool impl ใช้ได้; manifest ย้ายไป harness/policy |
-| `coworker/permissions.py` `risk.py` | 296 | **REWRITE→harness** | ใช้ harness risk-class แทน; engine.py รับ PermissionEngine เป็น seam อยู่แล้ว |
+| `coworker/permissions.py` `risk.py` | 296 | **VENDOR + light-adapt** | already risk-class-based + stdlib-only; Codinal adaptation = drop the `connectors.tool_defs` import in `standing_rule_candidate` (connectors deferred). Vendored 2026-07-25 into `runtime/policy/` (20 tests green). |
 | `coworker/mcp/*` | — | **VENDOR (transport)** | แยก transport จาก policy |
 | `coworker/server/manager.py` (SessionManager) | 3,505 | **EXTRACT 5 slices + REWRITE glue** | god-object 1 class ~110 methods — see §server |
 | `coworker/server/app.py` (control plane) | 1,773 | **REWRITE (reject as unit)** | ทุก `/v1/*` unauthenticated; 2 WS เช็คแค่ spoofable Origin; `/oauth/callback` CSRF P0 |
