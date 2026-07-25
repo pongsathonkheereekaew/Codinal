@@ -112,7 +112,10 @@ harness-flow/                       ← product repo "Codinal"
   ให้ทุก model-requested tool ผ่าน manifest-bound registry + PermissionEngine;
   รองรับ streaming/interrupt/max-iteration rail และ local PDF fallback แล้ว.
   control-plane turn wiring และ production tool implementations ยัง pending.
-- 2.2 vendor MCP transport + conversation storage
+- 2.2 vendor MCP transport + conversation storage. **Progress:** conversation
+  store เสร็จเป็น transactional SQLite adaptation (metadata + ordered messages
+  ใน transaction เดียว), owner-only permissions, storage-level session-id
+  validation และ rollback tests; MCP transport ยัง pending.
 - 2.3 tool registry: manifest ใน `harness/policy`, impl ใน `runtime/tools`
 - 2.4 wire runtime → control plane (subscribe model; ห้าม direct exec).
   **Progress:** เพิ่ม authenticated bounded turn/interrupt routes +

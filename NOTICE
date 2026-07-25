@@ -13,6 +13,8 @@ Copyright (c) 2024 Andrew Ng.
 Vendored / extracted (per `docs/plan/openworker-boundary-map.md`):
 - `coworker/engine.py`, `coworker/pdf_support.py`, and
   `coworker/providers/errors.py` — vendored and adapted
+- `coworker/conversations.py` — adapted into the transactional SQLite
+  conversation store
 - `coworker/sessions.py`, `coworker/providers/{base,router,anthropic,openai,gemini}_provider.py` — vendored
 - `coworker/permissions.py` and `coworker/risk.py` — adapted behind the
   harness-owned policy manifest and approval port

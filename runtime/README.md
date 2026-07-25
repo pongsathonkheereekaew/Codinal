@@ -36,7 +36,9 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes
   harness-owned cases through injected adapters and reports Tier 1/Tier 2/
   incompatible without exposing raw provider responses
-- `storage/` — vendored conversation/event mechanics
+- `storage/` — Phase 2 transactional SQLite conversation store adapted from
+  OpenWorker; metadata and ordered messages commit together, session ids are
+  revalidated at the storage boundary, and files are owner-only
 
 Bridge to host: loopback HTTP+WS + mandatory per-session bearer token (see ADR D7). Policy enforced via `PermissionEngine` collaborator (harness-controlled) — runtime must not bypass.
 

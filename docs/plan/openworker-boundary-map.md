@@ -158,7 +158,15 @@ coordinator และ authenticated `POST /v1/sessions/{id}/turns|interrupt`.
 เป็น `{type, ...data}` ไป session WebSocket และ snapshot ใน `finally`.
 Payload/session id ถูก bound และ unexpected error ไม่ echo exception.
 Standalone sidecar ยังใช้ unavailable/fail-closed turn service จนกว่า
-production JSON store + engine builder จะถูก compose ใน slice ถัดไป.
+production conversation store + engine builder จะถูก compose ใน slice ถัดไป.
+
+**Phase 2.2 conversation storage (2026-07-26):** adapt
+`coworker/conversations.py` จาก SQLite-index + แยก JSONL มาเป็น SQLite
+transaction เดียวสำหรับ session metadata และ ordered messages เพื่อตัด
+split-brain ระหว่าง index/log. Store validate public session id ซ้ำ, reject
+non-finite/non-JSON data ก่อน transaction, รองรับ append และ atomic replace
+เมื่อ history diverge, เปิด foreign-key cascade และตั้ง directory/database
+เป็น owner-only. MCP transport ยัง pending.
 
 ### server/app.py — REJECT as unit (P0s ครบ)
 
