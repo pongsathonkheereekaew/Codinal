@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import pytest
 
@@ -132,6 +133,44 @@ def test_second_active_turn_is_rejected_and_interrupt_reaches_engine():
     engine = asyncio.run(scenario())
 
     assert engine.interrupted is True
+
+
+def test_workspace_preparation_is_nonblocking_and_counts_as_active():
+    class SlowSessions(FakeSessions):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def get_engine(self, session_id, *, workspace=None, agent="code"):
+            self.started.set()
+            self.release.wait(timeout=2)
+            return super().get_engine(
+                session_id,
+                workspace=workspace,
+                agent=agent,
+            )
+
+    async def scenario():
+        sessions = SlowSessions(ScriptedEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        first = asyncio.create_task(
+            turns.start("session-1", user_input="first")
+        )
+        while not sessions.started.is_set():
+            await asyncio.sleep(0)
+        assert turns.is_active("session-1") is True
+        with pytest.raises(SessionBusyError):
+            await turns.start("session-1", user_input="second")
+        event_loop_advanced = False
+        await asyncio.sleep(0)
+        event_loop_advanced = True
+        sessions.release.set()
+        await first
+        await turns.wait("session-1")
+        return event_loop_advanced
+
+    assert asyncio.run(scenario()) is True
 
 
 def test_unexpected_engine_error_is_value_sanitized_and_persisted():

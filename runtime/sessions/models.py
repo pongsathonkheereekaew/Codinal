@@ -18,6 +18,7 @@ class SessionRecord:
     workspace: str
     model: str
     mode: str
+    source_workspace: Optional[str] = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     title: Optional[str] = None
     agent: str = "code"

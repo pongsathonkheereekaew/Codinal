@@ -193,6 +193,15 @@ owner-only transactional SQLite แล้วสร้าง worktree ผ่า�
 เป็น read-only, dirty/untracked files จึงคงเดิม; checkout hooks ถูก disable
 และ restart ต้อง validate branch/repository binding ก่อน reuse.
 
+**Phase 3.2–3.4 production Git wiring (2026-07-26):** conversation metadata
+เก็บทั้ง internal worktree และ user-facing source workspace เพื่อ resume/review
+ถูกที่. Manifest-bound `git_status`/`git_diff`/`git_stage`/`git_commit`
+ผ่าน risk approval; status/review/Apply routes ใช้ bearer เดิม. Apply ทำ
+ff-only ก่อนแล้วจึง no-ff merge; conflict ต้อง abort, HEAD เท่า pre-apply และ
+status สะอาดจึงคืนผล. Cleanup ไม่ลบ dirty worktree หรือ unapplied commit.
+Scripted gate ยืนยัน session write→stage→commit→Apply, main ref ไม่เปลี่ยน
+และ restart reuse binding เดิม.
+
 **Phase 2.2 MCP transport (2026-07-26):** adapt `coworker/mcp/{client,config,
 tools}.py` บน official `mcp==1.28.1` ที่ pin/hash-lock. ตัด env/`.env` secret
 resolution และ OAuth store ของ upstream ออก; connect ต้องรับ explicit host

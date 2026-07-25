@@ -3,11 +3,13 @@
 from .service import (
     SessionBusyError,
     SessionNotFoundError,
+    SessionWorkspaceError,
     TurnCoordinator,
 )
 
 __all__ = [
     "SessionBusyError",
     "SessionNotFoundError",
+    "SessionWorkspaceError",
     "TurnCoordinator",
 ]

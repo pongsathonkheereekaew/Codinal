@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import threading
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
@@ -42,12 +43,24 @@ class _BoundedOutput:
             stream.close()
 
 
+@dataclass(frozen=True)
+class _ProbeResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    output_truncated: bool = False
+
+
 class GitWorkspaceError(RuntimeError):
     """A stable, user-displayable Git workspace lifecycle failure."""
 
 
 class DetachedHeadError(GitWorkspaceError):
     """The selected source worktree has no named branch to apply back to."""
+
+
+class NotGitRepositoryError(GitWorkspaceError):
+    """The selected folder is not inside a non-bare Git worktree."""
 
 
 class GitWorktreeService:
@@ -78,12 +91,373 @@ class GitWorktreeService:
             git_executable or _discover_git()
         ).expanduser().resolve()
         self._lock = threading.RLock()
+        self._process_lock = threading.Lock()
+        self._active_shells: dict[str, set[SandboxedShell]] = {}
 
     def close(self) -> None:
         self.store.close()
 
     def load(self, session_id: str) -> Optional[GitWorkspaceRecord]:
         return self.store.load(session_id)
+
+    def status(self, session_id: str) -> dict[str, object]:
+        record = self._usable_record(session_id)
+        result = self._execute_worktree(
+            record,
+            "status",
+            "--porcelain=v1",
+            "--branch",
+            "--untracked-files=all",
+        )
+        if result.exit_code != 0:
+            return {"ok": False, "error": "git status failed"}
+        lines = result.stdout.splitlines()
+        changes = [
+            line
+            for line in lines
+            if not line.startswith("## ")
+        ]
+        return {
+            "ok": True,
+            "branch": record.session_branch,
+            "base_commit": record.base_commit,
+            "clean": not changes,
+            "porcelain": result.stdout,
+            "output_truncated": result.output_truncated,
+        }
+
+    def diff(
+        self,
+        session_id: str,
+        *,
+        staged: bool = False,
+        against_base: bool = False,
+        path: Optional[str] = None,
+    ) -> dict[str, object]:
+        record = self._usable_record(session_id)
+        pathspec, error = _pathspec(record.worktree_path, path)
+        if error:
+            return {"ok": False, "error": error}
+        if staged and against_base:
+            return {
+                "ok": False,
+                "error": "staged and against_base are mutually exclusive",
+            }
+        arguments = [
+            "diff",
+            "--no-ext-diff",
+            "--no-color",
+        ]
+        if staged:
+            arguments.append("--cached")
+        elif against_base:
+            arguments.append(f"{record.base_commit}...HEAD")
+        if pathspec is not None:
+            arguments.extend(["--", pathspec])
+        result = self._execute_worktree(record, *arguments)
+        if result.exit_code != 0:
+            return {"ok": False, "error": "git diff failed"}
+        return {
+            "ok": True,
+            "staged": staged,
+            "against_base": against_base,
+            "diff": result.stdout,
+            "output_truncated": result.output_truncated,
+        }
+
+    def stage(
+        self,
+        session_id: str,
+        path: str = ".",
+    ) -> dict[str, object]:
+        record = self._usable_record(session_id)
+        pathspec, error = _pathspec(record.worktree_path, path)
+        if error:
+            return {"ok": False, "error": error}
+        assert pathspec is not None
+        result = self._execute_worktree(
+            record,
+            "add",
+            "--all",
+            "--",
+            pathspec,
+        )
+        if result.exit_code != 0:
+            return {"ok": False, "error": "git stage failed"}
+        return {"ok": True, "path": pathspec}
+
+    def commit(
+        self,
+        session_id: str,
+        message: str,
+    ) -> dict[str, object]:
+        record = self._usable_record(session_id)
+        try:
+            encoded_message = (
+                message.encode("utf-8")
+                if isinstance(message, str)
+                else b""
+            )
+        except UnicodeEncodeError:
+            encoded_message = b""
+        if (
+            not isinstance(message, str)
+            or not message.strip()
+            or "\x00" in message
+            or not encoded_message
+            or len(encoded_message) > 10_000
+        ):
+            return {"ok": False, "error": "invalid commit message"}
+        staged = self._execute_worktree(
+            record,
+            "diff",
+            "--cached",
+            "--quiet",
+            "--exit-code",
+        )
+        if staged.exit_code == 0:
+            return {"ok": False, "error": "nothing staged to commit"}
+        if staged.exit_code != 1:
+            return {"ok": False, "error": "unable to inspect staged changes"}
+        name = self._config_value(record.source_root, "user.name") or "Codinal"
+        email = (
+            self._config_value(record.source_root, "user.email")
+            or "codinal@localhost"
+        )
+        result = self._execute_worktree(
+            record,
+            "-c",
+            f"user.name={name}",
+            "-c",
+            f"user.email={email}",
+            "commit",
+            "--no-verify",
+            "--no-gpg-sign",
+            "-m",
+            message,
+        )
+        if result.exit_code != 0:
+            return {"ok": False, "error": "git commit failed"}
+        commit = self._probe(
+            record.worktree_path,
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        )
+        return {
+            "ok": True,
+            "commit": commit,
+            "branch": record.session_branch,
+        }
+
+    def apply_back(self, session_id: str) -> dict[str, object]:
+        record = self._usable_record(session_id)
+        if not self._is_clean(record.worktree_path):
+            raise GitWorkspaceError(
+                "session worktree must be clean before apply"
+            )
+        if self._source_branch(record.source_root) != record.source_branch:
+            raise GitWorkspaceError("source branch changed since session start")
+        if not self._is_clean(record.source_root):
+            raise GitWorkspaceError(
+                "source worktree must be clean before apply"
+            )
+        session_head = self._probe(
+            record.worktree_path,
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        )
+        source_head = self._probe(
+            record.source_root,
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        )
+        if self._is_ancestor(
+            record.source_root,
+            session_head,
+            source_head,
+        ):
+            self.store.save(
+                replace(record, state=WorktreeState.APPLIED)
+            )
+            return {
+                "ok": True,
+                "strategy": "already-applied",
+                "commit": source_head,
+            }
+
+        shell = self._apply_shell(record)
+        fast_forward = self._run_registered(
+            session_id,
+            shell,
+            _git_command(
+                self.git_executable,
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+                "-C",
+                record.source_root,
+                "merge",
+                "--ff-only",
+                record.session_branch,
+            ),
+        )
+        if fast_forward.exit_code == 0:
+            commit = self._probe(record.source_root, "rev-parse", "HEAD")
+            self.store.save(replace(record, state=WorktreeState.APPLIED))
+            return {
+                "ok": True,
+                "strategy": "fast-forward",
+                "commit": commit,
+            }
+
+        name = self._config_value(record.source_root, "user.name") or "Codinal"
+        email = (
+            self._config_value(record.source_root, "user.email")
+            or "codinal@localhost"
+        )
+        merged = self._run_registered(
+            session_id,
+            shell,
+            _git_command(
+                self.git_executable,
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                f"user.name={name}",
+                "-c",
+                f"user.email={email}",
+                "-C",
+                record.source_root,
+                "merge",
+                "--no-ff",
+                "--no-edit",
+                "--no-gpg-sign",
+                record.session_branch,
+            ),
+        )
+        if merged.exit_code == 0:
+            commit = self._probe(record.source_root, "rev-parse", "HEAD")
+            self.store.save(replace(record, state=WorktreeState.APPLIED))
+            return {
+                "ok": True,
+                "strategy": "merge",
+                "commit": commit,
+            }
+
+        if not self._merge_in_progress(record.source_root):
+            raise GitWorkspaceError("apply failed before merge started")
+        aborted = self._run_registered(
+            session_id,
+            shell,
+            _git_command(
+                self.git_executable,
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-C",
+                record.source_root,
+                "merge",
+                "--abort",
+            ),
+        )
+        restored_head = self._probe(
+            record.source_root,
+            "rev-parse",
+            "HEAD",
+        )
+        if (
+            aborted.exit_code != 0
+            or restored_head != source_head
+            or not self._is_clean(record.source_root)
+        ):
+            raise GitWorkspaceError("apply rollback failed")
+        self.store.save(replace(record, state=WorktreeState.CONFLICT))
+        return {
+            "ok": False,
+            "conflict": True,
+            "error": "apply conflict; source was restored",
+        }
+
+    def interrupt(self, session_id: str) -> None:
+        with self._process_lock:
+            shells = list(self._active_shells.get(session_id, ()))
+        for shell in shells:
+            shell.interrupt()
+
+    def cleanup(self, session_id: str) -> None:
+        """Remove only a clean worktree whose commits are retained in source."""
+        with self._lock:
+            record = self.store.load(session_id)
+            if record is None:
+                return
+            self.interrupt(session_id)
+            if record.worktree_path.is_dir():
+                if not self._is_clean(record.worktree_path):
+                    raise GitWorkspaceError(
+                        "isolated worktree has uncommitted changes"
+                    )
+                session_head = self._probe(
+                    record.worktree_path,
+                    "rev-parse",
+                    "HEAD",
+                )
+                source_tip = self._probe(
+                    record.source_root,
+                    "rev-parse",
+                    f"refs/heads/{record.source_branch}",
+                )
+                if not self._is_ancestor(
+                    record.source_root,
+                    session_head,
+                    source_tip,
+                ):
+                    raise GitWorkspaceError(
+                        "isolated worktree has unapplied commits"
+                    )
+            shell = self._creation_shell(record)
+            if record.worktree_path.exists():
+                removed = shell.run(
+                    _git_command(
+                        self.git_executable,
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                        "-C",
+                        record.source_root,
+                        "worktree",
+                        "remove",
+                        "--force",
+                        record.worktree_path,
+                    )
+                )
+                if removed.exit_code != 0:
+                    raise GitWorkspaceError(
+                        "failed to remove isolated worktree"
+                    )
+            if self._branch_exists(
+                record.source_root,
+                record.session_branch,
+            ):
+                deleted = shell.run(
+                    _git_command(
+                        self.git_executable,
+                        "-C",
+                        record.source_root,
+                        "branch",
+                        "-D",
+                        record.session_branch,
+                    )
+                )
+                if deleted.exit_code != 0:
+                    raise GitWorkspaceError(
+                        "failed to remove isolated branch"
+                    )
+            self.store.delete(session_id)
+            self._remove_session_sandbox(record.session_id)
 
     def prepare(
         self,
@@ -102,7 +476,10 @@ class GitWorktreeService:
                     raise GitWorkspaceError(
                         "session is already bound to another Git workspace"
                     )
-                if existing.state is WorktreeState.ACTIVE:
+                if existing.state not in {
+                    WorktreeState.CREATING,
+                    WorktreeState.FAILED,
+                }:
                     self._validate_active(existing)
                     return existing
                 raise GitWorkspaceError(
@@ -155,7 +532,7 @@ class GitWorktreeService:
                     state=WorktreeState.CREATING,
                 )
             )
-            shell = self._git_shell(creating)
+            shell = self._creation_shell(creating)
             result = shell.run(
                 _git_command(
                     self.git_executable,
@@ -208,10 +585,12 @@ class GitWorktreeService:
                 "--show-toplevel",
             )
         except GitWorkspaceError:
-            raise GitWorkspaceError("workspace is not a Git worktree") from None
+            raise NotGitRepositoryError(
+                "workspace is not a Git worktree"
+            ) from None
         root = Path(value).expanduser().resolve()
         if not root.is_dir():
-            raise GitWorkspaceError("workspace is not a Git worktree")
+            raise NotGitRepositoryError("workspace is not a Git worktree")
         return root
 
     def _source_branch(self, source_root: Path) -> str:
@@ -275,6 +654,25 @@ class GitWorktreeService:
             raise GitWorkspaceError("isolated Git repository does not match state")
 
     def _git_shell(self, record: GitWorkspaceRecord) -> SandboxedShell:
+        if not record.worktree_path.is_dir():
+            raise GitWorkspaceError("isolated Git worktree is missing")
+        identity = hashlib.sha256(
+            record.session_id.encode("utf-8")
+        ).hexdigest()
+        return SandboxedShell(
+            workspace=record.source_root,
+            temp_dir=self.sandbox_base / identity,
+            workspace_writable=False,
+            additional_write_roots=[
+                record.worktree_path,
+                record.git_common_dir,
+            ],
+        )
+
+    def _creation_shell(
+        self,
+        record: GitWorkspaceRecord,
+    ) -> SandboxedShell:
         identity = hashlib.sha256(
             record.session_id.encode("utf-8")
         ).hexdigest()
@@ -286,6 +684,126 @@ class GitWorktreeService:
                 self.worktree_base,
                 record.git_common_dir,
             ],
+        )
+
+    def _apply_shell(self, record: GitWorkspaceRecord) -> SandboxedShell:
+        identity = hashlib.sha256(
+            f"apply\0{record.session_id}".encode("utf-8")
+        ).hexdigest()
+        return SandboxedShell(
+            workspace=record.source_root,
+            temp_dir=self.sandbox_base / identity,
+            workspace_writable=True,
+            additional_read_roots=[record.worktree_path],
+            additional_write_roots=[record.git_common_dir],
+        )
+
+    def _usable_record(self, session_id: str) -> GitWorkspaceRecord:
+        record = self.store.load(session_id)
+        if record is None:
+            raise GitWorkspaceError("Git session workspace not found")
+        if record.state in {
+            WorktreeState.CREATING,
+            WorktreeState.FAILED,
+        }:
+            raise GitWorkspaceError("Git session workspace is unavailable")
+        self._validate_active(record)
+        return record
+
+    def _execute_worktree(
+        self,
+        record: GitWorkspaceRecord,
+        *arguments: object,
+    ):
+        shell = self._git_shell(record)
+        return self._run_registered(
+            record.session_id,
+            shell,
+            _git_command(
+                self.git_executable,
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+                "--literal-pathspecs",
+                "-C",
+                record.worktree_path,
+                *arguments,
+            ),
+        )
+
+    def _run_registered(
+        self,
+        session_id: str,
+        shell: SandboxedShell,
+        command: str,
+    ):
+        with self._process_lock:
+            self._active_shells.setdefault(session_id, set()).add(shell)
+        try:
+            return shell.run(command)
+        finally:
+            with self._process_lock:
+                active = self._active_shells.get(session_id)
+                if active is not None:
+                    active.discard(shell)
+                    if not active:
+                        self._active_shells.pop(session_id, None)
+
+    def _config_value(self, root: Path, key: str) -> str:
+        result = self._probe_result(
+            root,
+            "config",
+            "--get",
+            key,
+        )
+        if result.returncode != 0:
+            return ""
+        value = result.stdout.strip()
+        if (
+            not value
+            or len(value) > 320
+            or any(character in value for character in "\x00\n\r")
+        ):
+            return ""
+        return value
+
+    def _is_clean(self, root: Path) -> bool:
+        return not self._probe(
+            root,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+        )
+
+    def _is_ancestor(
+        self,
+        root: Path,
+        ancestor: str,
+        descendant: str,
+    ) -> bool:
+        result = self._probe_result(
+            root,
+            "merge-base",
+            "--is-ancestor",
+            ancestor,
+            descendant,
+        )
+        if result.returncode not in {0, 1}:
+            raise GitWorkspaceError("unable to compare Git history")
+        return result.returncode == 0
+
+    def _merge_in_progress(self, root: Path) -> bool:
+        return (
+            self._probe_result(
+                root,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "MERGE_HEAD",
+            ).returncode
+            == 0
         )
 
     def _cleanup_failed(
@@ -317,6 +835,21 @@ class GitWorktreeService:
             )
         )
 
+    def _remove_session_sandbox(self, session_id: str) -> None:
+        identities = (
+            hashlib.sha256(session_id.encode("utf-8")).hexdigest(),
+            hashlib.sha256(
+                f"apply\0{session_id}".encode("utf-8")
+            ).hexdigest(),
+        )
+        for identity in identities:
+            target = self.sandbox_base / identity
+            if target.parent != self.sandbox_base or target == self.sandbox_base:
+                raise GitWorkspaceError("invalid sandbox cleanup target")
+            if target.is_symlink():
+                target.unlink()
+            elif target.is_dir():
+                shutil.rmtree(target)
     def _probe(self, cwd: Path, *arguments: str) -> str:
         result = self._probe_result(cwd, *arguments)
         if result.returncode != 0:
@@ -327,7 +860,7 @@ class GitWorktreeService:
         self,
         cwd: Path,
         *arguments: str,
-    ) -> subprocess.CompletedProcess[str]:
+    ) -> _ProbeResult:
         environment = {
             key: os.environ[key]
             for key in ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "PATH")
@@ -351,7 +884,7 @@ class GitWorktreeService:
             )
         except (OSError, subprocess.TimeoutExpired, UnicodeError):
             raise GitWorkspaceError("Git repository inspection failed") from None
-        if getattr(result, "output_truncated", False):
+        if result.output_truncated:
             raise GitWorkspaceError("Git repository inspection exceeded limit")
         return result
 
@@ -382,6 +915,37 @@ def _inside(candidate: Path, *roots: Path) -> bool:
     return False
 
 
+def _pathspec(
+    worktree: Path,
+    value: Optional[str],
+) -> tuple[Optional[str], str]:
+    if value is None:
+        return None, ""
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value) <= 4096
+        or any(character in value for character in "\x00\n\r")
+    ):
+        return None, "invalid path"
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return None, "invalid path"
+    candidate = Path(value)
+    if candidate.is_absolute():
+        try:
+            relative = candidate.relative_to(worktree)
+        except ValueError:
+            return None, "path escapes worktree"
+    else:
+        relative = Path(os.path.normpath(value))
+        if relative.is_absolute() or relative == Path(".."):
+            return None, "path escapes worktree"
+        if relative.parts and relative.parts[0] == "..":
+            return None, "path escapes worktree"
+    return str(relative), ""
+
+
 def _run_bounded(
     argv: list[str],
     *,
@@ -389,7 +953,7 @@ def _run_bounded(
     env: dict[str, str],
     timeout: float,
     output_limit: int,
-) -> subprocess.CompletedProcess[str]:
+) -> _ProbeResult:
     process = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -422,17 +986,18 @@ def _run_bounded(
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
-            process.kill()
+            try:
+                process.kill()
+            except (ProcessLookupError, PermissionError):
+                pass
         process.wait()
         raise
     finally:
         for reader in readers:
             reader.join()
-    result = subprocess.CompletedProcess(
-        argv,
-        process.returncode,
+    return _ProbeResult(
+        returncode=process.returncode,
         stdout=captured.buffers[0].decode("utf-8"),
         stderr=captured.buffers[1].decode("utf-8"),
+        output_truncated=captured.truncated,
     )
-    result.output_truncated = captured.truncated
-    return result

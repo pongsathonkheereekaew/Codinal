@@ -44,6 +44,10 @@ class EngineBuilder(Protocol):
     def __call__(self, context: EngineBuildContext) -> SessionEngine: ...
 
 
+class WorkspacePreparer(Protocol):
+    def __call__(self, request: EngineRequest) -> str | Path: ...
+
+
 @dataclass(frozen=True)
 class RuntimeServices:
     sessions: SessionService
@@ -53,6 +57,7 @@ class RuntimeServices:
     secrets: ProviderSecretService
     oauth: OAuthCoordinator
     mcp: MCPService | None = None
+    git: Any | None = None
 
 
 def compose_runtime(
@@ -69,6 +74,8 @@ def compose_runtime(
     provider_secrets: ProviderSecretService | None = None,
     oauth: OAuthCoordinator | None = None,
     mcp_manager: MCPManager | None = None,
+    workspace_preparer: WorkspacePreparer | None = None,
+    git_service: Any | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -83,11 +90,18 @@ def compose_runtime(
     oauth_service = oauth or OAuthCoordinator()
 
     def build_engine(request: EngineRequest) -> SessionEngine:
+        primary_workspace = (
+            Path(workspace_preparer(request)).expanduser().resolve()
+            if workspace_preparer is not None
+            else request.workspace
+        )
+        if not primary_workspace.is_dir():
+            raise RuntimeError("prepared workspace is unavailable")
         roots = [
             RootDir(
-                path=request.workspace,
+                path=primary_workspace,
                 writable=True,
-                label=request.workspace.name,
+                label=primary_workspace.name,
             ),
             *[
                 RootDir(
@@ -99,7 +113,7 @@ def compose_runtime(
             ],
         ]
         permissions = PermissionEngine(
-            workspace_root=request.workspace,
+            workspace_root=primary_workspace,
             mode=Mode(request.mode),
             roots=roots,
         )
@@ -150,4 +164,5 @@ def compose_runtime(
         secrets=secrets,
         oauth=oauth_service,
         mcp=mcp,
+        git=git_service,
     )

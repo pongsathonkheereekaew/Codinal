@@ -20,8 +20,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from runtime.events import EventHub
+from runtime.git import GitWorkspaceError
 from runtime.mcp import MCPServerDef
-from runtime.turns import SessionBusyError, SessionNotFoundError
+from runtime.turns import (
+    SessionBusyError,
+    SessionNotFoundError,
+    SessionWorkspaceError,
+)
 
 from .auth import (
     WEBSOCKET_PROTOCOL,
@@ -76,6 +81,8 @@ class TurnControl(Protocol):
 
     def interrupt(self, session_id: str) -> bool: ...
 
+    def is_active(self, session_id: str) -> bool: ...
+
 
 class MCPControl(Protocol):
     async def connect(
@@ -89,6 +96,25 @@ class MCPControl(Protocol):
     async def aclose(self) -> None: ...
 
 
+class GitControl(Protocol):
+    def load(self, session_id: str) -> Any | None: ...
+
+    def status(self, session_id: str) -> dict[str, object]: ...
+
+    def diff(
+        self,
+        session_id: str,
+        *,
+        staged: bool = False,
+        against_base: bool = False,
+        path: str | None = None,
+    ) -> dict[str, object]: ...
+
+    def apply_back(self, session_id: str) -> dict[str, object]: ...
+
+    def close(self) -> None: ...
+
+
 class ControlPlaneServices(Protocol):
     events: EventHub
     settings: SettingsView
@@ -96,6 +122,7 @@ class ControlPlaneServices(Protocol):
     oauth: OAuthCallbacks
     turns: TurnControl
     mcp: MCPControl | None
+    git: GitControl | None
 
 
 def create_control_plane_app(
@@ -114,6 +141,9 @@ def create_control_plane_app(
             mcp = getattr(services, "mcp", None)
             if mcp is not None:
                 await mcp.aclose()
+            git = getattr(services, "git", None)
+            if git is not None:
+                git.close()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -189,6 +219,11 @@ def create_control_plane_app(
                 status_code=409,
                 detail="session already has an active turn",
             ) from None
+        except SessionWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="session workspace preparation failed",
+            ) from None
         return JSONResponse(result, status_code=202)
 
     @app.post("/v1/sessions/{session_id}/interrupt")
@@ -222,7 +257,10 @@ def create_control_plane_app(
                 detail="session already has an active turn",
             ) from None
         except PermissionError:
-            raise HTTPException(status_code=403, detail="MCP connect denied") from None
+            raise HTTPException(
+                status_code=403,
+                detail="MCP connect denied",
+            ) from None
         except ValueError:
             raise HTTPException(
                 status_code=409,
@@ -233,6 +271,71 @@ def create_control_plane_app(
                 status_code=502,
                 detail="MCP connection failed",
             ) from None
+
+    @app.get("/v1/sessions/{session_id}/git/status")
+    async def git_status(session_id: str) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        try:
+            return await asyncio.to_thread(
+                services.git.status,
+                session_id,
+            )
+        except GitWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="Git status unavailable",
+            ) from None
+
+    @app.get("/v1/sessions/{session_id}/git/diff")
+    async def git_diff(
+        session_id: str,
+        staged: bool = False,
+        against_base: bool = False,
+        path: str | None = None,
+    ) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        try:
+            return await asyncio.to_thread(
+                services.git.diff,
+                session_id,
+                staged=staged,
+                against_base=against_base,
+                path=path,
+            )
+        except GitWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="Git diff unavailable",
+            ) from None
+
+    @app.post("/v1/sessions/{session_id}/git/apply")
+    async def git_apply(session_id: str) -> JSONResponse:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        if services.turns.is_active(session_id):
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            )
+        try:
+            result = await asyncio.to_thread(
+                services.git.apply_back,
+                session_id,
+            )
+        except GitWorkspaceError as error:
+            raise HTTPException(
+                status_code=409,
+                detail=str(error),
+            ) from None
+        return JSONResponse(
+            result,
+            status_code=200 if result.get("ok") else 409,
+        )
 
     @app.websocket("/ws/events")
     async def global_events(websocket: WebSocket) -> None:

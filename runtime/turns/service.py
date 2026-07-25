@@ -18,6 +18,10 @@ class SessionBusyError(RuntimeError):
     pass
 
 
+class SessionWorkspaceError(RuntimeError):
+    pass
+
+
 class TurnCoordinator:
     def __init__(
         self,
@@ -29,6 +33,7 @@ class TurnCoordinator:
         self._events = events
         self._active: dict[str, asyncio.Task[None]] = {}
         self._engines: dict[str, Any] = {}
+        self._starting: set[str] = set()
 
     async def start(
         self,
@@ -40,14 +45,28 @@ class TurnCoordinator:
         source: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active = self._active.get(session_id)
-        if active is not None and not active.done():
+        if (
+            session_id in self._starting
+            or active is not None
+            and not active.done()
+        ):
             raise SessionBusyError("session already has an active turn")
 
-        engine = self._sessions.get_engine(
-            session_id,
-            workspace=workspace,
-            agent=agent,
-        )
+        self._starting.add(session_id)
+        try:
+            try:
+                engine = await asyncio.to_thread(
+                    self._sessions.get_engine,
+                    session_id,
+                    workspace=workspace,
+                    agent=agent,
+                )
+            except Exception:
+                raise SessionWorkspaceError(
+                    "session workspace preparation failed"
+                ) from None
+        finally:
+            self._starting.discard(session_id)
         if engine is None:
             raise SessionNotFoundError(session_id)
 
@@ -93,7 +112,10 @@ class TurnCoordinator:
             }
         finally:
             try:
-                persisted = self._sessions.persist(session_id)
+                persisted = await asyncio.to_thread(
+                    self._sessions.persist,
+                    session_id,
+                )
             except Exception:
                 persisted = False
             if not persisted:
@@ -121,7 +143,11 @@ class TurnCoordinator:
 
     def is_active(self, session_id: str) -> bool:
         task = self._active.get(session_id)
-        return task is not None and not task.done()
+        return (
+            session_id in self._starting
+            or task is not None
+            and not task.done()
+        )
 
     async def wait(self, session_id: str) -> bool:
         task = self._active.get(session_id)

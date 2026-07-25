@@ -145,14 +145,22 @@ transactional snapshot/restart. การประกาศ live Tier-1 ยั�
   `write_file`/`replace_in_file` กัน root/symlink/concurrent-edit escape.
   Notarization spike ผ่าน Gatekeeper แล้วใน Phase 0a.2 — ปิด P0 shell-prefix
   และ P1 no-sandbox
-- 3.2 🟡 `runtime/git` worktree service: backend + owner-only transactional
-  registry เสร็จแล้ว; 1 session = deterministic branch + private worktree,
-  source dirty state ไม่ถูกแตะ, checkout hooks ปิด และ resume validate binding.
-  Production session wiring + cleanup ยังดำเนินการ
-- 3.3 git status/diff/stage backend + **Apply-back endpoint (F4):** ผู้ใช้กด Apply → merge session branch เข้า working branch (default = branch ที่ forked จาก: fast-forward ถ้าได้ มิฉะนั้น merge commit); optional "Open as PR" ผ่าน `gh`; ไม่ auto-push
-- 3.4 **Conflict = abort + flag (F9):** conflict ตอน Apply (merge session→working) → abort Apply, session branch + worktree intact; ห้าม auto-resolve
+- 3.2 ✅ `runtime/git` worktree service: 1 session = deterministic branch +
+  private worktree, owner-only transactional registry, source dirty state
+  ไม่ถูกแตะ, checkout hooks ปิด, production session/restart wiring และ
+  cleanup ปฏิเสธการลบเมื่อยังมี dirty/unapplied work
+- 3.3 ✅ git status/diff/stage/commit backend + authenticated
+  **Apply-back endpoint (F4):** ผู้ใช้กด Apply → fast-forward recorded working
+  branch ก่อน; ถ้าไม่ได้จึง merge commit. ไม่มี auto-push. Optional
+  “Open as PR” ผ่าน `gh` ยังรอ external integration phase
+- 3.4 ✅ **Conflict = abort + flag (F9):** merge conflict ถูก abort และตรวจ
+  source HEAD/status ว่ากลับสภาพเดิมก่อนตอบ; session branch + worktree คงอยู่,
+  ห้าม auto-resolve
 
-**Gate:** negative test เขียนนอก workspace ถูก block; notarization spike ผ่าน; E2E สร้าง worktree → commit → Apply ไป working branch → user's main branch ไม่ถูกแตะ.
+**Gate: ✅ PASSED (2026-07-26)** negative outside read/write + network block,
+notarization spike ผ่าน, scripted production E2E สร้าง worktree → approved
+write/stage/commit → review diff → Apply ไป recorded working branch โดย
+user's main branch ไม่ถูกแตะ; conflict E2E abort + restore source สำเร็จ.
 
 ### Phase 4 — UI  (gate: E2E success scenario ผ่าน)
 - 4.1 reuse sidebar/composer/transcript/provider-picker จาก OpenWorker (filter Tier-1)

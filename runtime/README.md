@@ -50,7 +50,10 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   lifecycle service. It binds one session to one deterministic `codinal/`
   branch and private worktree, records the original branch/base commit, keeps
   dirty source files untouched, disables checkout hooks, and validates the
-  binding on resume
+  binding on resume. Session tools expose bounded status/diff/stage/commit;
+  authenticated host routes expose review diff and explicit Apply-back.
+  Apply fast-forwards first, otherwise creates a merge commit; conflicts are
+  aborted and the source HEAD/clean state are verified before returning
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes
   harness-owned cases through injected adapters and reports Tier 1/Tier 2/
   incompatible without exposing raw provider responses
@@ -69,8 +72,10 @@ later tool subprocesses cannot inherit it.
 Standalone startup now composes the transactional conversation store,
 provider router, policy-bound TurnEngine, live-root read registry, session
 coordinator, sandboxed mutation registry, and authenticated HTTP/WebSocket
-surfaces. A new public session is created only when its first turn supplies an
-absolute existing workspace.
+surfaces. Git workspaces are rebound to a private session worktree while the
+user-facing source path remains durable; non-Git folders retain direct,
+root-scoped operation. A new public session is created only when its first
+turn supplies an absolute existing workspace.
 
 Native `codinal://oauth/callback` links are strictly parsed by the Tauri host
 and relayed to the sidecar with both the control-plane bearer and the

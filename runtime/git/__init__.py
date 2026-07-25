@@ -5,6 +5,7 @@ from .service import (
     DetachedHeadError,
     GitWorkspaceError,
     GitWorktreeService,
+    NotGitRepositoryError,
 )
 from .store import GitWorktreeStore
 
@@ -14,5 +15,6 @@ __all__ = [
     "GitWorkspaceRecord",
     "GitWorktreeService",
     "GitWorktreeStore",
+    "NotGitRepositoryError",
     "WorktreeState",
 ]

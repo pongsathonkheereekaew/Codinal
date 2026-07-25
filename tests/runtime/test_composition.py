@@ -147,3 +147,42 @@ def test_new_session_uses_latest_persisted_default_model(tmp_path):
     services.sessions.get_engine("new", workspace=workspace)
 
     assert contexts[0].request.model == "anthropic:claude-next"
+
+
+def test_workspace_preparer_rebinds_engine_and_policy_but_keeps_source(
+    tmp_path,
+):
+    source = tmp_path / "source"
+    isolated = tmp_path / "isolated"
+    source.mkdir()
+    isolated.mkdir()
+    contexts = []
+    prepared = []
+    services = compose_runtime(
+        data_dir=tmp_path / "data",
+        session_store=MemorySessionStore(),
+        engine_builder=lambda context: contexts.append(context)
+        or FakeEngine(context),
+        snapshotter=lambda _session_id, _engine: None,
+        default_model="openai:gpt-default",
+        workspace_preparer=lambda request: prepared.append(request)
+        or isolated,
+    )
+
+    services.sessions.get_engine("isolated-session", workspace=source)
+    context = contexts[0]
+
+    assert prepared[0].workspace == source.resolve()
+    assert context.request.workspace == source.resolve()
+    assert context.roots[0].path == isolated.resolve()
+    assert context.permissions.workspace_root == isolated.resolve()
+    assert context.permissions.evaluate(
+        "write_file",
+        {"path": str(isolated / "allowed")},
+    ).needs_user
+    source_decision = context.permissions.evaluate(
+        "write_file",
+        {"path": str(source / "blocked")},
+    )
+    assert source_decision.allowed is False
+    assert source_decision.needs_user is False

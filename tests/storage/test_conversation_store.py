@@ -52,6 +52,27 @@ def test_save_reopen_and_load_preserves_complete_session(tmp_path):
     assert loaded.origin_label == "Codinal"
 
 
+def test_isolated_runtime_workspace_keeps_user_source_for_listing(
+    tmp_path,
+):
+    store = ConversationStore(tmp_path)
+    isolated = record(
+        workspace="/private/codinal/worktree",
+        source_workspace="/Users/example/project",
+    )
+
+    store.save(isolated)
+    loaded = store.load("session-1")
+
+    assert loaded.workspace == "/private/codinal/worktree"
+    assert loaded.source_workspace == "/Users/example/project"
+    assert [
+        item.session_id
+        for item in store.list(workspace="/Users/example/project")
+    ] == ["session-1"]
+    assert store.list(workspace="/private/codinal/worktree") == []
+
+
 def test_save_appends_and_can_replace_diverged_history_atomically(tmp_path):
     store = ConversationStore(tmp_path)
     store.save(record())
@@ -160,3 +181,42 @@ def test_store_directory_and_database_are_owner_only(tmp_path):
 
     assert stat.S_IMODE(base.stat().st_mode) == 0o700
     assert stat.S_IMODE(store.db_path.stat().st_mode) == 0o600
+
+
+def test_existing_phase_2_database_migrates_source_workspace_column(
+    tmp_path,
+):
+    connection = sqlite3.connect(tmp_path / "codinal.db")
+    connection.execute(
+        """
+        CREATE TABLE sessions (
+            session_id TEXT PRIMARY KEY,
+            workspace TEXT NOT NULL,
+            model TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            title TEXT,
+            agent TEXT NOT NULL DEFAULT 'code',
+            extra_roots TEXT NOT NULL DEFAULT '[]',
+            grants TEXT NOT NULL DEFAULT '{}',
+            pinned INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            origin TEXT,
+            origin_label TEXT,
+            updated_at TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = ConversationStore(tmp_path)
+    store.save(
+        record(
+            workspace="/private/codinal/worktree",
+            source_workspace="/Users/example/project",
+        )
+    )
+
+    assert store.load("session-1").source_workspace == (
+        "/Users/example/project"
+    )

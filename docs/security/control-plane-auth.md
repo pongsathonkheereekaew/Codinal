@@ -30,6 +30,12 @@ Tool execution still passes through `PermissionEngine`; control-plane auth
 does not replace risk classification, approval, workspace scoping, or the
 Phase 3 shell sandbox.
 
+Git review routes are read-only. The authenticated Apply-back route is an
+explicit host action and refuses active turns, changed source branches, dirty
+source/session worktrees, and missing session bindings. It never pushes.
+Conflicts return only after `git merge --abort` restores and verifies the
+recorded source HEAD and a clean status.
+
 ## Verification
 
 Run:

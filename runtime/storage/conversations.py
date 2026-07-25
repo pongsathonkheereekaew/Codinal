@@ -46,6 +46,7 @@ class ConversationStore:
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
                 workspace TEXT NOT NULL,
+                source_workspace TEXT,
                 model TEXT NOT NULL,
                 mode TEXT NOT NULL,
                 title TEXT,
@@ -72,6 +73,16 @@ class ConversationStore:
             );
             """
         )
+        columns = {
+            row["name"]
+            for row in self._connection.execute(
+                "PRAGMA table_info(sessions)"
+            )
+        }
+        if "source_workspace" not in columns:
+            self._connection.execute(
+                "ALTER TABLE sessions ADD COLUMN source_workspace TEXT"
+            )
         self._connection.commit()
         try:
             os.chmod(self.db_path, 0o600)
@@ -94,13 +105,15 @@ class ConversationStore:
             self._connection.execute(
                 f"""
                 INSERT INTO sessions (
-                    session_id, workspace, model, mode, title, agent,
+                    session_id, workspace, source_workspace, model, mode,
+                    title, agent,
                     extra_roots, grants, pinned, archived, origin,
                     origin_label, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {_NOW})
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {_NOW})
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace,
+                    source_workspace = excluded.source_workspace,
                     model = excluded.model,
                     mode = excluded.mode,
                     title = excluded.title,
@@ -116,6 +129,7 @@ class ConversationStore:
                 (
                     record.session_id,
                     record.workspace,
+                    record.source_workspace,
                     record.model,
                     record.mode,
                     title,
@@ -166,7 +180,9 @@ class ConversationStore:
                         for sequence, payload in enumerate(messages)
                     ),
                 )
-            self._touch_workspace(record.workspace)
+            self._touch_workspace(
+                record.source_workspace or record.workspace
+            )
 
     def load(self, session_id: str) -> Optional[SessionRecord]:
         _validate_session_id(session_id)
@@ -214,7 +230,7 @@ class ConversationStore:
                         COUNT(messages.sequence) AS message_count
                     FROM sessions
                     LEFT JOIN messages USING (session_id)
-                    WHERE workspace = ?
+                    WHERE COALESCE(source_workspace, workspace) = ?
                     GROUP BY sessions.session_id
                     ORDER BY pinned DESC, updated_at DESC
                     """,
@@ -342,6 +358,11 @@ def _validate_record(record: SessionRecord) -> None:
         or not isinstance(record.grants, dict)
     ):
         raise ValueError("invalid session data")
+    if record.source_workspace is not None and (
+        not isinstance(record.source_workspace, str)
+        or not 1 <= len(record.source_workspace) <= 4096
+    ):
+        raise ValueError("invalid session data")
 
 
 def _encode_json(value: Any) -> str:
@@ -376,6 +397,7 @@ def _record_from_row(
     return SessionRecord(
         session_id=row["session_id"],
         workspace=row["workspace"],
+        source_workspace=row["source_workspace"],
         model=row["model"],
         mode=row["mode"],
         messages=messages,

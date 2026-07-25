@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from runtime.sessions import RootDir, SessionRecord, SessionService
+from runtime.sessions import (
+    RootDir,
+    SessionCleanupError,
+    SessionRecord,
+    SessionService,
+)
 
 
 class MemorySessionStore:
@@ -296,6 +301,32 @@ def test_delete_interrupts_engine_runs_cleanup_and_removes_only_scratch(tmp_path
     assert service.delete("s2") == {"ok": True, "session_id": "s2"}
     assert project_workspace.is_dir()
     assert service.delete("__system")["ok"] is False
+
+
+def test_delete_preserves_session_when_cleanup_blocks(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="interactive",
+    )
+    store = MemorySessionStore(record)
+
+    def block(_session_id):
+        raise SessionCleanupError("unapplied commits")
+
+    service = SessionService(
+        store,
+        scratch_base=tmp_path / "scratch",
+        delete_callbacks=[block],
+    )
+
+    assert service.delete("s1") == {
+        "ok": False,
+        "session_id": "s1",
+        "cleanup_errors": ["unapplied commits"],
+    }
+    assert store.load("s1") is record
 
 
 def test_add_and_remove_persisted_root_without_mutating_primary(tmp_path):

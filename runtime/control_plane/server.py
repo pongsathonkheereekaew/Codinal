@@ -13,15 +13,24 @@ from typing import Any, TextIO
 import uvicorn
 
 from runtime import RuntimeServices, compose_runtime
+from runtime.git import (
+    GitWorkspaceError,
+    GitWorktreeService,
+    NotGitRepositoryError,
+)
 from runtime.mcp import MCPManager
 from runtime.oauth import OAuthCoordinator
 from runtime.policy import Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.sandbox import SandboxedShell
-from runtime.sessions import SessionRecord
+from runtime.sessions import SessionCleanupError, SessionRecord
 from runtime.storage import ConversationStore
-from runtime.tools import build_core_registry, register_mutation_tools
+from runtime.tools import (
+    build_core_registry,
+    register_git_tools,
+    register_mutation_tools,
+)
 from runtime.turn_engine import TurnEngine
 
 from .app import create_control_plane_app
@@ -82,6 +91,7 @@ def build_services(
     secret_service = secrets or ProviderSecretService()
     store = ConversationStore(config.data_dir)
     provider_client = provider or ProviderRouter(secret_service)
+    git_service = GitWorktreeService(config.data_dir)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -98,9 +108,15 @@ def build_services(
         elif target.is_dir():
             shutil.rmtree(target)
 
+    def delete_git_workspace(session_id: str) -> None:
+        try:
+            git_service.cleanup(session_id)
+        except GitWorkspaceError as error:
+            raise SessionCleanupError(str(error)) from None
+
     def build_engine(context):
         shell = SandboxedShell(
-            workspace=context.request.workspace,
+            workspace=context.roots[0].path,
             temp_dir=sandbox_directory(context.request.session_id),
         )
         registry = build_core_registry(context.roots)
@@ -109,6 +125,12 @@ def build_services(
             roots=context.roots,
             shell=shell,
         )
+        if git_service.load(context.request.session_id) is not None:
+            register_git_tools(
+                registry,
+                service=git_service,
+                session_id=context.request.session_id,
+            )
         engine = TurnEngine(
             provider=provider_client,
             registry=registry,
@@ -117,10 +139,25 @@ def build_services(
             instructions=_coding_instructions(),
             approver=context.approver,
             messages=context.request.messages,
-            interrupt_hooks=[shell.interrupt],
+            interrupt_hooks=[
+                shell.interrupt,
+                lambda: git_service.interrupt(
+                    context.request.session_id
+                ),
+            ],
         )
         engine.agent = context.request.agent
+        engine.source_workspace = context.request.workspace
         return engine
+
+    def prepare_workspace(request) -> Path:
+        try:
+            return git_service.prepare(
+                request.session_id,
+                request.workspace,
+            ).worktree_path
+        except NotGitRepositoryError:
+            return request.workspace
 
     def snapshot(session_id: str, engine: Any) -> SessionRecord:
         existing = store.load(session_id)
@@ -129,6 +166,9 @@ def build_services(
         return SessionRecord(
             session_id=session_id,
             workspace=str(roots[0].path),
+            source_workspace=str(
+                getattr(engine, "source_workspace", roots[0].path)
+            ),
             model=engine.model,
             mode=permissions.mode.value,
             messages=list(engine.messages),
@@ -160,10 +200,12 @@ def build_services(
         snapshotter=snapshot,
         default_model=config.default_model,
         approver=approver,
-        delete_callbacks=(delete_sandbox,),
+        delete_callbacks=(delete_git_workspace, delete_sandbox),
         provider_secrets=secret_service,
         oauth=oauth or OAuthCoordinator(),
         mcp_manager=mcp_manager or MCPManager(),
+        workspace_preparer=prepare_workspace,
+        git_service=git_service,
     )
 
 

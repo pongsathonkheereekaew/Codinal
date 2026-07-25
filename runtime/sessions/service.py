@@ -110,6 +110,10 @@ class DeleteCallback(Protocol):
     def __call__(self, session_id: str) -> None: ...
 
 
+class SessionCleanupError(RuntimeError):
+    """A stable callback error that may be shown to the user."""
+
+
 class ArtifactOpener(Protocol):
     def __call__(self, path: Path, mode: str) -> None: ...
 
@@ -168,7 +172,11 @@ class SessionService:
         if self._engine_factory is None:
             raise RuntimeError("no engine factory configured")
         record = self._store.load(session_id)
-        selected_workspace = record.workspace if record else workspace
+        selected_workspace = (
+            (record.source_workspace or record.workspace)
+            if record
+            else workspace
+        )
         if not selected_workspace:
             return None
         resolved_workspace = Path(selected_workspace).expanduser().resolve()
@@ -221,7 +229,7 @@ class SessionService:
             {
                 "session_id": record.session_id,
                 "title": record.title or "New session",
-                "workspace": record.workspace,
+                "workspace": record.source_workspace or record.workspace,
                 "agent": record.agent,
                 "model": record.model,
                 "mode": record.mode,
@@ -276,17 +284,27 @@ class SessionService:
             engine.request_interrupt()
 
         record = self._store.load(session_id)
-        ok = self._store.delete(session_id)
         cleanup_errors = []
-        if ok:
+        if record is not None:
             for callback in self._delete_callbacks:
                 try:
                     callback(session_id)
-                except Exception as exc:
+                except SessionCleanupError as exc:
                     cleanup_errors.append(str(exc))
+                except Exception:
+                    cleanup_errors.append("cleanup failed")
+        if cleanup_errors:
+            return {
+                "ok": False,
+                "session_id": session_id,
+                "cleanup_errors": cleanup_errors,
+            }
+
+        ok = self._store.delete(session_id)
+        if ok:
             cleanup_error = self._remove_scratch_workspace(record)
             if cleanup_error:
-                cleanup_errors.append(cleanup_error)
+                cleanup_errors.append("scratch cleanup failed")
 
         result: dict[str, Any] = {"ok": ok, "session_id": session_id}
         if cleanup_errors:

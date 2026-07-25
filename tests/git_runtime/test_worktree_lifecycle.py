@@ -143,3 +143,146 @@ def test_store_rejects_invalid_session_id(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid session id"):
         service.load("../escape")
+
+
+@requires_seatbelt
+def test_status_diff_stage_and_commit_stay_on_session_branch(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    source_head = git(repo, "rev-parse", "HEAD")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("git-tools", repo)
+    target = record.worktree_path / "tracked.txt"
+    target.write_text("session edit\n", encoding="utf-8")
+
+    status = service.status("git-tools")
+    diff = service.diff("git-tools")
+    escaped = service.stage("git-tools", "../outside")
+    staged = service.stage("git-tools", "tracked.txt")
+    committed = service.commit("git-tools", "Apply session edit")
+    review = service.diff("git-tools", against_base=True)
+
+    assert status["clean"] is False
+    assert "tracked.txt" in status["porcelain"]
+    assert "-base" in diff["diff"]
+    assert "+session edit" in diff["diff"]
+    assert escaped == {"ok": False, "error": "path escapes worktree"}
+    assert staged == {"ok": True, "path": "tracked.txt"}
+    assert committed["ok"] is True
+    assert committed["commit"] == git(record.worktree_path, "rev-parse", "HEAD")
+    assert "-base" in review["diff"]
+    assert "+session edit" in review["diff"]
+    assert git(repo, "rev-parse", "HEAD") == source_head
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "base\n"
+    with pytest.raises(
+        GitWorkspaceError,
+        match="unapplied commits",
+    ):
+        service.cleanup("git-tools")
+    assert record.worktree_path.is_dir()
+
+
+@requires_seatbelt
+def test_apply_fast_forwards_recorded_source_branch_without_touching_main(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path, branch="main")
+    main_head = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "-b", "feature")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("apply-fast-forward", repo)
+    (record.worktree_path / "generated.txt").write_text(
+        "generated\n",
+        encoding="utf-8",
+    )
+    service.stage("apply-fast-forward", "generated.txt")
+    session_commit = service.commit(
+        "apply-fast-forward",
+        "Add generated file",
+    )["commit"]
+
+    applied = service.apply_back("apply-fast-forward")
+
+    assert applied == {
+        "ok": True,
+        "strategy": "fast-forward",
+        "commit": session_commit,
+    }
+    assert git(repo, "branch", "--show-current") == "feature"
+    assert git(repo, "rev-parse", "HEAD") == session_commit
+    assert git(repo, "rev-parse", "main") == main_head
+    assert (repo / "generated.txt").read_text(encoding="utf-8") == "generated\n"
+    assert record.worktree_path.is_dir()
+    assert service.load("apply-fast-forward").state is WorktreeState.APPLIED
+
+    service.cleanup("apply-fast-forward")
+
+    assert not record.worktree_path.exists()
+    assert service.load("apply-fast-forward") is None
+    assert record.session_branch not in git(repo, "branch", "--list")
+
+
+@requires_seatbelt
+def test_apply_conflict_aborts_and_preserves_both_worktrees(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("apply-conflict", repo)
+    (record.worktree_path / "tracked.txt").write_text(
+        "session version\n",
+        encoding="utf-8",
+    )
+    service.stage("apply-conflict", "tracked.txt")
+    service.commit("apply-conflict", "Session version")
+    (repo / "tracked.txt").write_text("source version\n", encoding="utf-8")
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-m", "Source version")
+    source_head = git(repo, "rev-parse", "HEAD")
+
+    applied = service.apply_back("apply-conflict")
+
+    assert applied == {
+        "ok": False,
+        "conflict": True,
+        "error": "apply conflict; source was restored",
+    }
+    assert git(repo, "rev-parse", "HEAD") == source_head
+    assert git(repo, "status", "--porcelain") == ""
+    assert (repo / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "source version\n"
+    assert record.worktree_path.is_dir()
+    assert (record.worktree_path / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "session version\n"
+    assert service.load("apply-conflict").state is WorktreeState.CONFLICT
+
+
+@requires_seatbelt
+def test_apply_refuses_dirty_source_without_modifying_it(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("dirty-apply", repo)
+    (record.worktree_path / "generated.txt").write_text(
+        "generated\n",
+        encoding="utf-8",
+    )
+    service.stage("dirty-apply", "generated.txt")
+    service.commit("dirty-apply", "Session change")
+    (repo / "tracked.txt").write_text("dirty source\n", encoding="utf-8")
+    source_head = git(repo, "rev-parse", "HEAD")
+
+    with pytest.raises(
+        GitWorkspaceError,
+        match="source worktree must be clean",
+    ):
+        service.apply_back("dirty-apply")
+
+    assert git(repo, "rev-parse", "HEAD") == source_head
+    assert (repo / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "dirty source\n"

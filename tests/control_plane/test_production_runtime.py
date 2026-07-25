@@ -1,4 +1,5 @@
 import platform
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -85,7 +86,6 @@ def test_production_sidecar_turn_streams_tools_and_survives_restart(
             )
             while not events or events[-1]["type"] != "turn_end":
                 events.append(socket.receive_json())
-
     deadline = time.monotonic() + 1
     while not services.sessions.list_sessions():
         assert time.monotonic() < deadline
@@ -195,6 +195,13 @@ def test_production_mutation_requires_approval_and_persists_result(
             )
             while not events or events[-1]["type"] != "turn_end":
                 events.append(socket.receive_json())
+        tool_message = next(
+            message
+            for message in services.sessions.messages("session-write")
+            if message.get("role") == "tool"
+        )
+        sandbox_directories = list((config.data_dir / "sandbox").iterdir())
+        deleted = services.sessions.delete("session-write")
 
     assert accepted.status_code == 202
     assert [approval.tool_name for approval in approvals] == ["write_file"]
@@ -202,19 +209,216 @@ def test_production_mutation_requires_approval_and_persists_result(
     assert (workspace / "generated.txt").read_text(
         encoding="utf-8"
     ) == "approved mutation\n"
-    tool_message = next(
-        message
-        for message in services.sessions.messages("session-write")
-        if message.get("role") == "tool"
-    )
     assert '"ok": true' in tool_message["content"]
-    sandbox_directories = list((config.data_dir / "sandbox").iterdir())
     assert len(sandbox_directories) == 1
-
-    deleted = services.sessions.delete("session-write")
 
     assert deleted == {"ok": True, "session_id": "session-write"}
     assert not sandbox_directories[0].exists()
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
+    reason="production worktree creation uses macOS Seatbelt",
+)
+def test_production_git_session_mutates_only_isolated_worktree(
+    tmp_path,
+):
+    class IsolatedWriteProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "isolated_write",
+                            "write_file",
+                            {
+                                "path": "generated.txt",
+                                "content": "isolated\n",
+                            },
+                        )
+                    ]
+                )
+            if self.calls == 2:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "isolated_stage",
+                            "git_stage",
+                            {"path": "generated.txt"},
+                        )
+                    ]
+                )
+            if self.calls == 3:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "isolated_commit",
+                            "git_commit",
+                            {"message": "Add generated file"},
+                        )
+                    ]
+                )
+            return AssistantTurn(text="isolated mutation complete")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    async def approve_once(_request):
+        return ApprovalOutcome.ONCE
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "feature", str(source)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    for key, value in (
+        ("user.name", "Codinal Test"),
+        ("user.email", "codinal@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(source), "config", key, value],
+            check=True,
+        )
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(source), "add", "tracked.txt"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "-m", "base"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    source_head = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=IsolatedWriteProvider(),
+        approver=approve_once,
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/session-isolated",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/session-isolated/turns",
+                headers=AUTH,
+                json={
+                    "input": "create generated.txt",
+                    "workspace": str(source),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+        assert accepted.status_code == 202
+        git_record = services.git.load("session-isolated")
+        listed = services.sessions.list_sessions()
+        source_untouched_before_apply = not (
+            source / "generated.txt"
+        ).exists()
+        git_status = client.get(
+            "/v1/sessions/session-isolated/git/status",
+            headers=AUTH,
+        )
+        unauthorized_status = client.get(
+            "/v1/sessions/session-isolated/git/status"
+        )
+        review_diff = client.get(
+            (
+                "/v1/sessions/session-isolated/git/diff"
+                "?against_base=true"
+            ),
+            headers=AUTH,
+        )
+        applied = client.post(
+            "/v1/sessions/session-isolated/git/apply",
+            headers=AUTH,
+        )
+        applied_record = services.git.load("session-isolated")
+
+    assert git_record is not None
+    assert source_untouched_before_apply is True
+    assert (git_record.worktree_path / "generated.txt").read_text(
+        encoding="utf-8"
+    ) == "isolated\n"
+    session_commit = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(git_record.worktree_path),
+            "rev-parse",
+            "HEAD",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    assert git_status.status_code == 200
+    assert unauthorized_status.status_code == 401
+    assert git_status.json()["clean"] is True
+    assert review_diff.status_code == 200
+    assert "+isolated" in review_diff.json()["diff"]
+    assert applied.status_code == 200
+    assert applied.json() == {
+        "ok": True,
+        "strategy": "fast-forward",
+        "commit": session_commit,
+    }
+    assert applied_record.state.value == "applied"
+    assert (source / "generated.txt").read_text(
+        encoding="utf-8"
+    ) == "isolated\n"
+    assert listed[0]["workspace"] == str(source.resolve())
+    assert subprocess.run(
+        ["git", "-C", str(source), "branch", "--show-current"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip() == "feature"
+    assert subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip() == session_commit
+    assert source_head != session_commit
+
+    restarted = build_services(
+        config,
+        provider=IsolatedWriteProvider(),
+        approver=approve_once,
+    )
+    engine = restarted.sessions.get_engine("session-isolated")
+
+    assert engine.source_workspace == source.resolve()
+    assert engine.roots[0].path == git_record.worktree_path
+    restarted.git.close()
 
 
 @pytest.mark.skipif(
