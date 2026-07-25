@@ -10,6 +10,7 @@ from runtime.control_plane import (
     websocket_auth_protocol,
 )
 from runtime.events import EventHub
+from runtime.oauth import OAuthCoordinator, OAuthStateService
 from runtime.secrets import ProviderSecretService
 
 
@@ -34,6 +35,7 @@ def client() -> TestClient:
         events=EventHub(),
         settings=FakeSettings(),
         secrets=ProviderSecretService(sync_token=SECRET_SYNC_TOKEN),
+        oauth=OAuthCoordinator(),
     )
     return TestClient(create_control_plane_app(token=TOKEN, services=services))
 
@@ -191,6 +193,74 @@ def test_provider_secret_validation_error_never_echoes_value(
     assert response.json() == {"detail": "invalid secret payload"}
     assert "sk-test-do-not-echo" not in response.text
     assert "also-secret" not in response.text
+
+
+def test_oauth_callback_is_authenticated_consumed_once_and_never_echoes_code() -> None:
+    received = []
+
+    async def handler(code, metadata):
+        received.append((code, metadata))
+
+    coordinator = OAuthCoordinator(
+        OAuthStateService(
+            token_factory=lambda: "oauth-state-token-with-at-least-32-chars",
+            clock=lambda: 100.0,
+        )
+    )
+    coordinator.register("provider:openai", handler)
+    attempt = coordinator.begin("provider:openai", {"pkce": "verifier"})
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        secrets=ProviderSecretService(sync_token=SECRET_SYNC_TOKEN),
+        oauth=coordinator,
+    )
+    oauth_client = TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    )
+    payload = {
+        "flow": "provider:openai",
+        "state": attempt.state,
+        "code": "authorization-code-must-not-echo",
+        "error": "",
+    }
+
+    unauthorized = oauth_client.post("/v1/oauth/callback", json=payload)
+    webview_only = oauth_client.post(
+        "/v1/oauth/callback",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json=payload,
+    )
+    completed = oauth_client.post(
+        "/v1/oauth/callback",
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "X-Codinal-Secret-Sync": SECRET_SYNC_TOKEN,
+        },
+        json=payload,
+    )
+    replay = oauth_client.post(
+        "/v1/oauth/callback",
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "X-Codinal-Secret-Sync": SECRET_SYNC_TOKEN,
+        },
+        json=payload,
+    )
+
+    assert unauthorized.status_code == 401
+    assert webview_only.status_code == 403
+    assert completed.status_code == 200
+    assert completed.json() == {"ok": True, "flow": "provider:openai"}
+    assert "authorization-code-must-not-echo" not in completed.text
+    assert replay.status_code == 400
+    assert replay.json() == {
+        "ok": False,
+        "error": "unknown or expired OAuth state",
+    }
+    assert received == [
+        ("authorization-code-must-not-echo", {"pkce": "verifier"})
+    ]
 
 
 def test_allowed_cors_preflight_does_not_require_bearer(

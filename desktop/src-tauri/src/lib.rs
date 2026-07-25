@@ -1,19 +1,22 @@
 pub mod control_client;
 pub mod host;
+pub mod oauth;
 pub mod secrets;
 
 use std::process::Child;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_deep_link::DeepLinkExt;
 use zeroize::{Zeroize, Zeroizing};
 
-use control_client::sync_provider_secret;
+use control_client::{relay_oauth_callback, sync_provider_secret};
 use host::{
     development_runtime_root, free_loopback_port, initialization_script, mint_session_token,
     python_executable, SidecarLaunch,
 };
+use oauth::parse_oauth_deep_link;
 use secrets::{
     encode_secret_bootstrap, provider_secret_status, update_provider_secret, PlatformSecretVault,
 };
@@ -54,6 +57,12 @@ impl Drop for DesktopState {
 struct SecretMutationResult {
     provider: String,
     configured: bool,
+}
+
+#[derive(Clone, Serialize)]
+struct OAuthRelayStatus {
+    flow: String,
+    ok: bool,
 }
 
 #[tauri::command]
@@ -107,8 +116,27 @@ fn delete_provider_secret(
     .map_err(|error| error.to_string())
 }
 
+fn relay_deep_links(app_handle: tauri::AppHandle, urls: Vec<url::Url>) {
+    for url in urls {
+        let Ok(callback) = parse_oauth_deep_link(&url) else {
+            continue;
+        };
+        let state = app_handle.state::<DesktopState>();
+        let port = state.port;
+        let token = Zeroizing::new(state.token.clone());
+        let secret_sync_token = Zeroizing::new(state.secret_sync_token.clone());
+        let flow = callback.flow().to_owned();
+        let relay_app = app_handle.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let ok = relay_oauth_callback(port, &token, &secret_sync_token, &callback).is_ok();
+            let _ = relay_app.emit("codinal://oauth-status", OAuthRelayStatus { flow, ok });
+        });
+    }
+}
+
 pub fn run() {
     let application = tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .invoke_handler(tauri::generate_handler![
             list_provider_secret_status,
             set_provider_secret,
@@ -136,6 +164,14 @@ pub fn run() {
                 token: token.clone(),
                 secret_sync_token,
             });
+
+            let deep_link_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                relay_deep_links(deep_link_handle.clone(), event.urls());
+            });
+            if let Some(urls) = app.deep_link().get_current()? {
+                relay_deep_links(app.handle().clone(), urls);
+            }
 
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Codinal")

@@ -58,7 +58,15 @@ per-file provenance header; ไม่ commit OpenWorker source tree ทั้ง
   ผ่าน authenticated loopback พร้อม Keychain rollback เมื่อ runtime sync ล้มเหลว.
   Mutation ใช้ second per-process sync token ที่ไม่เปิดให้ WebView.
 - **Local control plane (amended by F1-reopen, 2026-07-25):** loopback HTTP+WS **+ mandatory per-session bearer token** บนทุก route + WS. P0 #2 แก้ด้วย token auth (defensible pattern — เหมือน Jupyter/VS Code) **ไม่ใช่** ด้วยการเอา network server ออก. เหตุผล: spike 0a.4 พบว่า UI ที่จะ reuse พูด HTTP+WS กับ localhost sidecar (`api.ts` ~90 fetch + 1 WS, `lib.rs:576-583` inject port) — stdio IPC บังคับ rewrite UI bridge ทั้งหมด (expensive). Rust host mint token + inject ผ่าน spawn channel เดียวกับที่วันนี้ inject port. No-bypass ยังคง: `PermissionEngine` ที่ `engine.py` รับเป็น collaborator เป็น harness-controlled chokepoint (engine.py:60-78)
-- OAuth callback: ใช้ app URL scheme หรือ loopback HTTP ชั่วคราว — consume `app_state` ให้ถูก (แก้ P0 `/oauth/callback` CSRF ที่ cloud.py:363 mint แต่ไม่ validate)
+- **Phase 1.5 OAuth implementation (2026-07-26):** ใช้ static
+  `codinal://oauth/callback` scheme ที่ native Tauri host รับและ parse แบบ exact
+  route/query schema ก่อน relay authorization code ผ่าน authenticated loopback.
+  Callback route ต้องมีทั้ง process bearer และ native-only sync token; state เป็น
+  random URL-safe 256-bit, TTL ไม่เกิน 10 นาที, ผูกกับ flow, consume แบบ atomic
+  ครั้งเดียวก่อนเรียก injected provider handler. Browser/broker ห้าม POST
+  access/refresh token และ error response ห้าม echo code. Fake custom-scheme
+  invocation จึงทำได้เพียงชน validation/state gate ไม่สามารถ inject credential
+  แบบ P0 เดิมได้.
 - WebView CSP เปิด
 
 ### D5 — Git lifecycle: Worktree per session + approval apply-back

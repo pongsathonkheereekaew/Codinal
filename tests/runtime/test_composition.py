@@ -101,6 +101,7 @@ def test_composition_injects_policy_roots_grants_and_session_event_sink(tmp_path
     assert engine.context is context
     assert context.secrets is provider_secrets
     assert services.secrets is provider_secrets
+    assert services.oauth is not None
     assert context.permissions.mode is Mode.INTERACTIVE
     assert context.permissions.evaluate(
         "write_file", {"path": str(workspace / "ok.py")}

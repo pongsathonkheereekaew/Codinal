@@ -95,6 +95,14 @@ Python sidecar รับ provider credentials ผ่าน one-shot stdin bootst
 Keychain และ sync เข้า runtime ผ่าน authenticated control plane พร้อม rollback.
 ไม่มี endpoint หรือ status response ที่คืน raw secret.
 
+**Phase 1.5 progress (2026-07-26):** managed OAuth callback เดิมที่รับ token
+โดยไม่ validate `app_state` ถูกทิ้ง. `runtime.oauth` เพิ่ม bounded/expiring
+one-time state service กับ injected handler coordinator. Native Tauri host
+ลงทะเบียน static `codinal` scheme, parse callback แบบ exact และ relay เฉพาะ
+authorization code ผ่าน route ที่ต้องมีทั้ง bearer และ native-only sync token.
+Provider adapter จริงจะ register handler ผ่าน composition seam ใน Phase 2;
+callback path นี้ไม่ persist หรือรับ access/refresh token จาก browser.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

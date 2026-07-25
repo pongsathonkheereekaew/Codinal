@@ -2,7 +2,9 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
-use codinal_desktop::control_client::sync_provider_secret;
+use codinal_desktop::control_client::{relay_oauth_callback, sync_provider_secret};
+use codinal_desktop::oauth::parse_oauth_deep_link;
+use url::Url;
 
 fn capture_request(status: &str) -> (u16, thread::JoinHandle<String>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
@@ -79,6 +81,64 @@ fn provider_secret_sync_errors_never_echo_secret() {
         Some("must-not-echo"),
     )
     .expect_err("sync fails");
+    request.join().expect("server thread");
+
+    assert!(!error.to_string().contains("must-not-echo"));
+}
+
+#[test]
+fn oauth_relay_uses_both_native_tokens_and_posts_code_in_json_body() {
+    let (port, request) = capture_request("200 OK");
+    let callback = parse_oauth_deep_link(
+        &Url::parse(
+            "codinal://oauth/callback?flow=provider%3Aopenai\
+             &state=oauth-state-token-with-at-least-32-chars\
+             &code=authorization-code",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    relay_oauth_callback(
+        port,
+        "test-session-token-with-at-least-32-characters",
+        "test-secret-sync-token-with-at-least-32-chars",
+        &callback,
+    )
+    .expect("relay succeeds");
+    let request = request.join().expect("server thread");
+
+    assert!(request.starts_with("POST /v1/oauth/callback HTTP/1.1\r\n"));
+    assert!(request
+        .contains("Authorization: Bearer test-session-token-with-at-least-32-characters\r\n"));
+    assert!(request
+        .contains("X-Codinal-Secret-Sync: test-secret-sync-token-with-at-least-32-chars\r\n"));
+    assert!(request.ends_with(
+        r#"{"code":"authorization-code","error":"","flow":"provider:openai","state":"oauth-state-token-with-at-least-32-chars"}"#
+    ));
+    assert!(!request.starts_with("POST /v1/oauth/callback?"));
+}
+
+#[test]
+fn oauth_relay_error_never_echoes_authorization_code() {
+    let (port, request) = capture_request("400 Bad Request");
+    let callback = parse_oauth_deep_link(
+        &Url::parse(
+            "codinal://oauth/callback?flow=provider%3Aopenai\
+             &state=oauth-state-token-with-at-least-32-chars\
+             &code=must-not-echo",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let error = relay_oauth_callback(
+        port,
+        "test-session-token-with-at-least-32-characters",
+        "test-secret-sync-token-with-at-least-32-chars",
+        &callback,
+    )
+    .expect_err("relay fails");
     request.join().expect("server thread");
 
     assert!(!error.to_string().contains("must-not-echo"));

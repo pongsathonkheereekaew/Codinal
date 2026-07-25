@@ -15,6 +15,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from runtime.events import EventHub
 
@@ -47,10 +48,22 @@ class ProviderSecrets(Protocol):
     def authorize_sync(self, candidate: str) -> bool: ...
 
 
+class OAuthCallbacks(Protocol):
+    async def complete(
+        self,
+        *,
+        flow: str,
+        state: str,
+        code: str,
+        error: str = "",
+    ) -> dict[str, Any]: ...
+
+
 class ControlPlaneServices(Protocol):
     events: EventHub
     settings: SettingsView
     secrets: ProviderSecrets
+    oauth: OAuthCallbacks
 
 
 def create_control_plane_app(
@@ -100,6 +113,16 @@ def create_control_plane_app(
             return services.secrets.delete_api_key(provider)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from None
+
+    @app.post("/v1/oauth/callback")
+    async def oauth_callback(request: Request) -> JSONResponse:
+        _authorize_secret_sync(request, services.secrets)
+        callback = await _read_oauth_callback(request)
+        result = await services.oauth.complete(**callback)
+        return JSONResponse(
+            result,
+            status_code=200 if result.get("ok") else 400,
+        )
 
     @app.websocket("/ws/events")
     async def global_events(websocket: WebSocket) -> None:
@@ -151,6 +174,24 @@ def _authorize_secret_sync(
     candidate = request.headers.get("X-Codinal-Secret-Sync", "")
     if not secrets.authorize_sync(candidate):
         raise HTTPException(status_code=403, detail="secret sync forbidden")
+
+
+async def _read_oauth_callback(request: Request) -> dict[str, str]:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid OAuth callback") from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"flow", "state", "code", "error"}
+        or not all(isinstance(value, str) for value in body.values())
+        or not 1 <= len(body["flow"]) <= 128
+        or not 32 <= len(body["state"]) <= 256
+        or len(body["code"].encode("utf-8")) > 8192
+        or len(body["error"].encode("utf-8")) > 256
+    ):
+        raise HTTPException(status_code=400, detail="invalid OAuth callback")
+    return body
 
 
 async def _serve_events(

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional, Protocol
 
 from .events import EventHub
+from .oauth import OAuthCoordinator
 from .policy import Approver, Mode, PermissionEngine, deny_all
 from .secrets import ProviderSecretService
 from .sessions import EngineRequest, RootDir, SessionService
@@ -47,6 +48,7 @@ class RuntimeServices:
     events: EventHub
     settings: SettingsService
     secrets: ProviderSecretService
+    oauth: OAuthCoordinator
 
 
 def compose_runtime(
@@ -61,6 +63,7 @@ def compose_runtime(
     delete_callbacks: Iterable[DeleteCallback] = (),
     artifact_opener: Optional[ArtifactOpener] = None,
     provider_secrets: ProviderSecretService | None = None,
+    oauth: OAuthCoordinator | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -72,6 +75,7 @@ def compose_runtime(
         curated_models=curated_models,
     )
     secrets = provider_secrets or ProviderSecretService()
+    oauth_service = oauth or OAuthCoordinator()
 
     def build_engine(request: EngineRequest) -> SessionEngine:
         roots = [
@@ -128,4 +132,5 @@ def compose_runtime(
         events=events,
         settings=settings,
         secrets=secrets,
+        oauth=oauth_service,
     )

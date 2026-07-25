@@ -11,6 +11,7 @@ from typing import TextIO
 import uvicorn
 
 from runtime.events import EventHub
+from runtime.oauth import OAuthCoordinator
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.settings import JsonPreferenceStore, SettingsService
 
@@ -32,6 +33,7 @@ class StandaloneServices:
     events: EventHub
     settings: SettingsService
     secrets: ProviderSecretService
+    oauth: OAuthCoordinator
 
 
 def load_server_config() -> ServerConfig:
@@ -71,6 +73,7 @@ def load_server_config() -> ServerConfig:
 def build_services(
     config: ServerConfig,
     secrets: ProviderSecretService | None = None,
+    oauth: OAuthCoordinator | None = None,
 ) -> StandaloneServices:
     return StandaloneServices(
         events=EventHub(),
@@ -79,6 +82,7 @@ def build_services(
             default_model=config.default_model,
         ),
         secrets=secrets or ProviderSecretService(),
+        oauth=oauth or OAuthCoordinator(),
     )
 
 
