@@ -11,6 +11,8 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   remain behind the Phase 1.4 Keychain port
 - `control_plane/` — Phase 1.3 FastAPI sidecar; loopback-only HTTP and
   WebSocket endpoints protected by one process-scoped bearer token
+- `secrets/` — Phase 1.4 in-memory provider credential port; persistent
+  storage is owned by the native Rust Keychain adapter
 - `turn_engine/` — vendored from `coworker/engine.py` (TurnEngine, zero server deps)
 - `providers/` — vendored `{base,router,anthropic,openai,gemini}_provider.py`
 - `mcp/` — vendored transport

@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Iterable, Optional, Protocol
 
 from .events import EventHub
 from .policy import Approver, Mode, PermissionEngine, deny_all
+from .secrets import ProviderSecretService
 from .sessions import EngineRequest, RootDir, SessionService
 from .sessions.service import (
     ArtifactOpener,
@@ -33,6 +34,7 @@ class EngineBuildContext:
     approver: Approver
     roots: list[RootDir]
     emit: EventEmitter
+    secrets: ProviderSecretService
 
 
 class EngineBuilder(Protocol):
@@ -44,6 +46,7 @@ class RuntimeServices:
     sessions: SessionService
     events: EventHub
     settings: SettingsService
+    secrets: ProviderSecretService
 
 
 def compose_runtime(
@@ -57,6 +60,7 @@ def compose_runtime(
     curated_models: Iterable[str] = (),
     delete_callbacks: Iterable[DeleteCallback] = (),
     artifact_opener: Optional[ArtifactOpener] = None,
+    provider_secrets: ProviderSecretService | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -67,6 +71,7 @@ def compose_runtime(
         default_model=default_model,
         curated_models=curated_models,
     )
+    secrets = provider_secrets or ProviderSecretService()
 
     def build_engine(request: EngineRequest) -> SessionEngine:
         roots = [
@@ -104,6 +109,7 @@ def compose_runtime(
                 approver=approver,
                 roots=roots,
                 emit=emit,
+                secrets=secrets,
             )
         )
 
@@ -121,4 +127,5 @@ def compose_runtime(
         sessions=sessions,
         events=events,
         settings=settings,
+        secrets=secrets,
     )

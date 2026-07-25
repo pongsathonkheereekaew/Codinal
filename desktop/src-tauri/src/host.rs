@@ -1,11 +1,31 @@
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use zeroize::{Zeroize, Zeroizing};
 
 const MINIMUM_TOKEN_LENGTH: usize = 32;
+
+pub fn validate_session_token(token: &str) -> io::Result<()> {
+    if token.len() < MINIMUM_TOKEN_LENGTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "session token must contain at least 32 characters",
+        ));
+    }
+    if !token
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "session token must use URL-safe characters",
+        ));
+    }
+    Ok(())
+}
 
 pub fn mint_session_token() -> io::Result<String> {
     let mut entropy = [0_u8; 32];
@@ -32,7 +52,6 @@ pub fn initialization_script(port: u16, token: &str) -> String {
     )
 }
 
-#[derive(Debug, Clone)]
 pub struct SidecarLaunch {
     python: PathBuf,
     runtime_root: PathBuf,
@@ -49,12 +68,7 @@ impl SidecarLaunch {
         port: u16,
         token: String,
     ) -> io::Result<Self> {
-        if token.len() < MINIMUM_TOKEN_LENGTH {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "session token must contain at least 32 characters",
-            ));
-        }
+        validate_session_token(&token)?;
         if port == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -78,15 +92,34 @@ impl SidecarLaunch {
             .env("CODINAL_SESSION_TOKEN", &self.token)
             .env("CODINAL_PORT", self.port.to_string())
             .env("CODINAL_DATA_DIR", &self.data_dir)
+            .env("CODINAL_SECRET_BOOTSTRAP", "stdin-v1")
             .env("PYTHONUNBUFFERED", "1")
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         command
     }
 
-    pub fn spawn(&self) -> io::Result<Child> {
-        self.command().spawn()
+    pub fn spawn_with_bootstrap(&self, secret_bootstrap: Vec<u8>) -> io::Result<Child> {
+        let secret_bootstrap = Zeroizing::new(secret_bootstrap);
+        let mut child = self.command().spawn()?;
+        let result = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("sidecar stdin pipe is unavailable"))
+            .and_then(|mut stdin| stdin.write_all(&secret_bootstrap));
+        if let Err(error) = result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok(child)
+    }
+}
+
+impl Drop for SidecarLaunch {
+    fn drop(&mut self) {
+        self.token.zeroize();
     }
 }
 

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 import uvicorn
 
 from runtime.events import EventHub
+from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.settings import JsonPreferenceStore, SettingsService
 
 from .app import create_control_plane_app
@@ -28,6 +31,7 @@ class ServerConfig:
 class StandaloneServices:
     events: EventHub
     settings: SettingsService
+    secrets: ProviderSecretService
 
 
 def load_server_config() -> ServerConfig:
@@ -64,21 +68,34 @@ def load_server_config() -> ServerConfig:
     )
 
 
-def build_services(config: ServerConfig) -> StandaloneServices:
+def build_services(
+    config: ServerConfig,
+    secrets: ProviderSecretService | None = None,
+) -> StandaloneServices:
     return StandaloneServices(
         events=EventHub(),
         settings=SettingsService(
             JsonPreferenceStore(config.data_dir / "settings.json"),
             default_model=config.default_model,
         ),
+        secrets=secrets or ProviderSecretService(),
     )
+
+
+def load_runtime_secrets(stream: TextIO) -> ProviderSecretService:
+    channel = os.environ.pop("CODINAL_SECRET_BOOTSTRAP", "")
+    if not channel:
+        return ProviderSecretService()
+    if channel != "stdin-v1":
+        raise ValueError("unsupported secret bootstrap channel")
+    return load_secret_bootstrap(stream)
 
 
 def run() -> None:
     config = load_server_config()
     app = create_control_plane_app(
         token=config.token,
-        services=build_services(config),
+        services=build_services(config, load_runtime_secrets(sys.stdin)),
     )
     uvicorn.run(
         app,

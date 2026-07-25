@@ -51,6 +51,12 @@ per-file provenance header; ไม่ commit OpenWorker source tree ทั้ง
 - **Shell sandbox (v1):** direct distribution (ไม่ Mac App Store) + **ไม่ใช้ App Sandbox** เพราะ coding agent ต้อง shell-out ไปยัง CLIs ของ user (homebrew git, nvm, cargo…) ซึ่ง App Sandbox จำกัด; ใช้ `sandbox-exec` profile จำกัดเฉพาะ Python sidecar shell worker (workspace + tmp writable, network off default) — แก้ P0 shell-prefix bypass ตรง ๆ (sandbox ไม่ใช่ allowlist). **รับความเสี่ยง deprecation** ของ `sandbox-exec`. **DE-RISKED 2026-07-25 (Phase 0a.2):** spike notarization status=Accepted, `spctl: accepted (Notarized Developer ID)` — Apple ยอมรับ sandbox-exec usage ใน signed/notarized app (F3 ปิด)
 - Approval ตาม harness risk class: `read` auto · `write_local` per-session scope · `exec` & `external` ถามเสมอ (from `standards/agent-guardrails`)
 - Secrets เก็บใน macOS Keychain (plaintext JSON ห้าม)
+- **Phase 1.4 implementation (2026-07-26):** Rust/Tauri เป็น Keychain owner ผ่าน
+  Security.framework โดยตรง; ไม่ใช้ Python `keyring` เพราะ process/tool ที่ใช้ Python
+  executable เดียวกันอาจได้สิทธิ์อ่าน item เดียวกัน. Rust bootstrap เฉพาะ provider
+  secrets ผ่าน one-shot stdin pipe, Python เก็บใน memory-only store และ hot update
+  ผ่าน authenticated loopback พร้อม Keychain rollback เมื่อ runtime sync ล้มเหลว.
+  Mutation ใช้ second per-process sync token ที่ไม่เปิดให้ WebView.
 - **Local control plane (amended by F1-reopen, 2026-07-25):** loopback HTTP+WS **+ mandatory per-session bearer token** บนทุก route + WS. P0 #2 แก้ด้วย token auth (defensible pattern — เหมือน Jupyter/VS Code) **ไม่ใช่** ด้วยการเอา network server ออก. เหตุผล: spike 0a.4 พบว่า UI ที่จะ reuse พูด HTTP+WS กับ localhost sidecar (`api.ts` ~90 fetch + 1 WS, `lib.rs:576-583` inject port) — stdio IPC บังคับ rewrite UI bridge ทั้งหมด (expensive). Rust host mint token + inject ผ่าน spawn channel เดียวกับที่วันนี้ inject port. No-bypass ยังคง: `PermissionEngine` ที่ `engine.py` รับเป็น collaborator เป็น harness-controlled chokepoint (engine.py:60-78)
 - OAuth callback: ใช้ app URL scheme หรือ loopback HTTP ชั่วคราว — consume `app_state` ให้ถูก (แก้ P0 `/oauth/callback` CSRF ที่ cloud.py:363 mint แต่ไม่ validate)
 - WebView CSP เปิด

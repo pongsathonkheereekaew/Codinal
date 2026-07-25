@@ -88,6 +88,13 @@ session/composition route wiring; authenticated transport เสร็จใน 
 256-bit token ต่อ process, spawn sidecar บน random loopback port และ inject
 credentials เข้า WebView memory. OpenAPI/docs ถูกปิดและ WebView CSP เปิด.
 
+**Phase 1.4 progress (2026-07-26):** file-backed `coworker.secrets.SecretStore`
+ถูกแทนด้วย native Rust `PlatformSecretVault` บน macOS Security.framework.
+Python sidecar รับ provider credentials ผ่าน one-shot stdin bootstrap แล้วเก็บใน
+`runtime.secrets.ProviderSecretService` แบบ memory-only. Hot updates persist ใน
+Keychain และ sync เข้า runtime ผ่าน authenticated control plane พร้อม rollback.
+ไม่มี endpoint หรือ status response ที่คืน raw secret.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

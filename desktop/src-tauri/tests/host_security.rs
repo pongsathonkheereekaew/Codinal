@@ -31,6 +31,10 @@ fn sidecar_token_is_in_environment_not_arguments() {
         .get_envs()
         .find(|(name, _)| *name == std::ffi::OsStr::new("CODINAL_SESSION_TOKEN"))
         .and_then(|(_, value)| value);
+    let bootstrap_channel = command
+        .get_envs()
+        .find(|(name, _)| *name == std::ffi::OsStr::new("CODINAL_SECRET_BOOTSTRAP"))
+        .and_then(|(_, value)| value);
 
     assert_eq!(arguments, ["-m", "runtime.control_plane"]);
     assert!(!arguments
@@ -42,6 +46,10 @@ fn sidecar_token_is_in_environment_not_arguments() {
             "test-session-token-with-at-least-32-characters"
         ))
     );
+    assert_eq!(bootstrap_channel, Some(std::ffi::OsStr::new("stdin-v1")));
+    assert!(!command.get_envs().any(|(_, value)| {
+        value.is_some_and(|value| value.to_string_lossy().contains("provider-secret"))
+    }));
     assert_eq!(
         command.get_current_dir(),
         Some(std::path::Path::new("/opt/codinal/runtime"))

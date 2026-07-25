@@ -6,6 +6,7 @@ from dataclasses import replace
 from runtime import compose_runtime
 from runtime.policy import ApprovalOutcome, Mode
 from runtime.policy.approval import PermissionRequest
+from runtime.secrets import ProviderSecretService
 from runtime.sessions import SessionRecord
 
 
@@ -77,6 +78,8 @@ def test_composition_injects_policy_roots_grants_and_session_event_sink(tmp_path
         )
     )
     contexts = []
+    provider_secrets = ProviderSecretService()
+    provider_secrets.set_api_key("openai", "test-secret")
     services = compose_runtime(
         data_dir=tmp_path / "data",
         session_store=store,
@@ -84,6 +87,7 @@ def test_composition_injects_policy_roots_grants_and_session_event_sink(tmp_path
         or FakeEngine(context),
         snapshotter=lambda _session_id, _engine: None,
         default_model="openai:gpt-default",
+        provider_secrets=provider_secrets,
     )
     events = []
 
@@ -95,6 +99,8 @@ def test_composition_injects_policy_roots_grants_and_session_event_sink(tmp_path
     context = contexts[0]
 
     assert engine.context is context
+    assert context.secrets is provider_secrets
+    assert services.secrets is provider_secrets
     assert context.permissions.mode is Mode.INTERACTIVE
     assert context.permissions.evaluate(
         "write_file", {"path": str(workspace / "ok.py")}

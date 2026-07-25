@@ -10,10 +10,17 @@ from runtime.control_plane import (
     websocket_auth_protocol,
 )
 from runtime.events import EventHub
+from runtime.secrets import ProviderSecretService
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
+SECRET_SYNC_TOKEN = "test-secret-sync-token-with-at-least-32-chars"
 ALLOWED_ORIGIN = DEFAULT_ALLOWED_ORIGINS[0]
+EMPTY_SECRET_STATUS = [
+    {"provider": "anthropic", "configured": False},
+    {"provider": "gemini", "configured": False},
+    {"provider": "openai", "configured": False},
+]
 
 
 class FakeSettings:
@@ -23,7 +30,11 @@ class FakeSettings:
 
 @pytest.fixture
 def client() -> TestClient:
-    services = SimpleNamespace(events=EventHub(), settings=FakeSettings())
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        secrets=ProviderSecretService(sync_token=SECRET_SYNC_TOKEN),
+    )
     return TestClient(create_control_plane_app(token=TOKEN, services=services))
 
 
@@ -78,6 +89,108 @@ def test_http_accepts_valid_bearer_token(client: TestClient) -> None:
         "models": ["test/model"],
     }
     assert client.get("/missing", headers=headers).status_code == 404
+
+
+def test_provider_secret_route_updates_memory_without_echoing_value(
+    client: TestClient,
+) -> None:
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "X-Codinal-Secret-Sync": SECRET_SYNC_TOKEN,
+    }
+
+    response = client.put(
+        "/v1/secrets/providers/openai",
+        headers=headers,
+        json={"api_key": "sk-test-do-not-echo"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"provider": "openai", "configured": True}
+    assert "sk-test-do-not-echo" not in response.text
+    assert client.get(
+        "/v1/secrets/providers", headers=headers
+    ).json() == [
+        {"provider": "anthropic", "configured": False},
+        {"provider": "gemini", "configured": False},
+        {"provider": "openai", "configured": True},
+    ]
+
+    deleted = client.delete(
+        "/v1/secrets/providers/openai", headers=headers
+    )
+    assert deleted.json() == {"provider": "openai", "configured": False}
+
+
+def test_provider_secret_route_is_authenticated_before_mutation(
+    client: TestClient,
+) -> None:
+    response = client.put(
+        "/v1/secrets/providers/openai",
+        headers={"X-Codinal-Secret-Sync": SECRET_SYNC_TOKEN},
+        json={"api_key": "sk-test-must-not-be-stored"},
+    )
+
+    assert response.status_code == 401
+    authorized = {"Authorization": f"Bearer {TOKEN}"}
+    assert client.get(
+        "/v1/secrets/providers", headers=authorized
+    ).json() == EMPTY_SECRET_STATUS
+
+
+def test_provider_secret_route_requires_native_sync_token(
+    client: TestClient,
+) -> None:
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    response = client.put(
+        "/v1/secrets/providers/openai",
+        headers=headers,
+        json={"api_key": "sk-test-must-not-be-stored"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "secret sync forbidden"}
+    assert client.get(
+        "/v1/secrets/providers", headers=headers
+    ).json() == EMPTY_SECRET_STATUS
+
+
+def test_provider_secret_route_rejects_unknown_provider(
+    client: TestClient,
+) -> None:
+    response = client.put(
+        "/v1/secrets/providers/unknown",
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "X-Codinal-Secret-Sync": SECRET_SYNC_TOKEN,
+        },
+        json={"api_key": "secret-value"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "unsupported provider"}
+
+
+def test_provider_secret_validation_error_never_echoes_value(
+    client: TestClient,
+) -> None:
+    response = client.put(
+        "/v1/secrets/providers/openai",
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "X-Codinal-Secret-Sync": SECRET_SYNC_TOKEN,
+        },
+        json={
+            "api_key": "sk-test-do-not-echo",
+            "unexpected": "also-secret",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "invalid secret payload"}
+    assert "sk-test-do-not-echo" not in response.text
+    assert "also-secret" not in response.text
 
 
 def test_allowed_cors_preflight_does_not_require_bearer(

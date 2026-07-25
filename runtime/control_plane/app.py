@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from typing import Any, Protocol
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 from runtime.events import EventHub
@@ -30,9 +37,20 @@ class SettingsView(Protocol):
     def view(self) -> dict[str, Any]: ...
 
 
+class ProviderSecrets(Protocol):
+    def status(self) -> list[dict[str, Any]]: ...
+
+    def set_api_key(self, provider: str, api_key: str) -> dict[str, Any]: ...
+
+    def delete_api_key(self, provider: str) -> dict[str, Any]: ...
+
+    def authorize_sync(self, candidate: str) -> bool: ...
+
+
 class ControlPlaneServices(Protocol):
     events: EventHub
     settings: SettingsView
+    secrets: ProviderSecrets
 
 
 def create_control_plane_app(
@@ -57,6 +75,31 @@ def create_control_plane_app(
     @app.get("/v1/settings")
     async def settings() -> dict[str, Any]:
         return services.settings.view()
+
+    @app.get("/v1/secrets/providers")
+    async def provider_secret_status() -> list[dict[str, Any]]:
+        return services.secrets.status()
+
+    @app.put("/v1/secrets/providers/{provider}")
+    async def provider_secret_set(
+        provider: str, request: Request
+    ) -> dict[str, Any]:
+        _authorize_secret_sync(request, services.secrets)
+        api_key = await _read_api_key(request)
+        try:
+            return services.secrets.set_api_key(provider, api_key)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+
+    @app.delete("/v1/secrets/providers/{provider}")
+    async def provider_secret_delete(
+        provider: str, request: Request
+    ) -> dict[str, Any]:
+        _authorize_secret_sync(request, services.secrets)
+        try:
+            return services.secrets.delete_api_key(provider)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
 
     @app.websocket("/ws/events")
     async def global_events(websocket: WebSocket) -> None:
@@ -84,6 +127,30 @@ def create_control_plane_app(
         allow_credentials=False,
     )
     return app
+
+
+async def _read_api_key(request: Request) -> str:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid secret payload") from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"api_key"}
+        or not isinstance(body["api_key"], str)
+        or not 1 <= len(body["api_key"]) <= 16_384
+    ):
+        raise HTTPException(status_code=400, detail="invalid secret payload")
+    return body["api_key"]
+
+
+def _authorize_secret_sync(
+    request: Request,
+    secrets: ProviderSecrets,
+) -> None:
+    candidate = request.headers.get("X-Codinal-Secret-Sync", "")
+    if not secrets.authorize_sync(candidate):
+        raise HTTPException(status_code=403, detail="secret sync forbidden")
 
 
 async def _serve_events(
