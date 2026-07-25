@@ -75,8 +75,11 @@ delete callbacks และ artifact opener. Runtime ไม่ own provider/MCP �
 async fan-out พร้อม unsubscribe และ dead-listener pruning. `settings` ถูก extract เป็น
 `runtime.settings.SettingsService` + atomic `JsonPreferenceStore`; JSON เก็บเฉพาะ
 non-secret preferences ส่วน provider credentials เป็น Phase 1.4 Keychain port.
-`automations` defer post-MVP ตาม ADR D9; active remainder คือ connectors gateway
-ที่จำกัด PR/issue และ composition glue.
+Core composition root อยู่ใน `runtime/composition.py`: ทุก engine build รับ
+`PermissionEngine`, injected/default-deny `Approver`, shared roots, session event sink
+และ live default-model settings จาก chokepoint เดียว. `automations` defer post-MVP
+ตาม ADR D9; active remainder คือ connectors gateway ที่จำกัด PR/issue และ
+control-plane integration.
 
 ### server/app.py — REJECT as unit (P0s ครบ)
 

@@ -115,6 +115,28 @@ def test_get_engine_builds_from_persisted_session_once(tmp_path):
     assert built[0].workspace == tmp_path.resolve()
 
 
+def test_persisted_engine_does_not_consult_live_default_model(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="persisted:model",
+        mode="interactive",
+    )
+    requests = []
+    service = SessionService(
+        MemorySessionStore(record),
+        scratch_base=tmp_path / "scratch",
+        engine_factory=lambda request: requests.append(request) or object(),
+        default_model_provider=lambda: (_ for _ in ()).throw(
+            RuntimeError("settings unavailable")
+        ),
+    )
+
+    service.get_engine("s1")
+
+    assert requests[0].model == "persisted:model"
+
+
 def test_new_engine_requires_existing_workspace_and_touches_it(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

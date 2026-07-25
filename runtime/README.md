@@ -2,6 +2,8 @@
 
 Codinal Python sidecar (OpenWorker-derived mechanics).
 
+- `composition.py` — runtime composition root; injects policy, deny-by-default
+  approval, roots, event sink, and live settings into every engine build
 - `sessions/` — Phase 1.2 session lifecycle boundary (injected store/engine,
   roots, artifacts)
 - `events/` — Phase 1.2 global/per-session async event fan-out

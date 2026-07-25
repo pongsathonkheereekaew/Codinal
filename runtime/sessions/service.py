@@ -11,7 +11,7 @@ import base64
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional, Protocol
+from typing import Any, Callable, Iterable, Optional, Protocol
 
 from .models import RootDir, SessionRecord
 
@@ -122,6 +122,7 @@ class SessionService:
         delete_callbacks: Iterable[DeleteCallback] = (),
         artifact_opener: Optional[ArtifactOpener] = None,
         default_model: str = "gpt-5.6-sol",
+        default_model_provider: Optional[Callable[[], str]] = None,
         default_mode: str = "interactive",
     ) -> None:
         self._store = store
@@ -131,6 +132,7 @@ class SessionService:
         self._delete_callbacks = tuple(delete_callbacks)
         self._artifact_opener = artifact_opener
         self._default_model = default_model
+        self._default_model_provider = default_model_provider
         self._default_mode = default_mode
         self._engines: dict[str, SessionEngine] = {}
 
@@ -157,12 +159,18 @@ class SessionService:
         if not resolved_workspace.is_dir():
             return None
         self._store.touch_workspace(str(resolved_workspace))
+        default_model = self._default_model
+        if record is None and self._default_model_provider is not None:
+            default_model = (
+                (self._default_model_provider() or "").strip()
+                or self._default_model
+            )
         engine = self._engine_factory(
             EngineRequest(
                 session_id=session_id,
                 workspace=resolved_workspace,
                 record=record,
-                model=record.model if record else self._default_model,
+                model=record.model if record else default_model,
                 mode=record.mode if record else self._default_mode,
                 agent=record.agent if record else agent,
                 messages=list(record.messages) if record else [],
