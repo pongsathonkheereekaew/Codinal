@@ -103,6 +103,14 @@ authorization code ผ่าน route ที่ต้องมีทั้ง be
 Provider adapter จริงจะ register handler ผ่าน composition seam ใน Phase 2;
 callback path นี้ไม่ persist หรือรับ access/refresh token จาก browser.
 
+**Phase 2.1 progress (2026-07-26):** เริ่ม vendor
+`coworker/providers/base.py` เป็น provider-neutral contract พร้อม provenance
+header แต่ใช้ `runtime.policy.ToolCall` เป็น canonical type และ revalidate
+ทุก `AssistantTurn` ด้วย strict parser. เพิ่ม bridge จาก provider contract ไป
+conformance runner ที่รักษา system role/tool schema และ sanitize report.
+SDK-specific adapters/router ยังไม่ถูก vendor ใน slice นี้ เพื่อแยก review
+credential resolution ออกจาก contract.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

@@ -104,7 +104,10 @@ harness-flow/                       ← product repo "Codinal"
 **Gate:** negative test ว่าทุก `/v1/*` route + WS ปฏิเสธ request ไม่มี/ผิด bearer token; runtime sidecar ไม่สามารถ exec tool โดยไม่ผ่าน `PermissionEngine` (harness-controlled); conformance runner รันได้.
 
 ### Phase 2 — Runtime (OpenWorker-derived mechanics)  (gate: Tier-1 turn สมบูรณ์ผ่าน policy)
-- 2.1 vendor TurnEngine + providers (Anthropic/OpenAI/Gemini/Ollama) พร้อม provenance header
+- 2.1 vendor TurnEngine + providers (Anthropic/OpenAI/Gemini/Ollama) พร้อม
+  provenance header. **Progress:** provider-neutral contract + conformance
+  bridge เสร็จแล้ว; tool calls ถูก revalidate ผ่าน policy parser. SDK adapters,
+  secure router และ TurnEngine ยัง pending.
 - 2.2 vendor MCP transport + conversation storage
 - 2.3 tool registry: manifest ใน `harness/policy`, impl ใน `runtime/tools`
 - 2.4 wire runtime → control plane (subscribe model; ห้าม direct exec)
