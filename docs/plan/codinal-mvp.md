@@ -115,7 +115,11 @@ harness-flow/                       ← product repo "Codinal"
 - 2.2 vendor MCP transport + conversation storage. **Progress:** conversation
   store เสร็จเป็น transactional SQLite adaptation (metadata + ordered messages
   ใน transaction เดียว), owner-only permissions, storage-level session-id
-  validation และ rollback tests; MCP transport ยัง pending.
+  validation และ rollback tests. MCP official-SDK transport + dynamic tool
+  wrapper เสร็จแล้ว: explicit-approved connect เท่านั้น, HTTPS/loopback HTTP,
+  minimal stdio env, collision-resistant names, strict bounded schemas และทุก
+  tool ถูกประกาศเป็น external/requires-approval. Session/UI connect wiring
+  ยัง pending.
 - 2.3 tool registry: manifest ใน `harness/policy`, impl ใน `runtime/tools`
 - 2.4 wire runtime → control plane (subscribe model; ห้าม direct exec).
   **Progress:** เพิ่ม authenticated bounded turn/interrupt routes +

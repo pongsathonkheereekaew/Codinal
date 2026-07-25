@@ -176,6 +176,15 @@ block parent/symlink escape, จำกัด bytes/lines/files/results/time แ�
 subprocess. E2E test พิสูจน์ bearer turn → session WebSocket tool lifecycle →
 snapshot → restart/load history. Mutation/shell tools รอ Phase 3 sandbox.
 
+**Phase 2.2 MCP transport (2026-07-26):** adapt `coworker/mcp/{client,config,
+tools}.py` บน official `mcp==1.28.1` ที่ pin/hash-lock. ตัด env/`.env` secret
+resolution และ OAuth store ของ upstream ออก; connect ต้องรับ explicit host
+approval. Remote HTTP จำกัด HTTPS หรือ loopback HTTP ไม่มี URL credentials/
+query, stdio ใช้ executable+argv ไม่ผ่าน shell และ child env เป็น safe
+allowlist. Dynamic names กัน collision ด้วย hash, schemas ถูก bound/strict,
+manifest risk เป็น external+requires-approval เสมอ และ remote error body ไม่
+เข้า model history. Session/UI connect wiring เป็น slice ถัดไป.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

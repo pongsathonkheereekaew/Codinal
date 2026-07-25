@@ -30,7 +30,10 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   vendored OpenAI, Anthropic, and Gemini adapters resolve keys only from the
   native-backed memory store; the fail-closed router supports those providers
   plus loopback-only Ollama and invalidates cached SDK clients on key changes
-- `mcp/` — vendored transport
+- `mcp/` — Phase 2 official-SDK transport adapted from OpenWorker; connections
+  require an explicit approved host action, remote HTTP is HTTPS or loopback,
+  stdio receives only a minimal safe environment, and registered tools are
+  always manifest-declared `external` actions requiring approval
 - `tools/` — manifest-bound implementation registry; requires explicit strict
   schemas and refuses undeclared tools; production currently exposes bounded
   root-scoped `read_file`, `list_files`, and literal `grep` without spawning
