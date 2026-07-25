@@ -29,11 +29,47 @@ from .risk import (
     is_consequential,
 )
 
-_SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
-
-
 def _has_shell_operators(command: str) -> bool:
-    return any(op in command for op in _SHELL_OPERATORS)
+    """Return whether command uses shell syntax outside quoted argv values.
+
+    The executor never invokes a shell, so punctuation inside a quoted
+    argument (for example Python source passed to ``python -c``) is data.
+    """
+    quote: Optional[str] = None
+    escaped = False
+    index = 0
+    while index < len(command):
+        character = command[index]
+        if escaped:
+            escaped = False
+        elif character == "\\" and quote != "'":
+            escaped = True
+        elif quote is not None:
+            if character == quote:
+                quote = None
+        elif character in {"'", '"'}:
+            quote = character
+        elif character in {";", "&", "|", ">", "<", "`", "(", ")", "\n", "\r"}:
+            return True
+        elif character == "$" and command[index : index + 2] == "$(":
+            return True
+        index += 1
+    return False
+
+
+def parse_command_argv(command: str) -> list[str]:
+    """Parse a command into argv while refusing shell evaluation syntax."""
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError("invalid command")
+    if len(command) > 32_768 or _has_shell_operators(command):
+        raise ValueError("shell syntax is not supported")
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        raise ValueError("invalid command") from None
+    if not argv:
+        raise ValueError("invalid command")
+    return argv
 
 
 class Mode(str, Enum):
@@ -179,17 +215,13 @@ class PermissionEngine:
         return False
 
     def _command_allowed(self, command: str) -> bool:
-        if _has_shell_operators(command):
-            return False
         try:
-            argv = shlex.split(command)
+            argv = parse_command_argv(command)
         except ValueError:
-            return False
-        if not argv:
             return False
         for allowed in self.allowed_commands:
             try:
-                prefix = shlex.split(allowed)
+                prefix = parse_command_argv(allowed)
             except ValueError:
                 continue
             if prefix and argv[: len(prefix)] == prefix:

@@ -88,6 +88,9 @@ def test_has_shell_operators_catches_chaining_redirection_substitution():
     assert _has_shell_operators("echo `whoami`")
     assert _has_shell_operators("a; b")
     assert not _has_shell_operators("git status -s")
+    assert not _has_shell_operators(
+        "python -c \"print('punctuation ; () is argv data')\""
+    )
 
 
 def test_allowed_command_argv_token_prefix_not_string_prefix(engine):
