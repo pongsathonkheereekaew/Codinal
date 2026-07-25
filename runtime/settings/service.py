@@ -13,6 +13,43 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Protocol
 
+from runtime.storage import UnsupportedSchemaVersionError
+from runtime.storage.migrations import (
+    backup_file,
+    preserve_corrupt_file,
+    restore_latest_backup,
+    secure_directory,
+    secure_file,
+)
+
+_PREFERENCES_SCHEMA_VERSION = 1
+
+
+def _migrate_preferences_to_v1(value: dict[str, Any]) -> None:
+    value["schema_version"] = 1
+
+
+_PREFERENCE_MIGRATIONS = {
+    1: _migrate_preferences_to_v1,
+}
+
+
+def _migrate_preferences(
+    value: dict[str, Any],
+    current_version: int,
+) -> dict[str, Any]:
+    expected = set(
+        range(current_version + 1, _PREFERENCES_SCHEMA_VERSION + 1)
+    )
+    if expected - set(_PREFERENCE_MIGRATIONS):
+        raise RuntimeError("preferences migration chain has a version gap")
+    for version in range(
+        current_version + 1,
+        _PREFERENCES_SCHEMA_VERSION + 1,
+    ):
+        _PREFERENCE_MIGRATIONS[version](value)
+    return value
+
 
 class PreferenceStore(Protocol):
     def load(self) -> dict[str, Any]: ...
@@ -28,13 +65,77 @@ class JsonPreferenceStore:
 
     def load(self) -> dict[str, Any]:
         try:
-            value = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            serialized = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return {}
-        return value if isinstance(value, dict) else {}
+        try:
+            value = json.loads(serialized)
+        except json.JSONDecodeError:
+            return self._recover()
+        if not isinstance(value, dict):
+            return self._recover()
+        version = value.get("schema_version", 0)
+        if not isinstance(version, int) or isinstance(version, bool):
+            return self._recover()
+        if version < 0 or version > _PREFERENCES_SCHEMA_VERSION:
+            raise UnsupportedSchemaVersionError(
+                f"preferences schema v{version} is outside supported range "
+                f"0..{_PREFERENCES_SCHEMA_VERSION}"
+            )
+        if version < _PREFERENCES_SCHEMA_VERSION:
+            backup_file(
+                self.path,
+                version,
+                _PREFERENCES_SCHEMA_VERSION,
+            )
+            value = _migrate_preferences(value, version)
+            self.save(value)
+        return value
+
+    def _recover(self) -> dict[str, Any]:
+        preserve_corrupt_file(self.path)
+        restored = restore_latest_backup(
+            self.path,
+            self._valid_backup,
+        )
+        if restored is not None:
+            return self.load()
+        recovered = {"schema_version": _PREFERENCES_SCHEMA_VERSION}
+        self.save(recovered)
+        return recovered
+
+    @staticmethod
+    def _valid_backup(path: Path) -> bool:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(value, dict):
+            return False
+        version = value.get("schema_version", 0)
+        return (
+            isinstance(version, int)
+            and not isinstance(version, bool)
+            and 0 <= version <= _PREFERENCES_SCHEMA_VERSION
+        )
 
     def save(self, preferences: dict[str, Any]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        preferences = dict(preferences)
+        version = preferences.get(
+            "schema_version",
+            _PREFERENCES_SCHEMA_VERSION,
+        )
+        if (
+            not isinstance(version, int)
+            or isinstance(version, bool)
+            or version < 0
+            or version > _PREFERENCES_SCHEMA_VERSION
+        ):
+            raise UnsupportedSchemaVersionError(
+                "cannot save unsupported preferences schema"
+            )
+        preferences["schema_version"] = _PREFERENCES_SCHEMA_VERSION
+        secure_directory(self.path.parent)
         temporary_path = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -51,6 +152,7 @@ class JsonPreferenceStore:
                 temporary.flush()
                 os.fsync(temporary.fileno())
             os.replace(temporary_path, self.path)
+            secure_file(self.path)
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)

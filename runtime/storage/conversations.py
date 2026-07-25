@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 import threading
@@ -16,20 +15,94 @@ from typing import Any, Optional
 
 from runtime.sessions import SessionRecord
 
+from .errors import ExportTooLargeError
+from .migrations import (
+    create_private_file,
+    prepare_sqlite_database,
+    run_sqlite_migrations,
+    secure_directory,
+    secure_file,
+)
+
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+_SCHEMA_VERSION = 2
+MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
+
+
+def _migrate_to_v1(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            workspace TEXT NOT NULL,
+            model TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            title TEXT,
+            agent TEXT NOT NULL DEFAULT 'code',
+            extra_roots TEXT NOT NULL DEFAULT '[]',
+            grants TEXT NOT NULL DEFAULT '{{}}',
+            pinned INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            origin TEXT,
+            origin_label TEXT,
+            updated_at TEXT NOT NULL DEFAULT ({_NOW})
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS messages (
+            session_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            PRIMARY KEY (session_id, sequence),
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS workspaces (
+            path TEXT PRIMARY KEY,
+            last_used TEXT NOT NULL DEFAULT ({_NOW})
+        )
+        """
+    )
+
+
+def _migrate_to_v2(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(sessions)")
+    }
+    if "source_workspace" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN source_workspace TEXT"
+        )
+
+
+_MIGRATIONS = {
+    1: _migrate_to_v1,
+    2: _migrate_to_v2,
+}
 
 
 class ConversationStore:
     def __init__(self, base_dir: str | Path) -> None:
         self.base = Path(base_dir).expanduser().resolve()
-        self.base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            os.chmod(self.base, 0o700)
-        except OSError:
-            pass
+        secure_directory(self.base)
         self.db_path = self.base / "codinal.db"
         self._lock = threading.RLock()
+        previous_version = prepare_sqlite_database(
+            self.db_path,
+            _SCHEMA_VERSION,
+            "conversation",
+        )
+        if not self.db_path.exists():
+            create_private_file(self.db_path)
+        secure_file(self.db_path)
         self._connection = sqlite3.connect(
             self.db_path,
             check_same_thread=False,
@@ -41,53 +114,15 @@ class ConversationStore:
         # filesystem permissions beside private conversation content.
         self._connection.execute("PRAGMA journal_mode = DELETE")
         self._connection.execute("PRAGMA synchronous = FULL")
-        self._connection.executescript(
-            f"""
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                workspace TEXT NOT NULL,
-                source_workspace TEXT,
-                model TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                title TEXT,
-                agent TEXT NOT NULL DEFAULT 'code',
-                extra_roots TEXT NOT NULL DEFAULT '[]',
-                grants TEXT NOT NULL DEFAULT '{{}}',
-                pinned INTEGER NOT NULL DEFAULT 0,
-                archived INTEGER NOT NULL DEFAULT 0,
-                origin TEXT,
-                origin_label TEXT,
-                updated_at TEXT NOT NULL DEFAULT ({_NOW})
-            );
-            CREATE TABLE IF NOT EXISTS messages (
-                session_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL,
-                payload TEXT NOT NULL,
-                PRIMARY KEY (session_id, sequence),
-                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
-                    ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS workspaces (
-                path TEXT PRIMARY KEY,
-                last_used TEXT NOT NULL DEFAULT ({_NOW})
-            );
-            """
+        run_sqlite_migrations(
+            self._connection,
+            previous_version,
+            _SCHEMA_VERSION,
+            _MIGRATIONS,
         )
-        columns = {
-            row["name"]
-            for row in self._connection.execute(
-                "PRAGMA table_info(sessions)"
-            )
-        }
-        if "source_workspace" not in columns:
-            self._connection.execute(
-                "ALTER TABLE sessions ADD COLUMN source_workspace TEXT"
-            )
-        self._connection.commit()
-        try:
-            os.chmod(self.db_path, 0o600)
-        except OSError:
-            pass
+        if previous_version < _SCHEMA_VERSION:
+            self._connection.execute("PRAGMA optimize")
+        secure_file(self.db_path)
 
     def close(self) -> None:
         with self._lock:
@@ -244,6 +279,71 @@ class ConversationStore:
             )
             for row in rows
         ]
+
+    def export_records(self) -> list[SessionRecord]:
+        """Read complete records under one lock for a consistent export."""
+        with self._lock:
+            session_bytes = self._connection.execute(
+                """
+                SELECT COALESCE(SUM(
+                    LENGTH(CAST(session_id AS BLOB))
+                    + LENGTH(CAST(workspace AS BLOB))
+                    + COALESCE(
+                        LENGTH(CAST(source_workspace AS BLOB)), 0
+                    )
+                    + LENGTH(CAST(model AS BLOB))
+                    + LENGTH(CAST(mode AS BLOB))
+                    + COALESCE(LENGTH(CAST(title AS BLOB)), 0)
+                    + LENGTH(CAST(agent AS BLOB))
+                    + LENGTH(CAST(extra_roots AS BLOB))
+                    + LENGTH(CAST(grants AS BLOB))
+                    + COALESCE(LENGTH(CAST(origin AS BLOB)), 0)
+                    + COALESCE(LENGTH(CAST(origin_label AS BLOB)), 0)
+                    + LENGTH(CAST(updated_at AS BLOB))
+                ), 0)
+                FROM sessions
+                WHERE substr(session_id, 1, 2) != '__'
+                """
+            ).fetchone()[0]
+            message_bytes = self._connection.execute(
+                """
+                SELECT COALESCE(
+                    SUM(LENGTH(CAST(messages.payload AS BLOB))),
+                    0
+                )
+                FROM messages
+                JOIN sessions USING (session_id)
+                WHERE substr(sessions.session_id, 1, 2) != '__'
+                """
+            ).fetchone()[0]
+            if session_bytes + message_bytes > MAX_EXPORT_STORED_BYTES:
+                raise ExportTooLargeError(
+                    "conversation export exceeds its safety limit"
+                )
+            rows = self._connection.execute(
+                """
+                SELECT * FROM sessions
+                WHERE substr(session_id, 1, 2) != '__'
+                ORDER BY pinned DESC, updated_at DESC
+                """
+            ).fetchall()
+            return [
+                _record_from_row(
+                    row,
+                    messages=[
+                        _decode_json(message["payload"], expected=dict)
+                        for message in self._connection.execute(
+                            """
+                            SELECT payload FROM messages
+                            WHERE session_id = ?
+                            ORDER BY sequence
+                            """,
+                            (row["session_id"],),
+                        )
+                    ],
+                )
+                for row in rows
+            ]
 
     def rename(self, session_id: str, title: str) -> bool:
         _validate_session_id(session_id)

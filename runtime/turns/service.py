@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from runtime.events import Event, EventHub, EventType
 from runtime.sessions import SessionService
@@ -22,6 +22,10 @@ class SessionWorkspaceError(RuntimeError):
     pass
 
 
+class ExportBusyError(RuntimeError):
+    pass
+
+
 class TurnCoordinator:
     def __init__(
         self,
@@ -34,6 +38,7 @@ class TurnCoordinator:
         self._active: dict[str, asyncio.Task[None]] = {}
         self._engines: dict[str, Any] = {}
         self._starting: set[str] = set()
+        self._snapshot_barrier = asyncio.Lock()
 
     async def start(
         self,
@@ -44,6 +49,26 @@ class TurnCoordinator:
         agent: str = "code",
         model: str | None = None,
         source: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        async with self._snapshot_barrier:
+            return await self._start(
+                session_id,
+                user_input=user_input,
+                workspace=workspace,
+                agent=agent,
+                model=model,
+                source=source,
+            )
+
+    async def _start(
+        self,
+        session_id: str,
+        *,
+        user_input: str | list[dict[str, Any]],
+        workspace: str | Path | None,
+        agent: str,
+        model: str | None,
+        source: dict[str, Any] | None,
     ) -> dict[str, Any]:
         active = self._active.get(session_id)
         if (
@@ -87,6 +112,23 @@ class TurnCoordinator:
         self._active[session_id] = task
         self._engines[session_id] = engine
         return {"ok": True, "session_id": session_id}
+
+    async def export_when_idle(
+        self,
+        exporter: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Take a durable snapshot while excluding new turn starts."""
+        async with self._snapshot_barrier:
+            if self.has_active_turns():
+                raise ExportBusyError(
+                    "cannot export while a turn is active"
+                )
+            return await asyncio.to_thread(exporter)
+
+    def has_active_turns(self) -> bool:
+        return bool(self._starting) or any(
+            not task.done() for task in self._active.values()
+        )
 
     async def _run(
         self,

@@ -27,7 +27,9 @@ from runtime.control_plane.input_validation import (
     valid_turn_input,
 )
 from runtime.policy import ApprovalOutcome
+from runtime.storage import ExportTooLargeError
 from runtime.turns import (
+    ExportBusyError,
     SessionBusyError,
     SessionNotFoundError,
     SessionWorkspaceError,
@@ -78,7 +80,7 @@ class TurnControl(Protocol):
         self,
         session_id: str,
         *,
-        user_input: str,
+        user_input: str | list[dict[str, Any]],
         workspace: str | None = None,
         agent: str = "code",
         model: str | None = None,
@@ -89,6 +91,13 @@ class TurnControl(Protocol):
 
     def is_active(self, session_id: str) -> bool: ...
 
+    def has_active_turns(self) -> bool: ...
+
+    async def export_when_idle(
+        self,
+        exporter: Any,
+    ) -> dict[str, Any]: ...
+
 
 class SessionControl(Protocol):
     def list_sessions(
@@ -98,6 +107,8 @@ class SessionControl(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     def messages(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def export(self) -> dict[str, Any]: ...
 
     def roots(self, session_id: str) -> list[dict[str, Any]]: ...
 
@@ -226,6 +237,34 @@ def create_control_plane_app(
         ):
             raise HTTPException(status_code=400, detail="invalid workspace")
         return services.sessions.list_sessions(workspace=workspace)
+
+    @app.get("/v1/data/export")
+    async def export_data() -> JSONResponse:
+        try:
+            payload = await services.turns.export_when_idle(
+                services.sessions.export
+            )
+        except ExportBusyError:
+            raise HTTPException(
+                status_code=409,
+                detail="cannot export while a turn is active",
+            ) from None
+        except ExportTooLargeError:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "conversation export exceeds the 32 MiB safety limit"
+                ),
+            ) from None
+        return JSONResponse(
+            payload,
+            headers={
+                "Content-Disposition": (
+                    'attachment; filename="codinal-export-v1.json"'
+                ),
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.get("/v1/sessions/{session_id}/messages")
     async def session_messages(

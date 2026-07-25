@@ -41,6 +41,7 @@ acceptance evidence is recorded from the real product surface.
 | OS shell sandbox | Implemented on macOS | sandbox negative tests and notarization spike |
 | Isolated session worktrees | Implemented | Git lifecycle E2E and Apply conflict tests |
 | Sessions/history/model swap | Implemented baseline | SQLite/session route/UI tests |
+| Durable migrations/recovery/export | Implemented and verified | v0/v1 matrix, restore-from-backup startup E2E, authenticated export v1 with 32 MiB stored-data safety bound |
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
 | MCP | Secure connect/runtime tools implemented; lifecycle UI/governance missing | MCP contract/service tests |
@@ -92,7 +93,7 @@ Acceptance evidence:
 
 ### P0 — Reliability, safety, and operability floor
 
-- [ ] Add versioned durable-state migrations, backup, corruption recovery, and
+- [x] Add versioned durable-state migrations, backup, corruption recovery, and
   backward-compatible export before expanding the conversation schema.
 - [ ] Restore interrupted sessions after app/runtime crash without replaying a
   completed tool call or losing an awaiting approval.
@@ -216,8 +217,8 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Establish durable-state migrations, then implement automatic checkpoints
-   before adding more autonomous execution.
+1. Implement automatic per-turn checkpoints before adding more autonomous
+   execution.
 2. Complete plan/question/directory prompts, because their engine contracts
    already exist and they unblock safe plan-to-build.
 3. Build searchable/forkable sessions and explicit context/file-tree surfaces.

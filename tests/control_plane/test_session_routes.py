@@ -6,6 +6,8 @@ from runtime.control_plane import create_control_plane_app
 from runtime.events import EventHub
 from runtime.oauth import OAuthCoordinator
 from runtime.secrets import ProviderSecretService
+from runtime.storage import ExportTooLargeError
+from runtime.turns import ExportBusyError
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
@@ -27,6 +29,11 @@ class FakeTurns:
     def is_active(self, session_id):
         return session_id in self.active
 
+    async def export_when_idle(self, exporter):
+        if self.active:
+            raise ExportBusyError("active turn")
+        return exporter()
+
 
 class FakeSessions:
     def __init__(self):
@@ -34,6 +41,7 @@ class FakeSessions:
         self.flags = []
         self.models = []
         self.deleted = []
+        self.export_too_large = False
 
     def list_sessions(self, *, workspace=None):
         return [
@@ -66,6 +74,21 @@ class FakeSessions:
         self.deleted.append(session_id)
         return {"ok": True, "session_id": session_id}
 
+    def export(self):
+        if self.export_too_large:
+            raise ExportTooLargeError("too large")
+        return {
+            "export_version": 1,
+            "sessions": [
+                {
+                    "session_id": "session-1",
+                    "messages": [
+                        {"role": "user", "content": "preserved"}
+                    ],
+                }
+            ],
+        }
+
 
 def make_client():
     turns = FakeTurns()
@@ -86,6 +109,37 @@ def make_client():
         sessions,
         turns,
     )
+
+
+def test_versioned_export_is_authenticated_and_consistent():
+    client, sessions, turns = make_client()
+
+    unauthorized = client.get("/v1/data/export")
+    response = client.get("/v1/data/export", headers=AUTH)
+
+    assert unauthorized.status_code == 401
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="codinal-export-v1.json"'
+    )
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == sessions.export()
+
+    turns.active.add("session-1")
+    busy = client.get("/v1/data/export", headers=AUTH)
+    assert busy.status_code == 409
+    assert busy.json() == {
+        "detail": "cannot export while a turn is active"
+    }
+
+    turns.active.clear()
+    sessions.export_too_large = True
+    too_large = client.get("/v1/data/export", headers=AUTH)
+    assert too_large.status_code == 413
+    assert too_large.json() == {
+        "detail": "conversation export exceeds the 32 MiB safety limit"
+    }
 
 
 def test_session_routes_list_messages_and_roots():

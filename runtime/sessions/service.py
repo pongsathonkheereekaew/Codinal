@@ -63,6 +63,8 @@ class SessionStore(Protocol):
 
     def list(self, *, workspace: Optional[str] = None) -> list[SessionRecord]: ...
 
+    def export_records(self) -> list[SessionRecord]: ...
+
     def rename(self, session_id: str, title: str) -> bool: ...
 
     def set_flags(
@@ -249,6 +251,36 @@ class SessionService:
             for record in self._store.list(workspace=workspace)
             if not record.session_id.startswith("__")
         ]
+
+    def export(self) -> dict[str, Any]:
+        """Return the stable v1 conversation export."""
+        sessions = []
+        for record in self._store.export_records():
+            if record.session_id.startswith("__"):
+                continue
+            sessions.append(
+                {
+                    "session_id": record.session_id,
+                    "workspace": record.workspace,
+                    "source_workspace": record.source_workspace,
+                    "model": record.model,
+                    "mode": record.mode,
+                    "messages": list(record.messages),
+                    "title": record.title,
+                    "agent": record.agent,
+                    "updated_at": record.updated_at,
+                    "extra_roots": list(record.extra_roots),
+                    "grants": dict(record.grants),
+                    "pinned": record.pinned,
+                    "archived": record.archived,
+                    "origin": record.origin,
+                    "origin_label": record.origin_label,
+                }
+            )
+        return {
+            "export_version": 1,
+            "sessions": sessions,
+        }
 
     def rename(self, session_id: str, title: str) -> dict[str, Any]:
         if session_id.startswith("__"):

@@ -9,6 +9,7 @@ from runtime.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from runtime.tools import ToolRegistry
 from runtime.turn_engine import TurnEngine
 from runtime.turns import (
+    ExportBusyError,
     SessionBusyError,
     SessionNotFoundError,
     TurnCoordinator,
@@ -171,6 +172,76 @@ def test_workspace_preparation_is_nonblocking_and_counts_as_active():
         return event_loop_advanced
 
     assert asyncio.run(scenario()) is True
+
+
+def test_export_excludes_new_turn_start_until_snapshot_finishes():
+    class ObservableSessions(FakeSessions):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.engine_requested = threading.Event()
+
+        def get_engine(self, session_id, *, workspace=None, agent="code"):
+            self.engine_requested.set()
+            return super().get_engine(
+                session_id,
+                workspace=workspace,
+                agent=agent,
+            )
+
+    async def scenario():
+        sessions = ObservableSessions(ScriptedEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        export_started = threading.Event()
+        release_export = threading.Event()
+
+        def export():
+            export_started.set()
+            release_export.wait(timeout=2)
+            return {"export_version": 1}
+
+        export_task = asyncio.create_task(turns.export_when_idle(export))
+        while not export_started.is_set():
+            await asyncio.sleep(0)
+        start_task = asyncio.create_task(
+            turns.start("session-1", user_input="after export")
+        )
+        await asyncio.sleep(0)
+        assert sessions.engine_requested.is_set() is False
+        release_export.set()
+        assert await export_task == {"export_version": 1}
+        await start_task
+        await turns.wait("session-1")
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.engine_requested.is_set() is True
+
+
+def test_export_refuses_while_turn_is_active():
+    class BlockingEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            await self.release.wait()
+            yield Event(EventType.TURN_END, {"status": "completed"})
+
+    async def scenario():
+        engine = BlockingEngine()
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="active")
+        with pytest.raises(ExportBusyError):
+            await turns.export_when_idle(lambda: {"export_version": 1})
+        engine.release.set()
+        await turns.wait("session-1")
+
+    asyncio.run(scenario())
 
 
 def test_unexpected_engine_error_is_value_sanitized_and_persisted():

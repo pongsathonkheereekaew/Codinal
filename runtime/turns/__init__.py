@@ -1,6 +1,7 @@
 """Session-scoped turn execution coordination."""
 
 from .service import (
+    ExportBusyError,
     SessionBusyError,
     SessionNotFoundError,
     SessionWorkspaceError,
@@ -8,6 +9,7 @@ from .service import (
 )
 
 __all__ = [
+    "ExportBusyError",
     "SessionBusyError",
     "SessionNotFoundError",
     "SessionWorkspaceError",

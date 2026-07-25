@@ -1,7 +1,9 @@
 import base64
 import copy
 import io
+import json
 import platform
+import sqlite3
 import subprocess
 import sys
 import time
@@ -17,8 +19,12 @@ from runtime.control_plane import (
     websocket_auth_protocol,
 )
 from runtime.control_plane.server import ServerConfig, build_services
+from runtime.git import GitWorkspaceRecord, GitWorktreeStore, WorktreeState
 from runtime.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from runtime.policy import ApprovalOutcome, ToolCall
+from runtime.sessions import SessionRecord
+from runtime.settings import JsonPreferenceStore
+from runtime.storage import ConversationStore
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
@@ -80,6 +86,128 @@ def _blank_pdf_url():
         "data:application/pdf;base64,"
         + base64.b64encode(buffer.getvalue()).decode("ascii")
     )
+
+
+def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    corrupt = {
+        "codinal.db": b"corrupt conversations",
+        "git-worktrees.db": b"corrupt worktrees",
+        "prefs.json": b'{"corrupt preferences"',
+    }
+    for name, content in corrupt.items():
+        (data_dir / name).write_bytes(content)
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+
+    services = build_services(
+        config,
+        provider=AttachmentCaptureProvider(),
+    )
+
+    assert services.sessions.list_sessions() == []
+    assert services.git.load("unused-session") is None
+    assert services.settings.view()["model"] == "openai:gpt-test"
+    for name, content in corrupt.items():
+        preserved = list(
+            (data_dir / "recovery").glob(
+                f"{name}.corrupt-*.preserved"
+            )
+        )
+        assert len(preserved) == 1
+        assert preserved[0].read_bytes() == content
+    events = [
+        json.loads(line)
+        for line in (
+            data_dir / "recovery" / "events.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert {event["store"] for event in events} == set(corrupt)
+    assert all(event["action"] == "preserved_corrupt_state" for event in events)
+    with sqlite3.connect(data_dir / "codinal.db") as conversations:
+        assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 2
+    with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
+        assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 1
+
+
+def test_production_startup_restores_latest_good_backups(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    conversations = ConversationStore(data_dir)
+    conversations.save(
+        SessionRecord(
+            session_id="restored-session",
+            workspace="/workspace",
+            model="openai:gpt-restored",
+            mode="interactive",
+            messages=[{"role": "user", "content": "restore history"}],
+        )
+    )
+    conversations.close()
+    with sqlite3.connect(data_dir / "codinal.db") as connection:
+        connection.execute("PRAGMA user_version = 1")
+    ConversationStore(data_dir).close()
+
+    git_store = GitWorktreeStore(data_dir)
+    git_store.save(
+        GitWorkspaceRecord(
+            session_id="restored-session",
+            source_root=Path("/workspace"),
+            git_common_dir=Path("/workspace/.git"),
+            source_branch="main",
+            base_commit="a" * 40,
+            worktree_path=Path("/worktree"),
+            session_branch="codinal/restored",
+            source_dirty=False,
+            state=WorktreeState.ACTIVE,
+        )
+    )
+    git_store.close()
+    with sqlite3.connect(data_dir / "git-worktrees.db") as connection:
+        connection.execute("PRAGMA user_version = 0")
+    GitWorktreeStore(data_dir).close()
+
+    preferences_path = data_dir / "prefs.json"
+    preferences_path.write_text(
+        json.dumps({"default_model": "anthropic:restored"}),
+        encoding="utf-8",
+    )
+    JsonPreferenceStore(preferences_path).load()
+    for name in ("codinal.db", "git-worktrees.db", "prefs.json"):
+        (data_dir / name).write_bytes(f"corrupt {name}".encode())
+
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:fallback",
+        ),
+        provider=AttachmentCaptureProvider(),
+    )
+
+    assert services.sessions.messages("restored-session") == [
+        {"role": "user", "content": "restore history"}
+    ]
+    assert services.git.load("restored-session").base_commit == "a" * 40
+    assert services.settings.view()["model"] == "anthropic:restored"
+    events = [
+        json.loads(line)
+        for line in (
+            data_dir / "recovery" / "events.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert sum(
+        event["action"] == "restored_from_backup"
+        for event in events
+    ) == 3
 
 
 def test_production_attachments_survive_restart_and_model_switch(tmp_path):
@@ -145,10 +273,12 @@ def test_production_attachments_survive_restart_and_model_switch(tmp_path):
             event = socket.receive_json()
             while event["type"] != "turn_end":
                 event = socket.receive_json()
+        export_response = client.get("/v1/data/export", headers=AUTH)
 
     assert first.status_code == 202
     assert switched.status_code == 200
     assert second.status_code == 202
+    assert export_response.status_code == 200
     first_user = next(
         message
         for message in provider.calls[0]["messages"]
@@ -173,6 +303,37 @@ def test_production_attachments_survive_restart_and_model_switch(tmp_path):
         if message["role"] == "user"
         and isinstance(message["content"], list)
     ) == canonical
+    exported = export_response.json()
+    assert exported["export_version"] == 1
+    exported_session = next(
+        session
+        for session in exported["sessions"]
+        if session["session_id"] == "attachment-session"
+    )
+    assert set(exported_session) == {
+        "session_id",
+        "workspace",
+        "source_workspace",
+        "model",
+        "mode",
+        "messages",
+        "title",
+        "agent",
+        "updated_at",
+        "extra_roots",
+        "grants",
+        "pinned",
+        "archived",
+        "origin",
+        "origin_label",
+    }
+    assert next(
+        message["content"]
+        for message in exported_session["messages"]
+        if message["role"] == "user"
+        and isinstance(message["content"], list)
+    ) == canonical
+    assert TOKEN not in json.dumps(exported)
     restarted = build_services(
         config,
         provider=AttachmentCaptureProvider(),

@@ -2,29 +2,64 @@
 
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Optional
 
+from runtime.storage.migrations import (
+    create_private_file,
+    prepare_sqlite_database,
+    run_sqlite_migrations,
+    secure_directory,
+    secure_file,
+)
+
 from .models import GitWorkspaceRecord, WorktreeState
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+_SCHEMA_VERSION = 1
+
+
+def _migrate_to_v1(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS git_worktrees (
+            session_id TEXT PRIMARY KEY,
+            source_root TEXT NOT NULL,
+            git_common_dir TEXT NOT NULL,
+            source_branch TEXT NOT NULL,
+            base_commit TEXT NOT NULL,
+            worktree_path TEXT NOT NULL UNIQUE,
+            session_branch TEXT NOT NULL,
+            source_dirty INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT ({_NOW}),
+            updated_at TEXT NOT NULL DEFAULT ({_NOW})
+        )
+        """
+    )
+
+
+_MIGRATIONS = {1: _migrate_to_v1}
 
 
 class GitWorktreeStore:
     def __init__(self, base_dir: str | Path) -> None:
         self.base = Path(base_dir).expanduser().resolve()
-        self.base.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            os.chmod(self.base, 0o700)
-        except OSError:
-            pass
+        secure_directory(self.base)
         self.db_path = self.base / "git-worktrees.db"
         self._lock = threading.RLock()
+        previous_version = prepare_sqlite_database(
+            self.db_path,
+            _SCHEMA_VERSION,
+            "Git worktree",
+        )
+        if not self.db_path.exists():
+            create_private_file(self.db_path)
+        secure_file(self.db_path)
         self._connection = sqlite3.connect(
             self.db_path,
             check_same_thread=False,
@@ -32,28 +67,15 @@ class GitWorktreeStore:
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode = DELETE")
         self._connection.execute("PRAGMA synchronous = FULL")
-        self._connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS git_worktrees (
-                session_id TEXT PRIMARY KEY,
-                source_root TEXT NOT NULL,
-                git_common_dir TEXT NOT NULL,
-                source_branch TEXT NOT NULL,
-                base_commit TEXT NOT NULL,
-                worktree_path TEXT NOT NULL UNIQUE,
-                session_branch TEXT NOT NULL,
-                source_dirty INTEGER NOT NULL,
-                state TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT ({_NOW}),
-                updated_at TEXT NOT NULL DEFAULT ({_NOW})
-            )
-            """
+        run_sqlite_migrations(
+            self._connection,
+            previous_version,
+            _SCHEMA_VERSION,
+            _MIGRATIONS,
         )
-        self._connection.commit()
-        try:
-            os.chmod(self.db_path, 0o600)
-        except OSError:
-            pass
+        if previous_version < _SCHEMA_VERSION:
+            self._connection.execute("PRAGMA optimize")
+        secure_file(self.db_path)
 
     def close(self) -> None:
         with self._lock:

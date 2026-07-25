@@ -1,10 +1,21 @@
+import json
+import os
 import sqlite3
 import stat
+from pathlib import Path
 
 import pytest
 
 from runtime.sessions import SessionRecord
-from runtime.storage import ConversationStore
+from runtime.storage import (
+    ConversationStore,
+    ExportTooLargeError,
+    UnsupportedSchemaVersionError,
+)
+from runtime.storage.migrations import (
+    restore_latest_backup,
+    run_sqlite_migrations,
+)
 
 
 def record(session_id="session-1", **changes):
@@ -183,6 +194,45 @@ def test_store_directory_and_database_are_owner_only(tmp_path):
     assert stat.S_IMODE(store.db_path.stat().st_mode) == 0o600
 
 
+def test_sqlite_migration_requires_chain_through_declared_target(tmp_path):
+    connection = sqlite3.connect(tmp_path / "chain.db")
+
+    with pytest.raises(RuntimeError, match="version gap"):
+        run_sqlite_migrations(
+            connection,
+            current_version=0,
+            target_version=2,
+            migrations={1: lambda database: database.execute("SELECT 1")},
+        )
+
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
+    connection.close()
+
+
+def test_restore_uses_newest_timestamp_across_schema_versions(tmp_path):
+    target = tmp_path / "codinal.db"
+    target.write_text("corrupt", encoding="utf-8")
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    older = backup_dir / (
+        "codinal.db.pre-v1-to-v2-20260101T000000000000Z.bak"
+    )
+    newer = backup_dir / (
+        "codinal.db.pre-v0-to-v2-20260102T000000000000Z.bak"
+    )
+    older.write_text("older", encoding="utf-8")
+    newer.write_text("newer", encoding="utf-8")
+
+    restored = restore_latest_backup(
+        target,
+        lambda candidate: candidate.read_text(encoding="utf-8")
+        in {"older", "newer"},
+    )
+
+    assert restored == newer
+    assert target.read_text(encoding="utf-8") == "newer"
+
+
 def test_existing_phase_2_database_migrates_source_workspace_column(
     tmp_path,
 ):
@@ -220,3 +270,243 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
     assert store.load("session-1").source_workspace == (
         "/Users/example/project"
     )
+    with sqlite3.connect(store.db_path) as migrated:
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 2
+    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v2-*.bak"))
+    assert len(backups) == 1
+    assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o700
+    assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
+    with sqlite3.connect(backups[0]) as backup:
+        columns = {
+            row[1]
+            for row in backup.execute("PRAGMA table_info(sessions)")
+        }
+    assert "source_workspace" not in columns
+
+
+def test_v1_conversation_schema_migrates_to_v2_without_losing_data(tmp_path):
+    database = tmp_path / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                workspace TEXT NOT NULL,
+                model TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                title TEXT,
+                agent TEXT NOT NULL DEFAULT 'code',
+                extra_roots TEXT NOT NULL DEFAULT '[]',
+                grants TEXT NOT NULL DEFAULT '{}',
+                pinned INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                origin TEXT,
+                origin_label TEXT,
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE messages (
+                session_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (session_id, sequence)
+            );
+            CREATE TABLE workspaces (
+                path TEXT PRIMARY KEY,
+                last_used TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO sessions (
+                session_id, workspace, model, mode, title, agent
+            ) VALUES (
+                'retained-v1', '/workspace', 'openai:gpt-test',
+                'interactive', 'Retained session', 'code'
+            );
+            INSERT INTO messages VALUES (
+                'retained-v1', 0,
+                '{"role":"user","content":"preserve this"}'
+            );
+            PRAGMA user_version = 1;
+            """
+        )
+
+    store = ConversationStore(tmp_path)
+    restored = store.load("retained-v1")
+
+    assert restored is not None
+    assert restored.messages == [
+        {"role": "user", "content": "preserve this"}
+    ]
+    assert restored.source_workspace is None
+    with sqlite3.connect(database) as migrated:
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert len(
+        list(
+            (tmp_path / "backups").glob(
+                "codinal.db.pre-v1-to-v2-*.bak"
+            )
+        )
+    ) == 1
+
+
+def test_corrupt_database_is_preserved_before_empty_recovery(tmp_path):
+    corrupt = b"not a sqlite database\x00private conversation bytes"
+    database = tmp_path / "codinal.db"
+    database.write_bytes(corrupt)
+
+    store = ConversationStore(tmp_path)
+
+    assert store.list() == []
+    preserved = list(
+        (tmp_path / "recovery").glob("codinal.db.corrupt-*.preserved")
+    )
+    assert len(preserved) == 1
+    assert preserved[0].read_bytes() == corrupt
+    assert stat.S_IMODE((tmp_path / "recovery").stat().st_mode) == 0o700
+    assert stat.S_IMODE(preserved[0].stat().st_mode) == 0o600
+    assert stat.S_IMODE(
+        (tmp_path / "recovery" / "events.jsonl").stat().st_mode
+    ) == 0o600
+    assert database.read_bytes() != corrupt
+    with sqlite3.connect(database) as recovered:
+        assert recovered.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_corrupt_database_restores_latest_valid_backup(tmp_path):
+    first = ConversationStore(tmp_path)
+    first.save(
+        record(
+            session_id="recover-me",
+            messages=[{"role": "user", "content": "durable history"}],
+        )
+    )
+    first.close()
+    with sqlite3.connect(tmp_path / "codinal.db") as connection:
+        connection.execute("PRAGMA user_version = 1")
+    migrated = ConversationStore(tmp_path)
+    migrated.close()
+    database = tmp_path / "codinal.db"
+    corrupt = b"corrupt active database"
+    database.write_bytes(corrupt)
+
+    recovered = ConversationStore(tmp_path)
+
+    assert recovered.load("recover-me").messages == [
+        {"role": "user", "content": "durable history"}
+    ]
+    preserved = list(
+        (tmp_path / "recovery").glob(
+            "codinal.db.corrupt-*.preserved"
+        )
+    )
+    assert len(preserved) == 1
+    assert preserved[0].read_bytes() == corrupt
+    events = [
+        json.loads(line)
+        for line in (
+            tmp_path / "recovery" / "events.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["action"] for event in events] == [
+        "preserved_corrupt_state",
+        "restored_from_backup",
+    ]
+
+
+def test_newer_database_schema_is_refused_without_modification(tmp_path):
+    database = tmp_path / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE future_data (value TEXT)")
+        connection.execute("INSERT INTO future_data VALUES ('preserve me')")
+        connection.execute("PRAGMA user_version = 99")
+    original = database.read_bytes()
+
+    with pytest.raises(UnsupportedSchemaVersionError):
+        ConversationStore(tmp_path)
+
+    assert database.read_bytes() == original
+    assert not (tmp_path / "backups").exists()
+    assert not (tmp_path / "recovery").exists()
+
+
+def test_negative_database_schema_is_refused_without_modification(tmp_path):
+    database = tmp_path / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE retained (value TEXT)")
+        connection.execute("INSERT INTO retained VALUES ('preserve me')")
+        connection.execute("PRAGMA user_version = -1")
+    original = database.read_bytes()
+
+    with pytest.raises(UnsupportedSchemaVersionError):
+        ConversationStore(tmp_path)
+
+    assert database.read_bytes() == original
+    assert not (tmp_path / "backups").exists()
+    assert not (tmp_path / "recovery").exists()
+
+
+def test_export_refuses_records_above_safe_stored_size(
+    tmp_path,
+    monkeypatch,
+):
+    store = ConversationStore(tmp_path)
+    store.save(
+        record(
+            messages=[
+                {"role": "user", "content": "bounded export payload"}
+            ]
+        )
+    )
+    monkeypatch.setattr(
+        "runtime.storage.conversations.MAX_EXPORT_STORED_BYTES",
+        8,
+    )
+
+    with pytest.raises(ExportTooLargeError):
+        store.export_records()
+
+
+def test_locked_database_is_never_misclassified_as_corrupt(tmp_path):
+    database = tmp_path / "codinal.db"
+    store = ConversationStore(tmp_path)
+    store.close()
+    original = database.read_bytes()
+    locker = sqlite3.connect(database)
+    locker.execute("BEGIN EXCLUSIVE")
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            ConversationStore(tmp_path)
+    finally:
+        locker.rollback()
+        locker.close()
+
+    assert database.read_bytes() == original
+    assert not (tmp_path / "recovery").exists()
+
+
+def test_migration_fails_closed_when_backup_permissions_cannot_be_secured(
+    tmp_path,
+    monkeypatch,
+):
+    database = tmp_path / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE retained (value TEXT)")
+        connection.execute("INSERT INTO retained VALUES ('private')")
+        connection.execute("PRAGMA user_version = 1")
+    original = database.read_bytes()
+    real_chmod = os.chmod
+
+    def deny_backup_chmod(path, mode):
+        if Path(path).name == "backups":
+            raise PermissionError("simulated permission failure")
+        real_chmod(path, mode)
+
+    monkeypatch.setattr(
+        "runtime.storage.migrations.os.chmod",
+        deny_backup_chmod,
+    )
+
+    with pytest.raises(PermissionError, match="simulated"):
+        ConversationStore(tmp_path)
+
+    assert database.read_bytes() == original
+    assert not list((tmp_path / "backups").glob("*.bak"))
