@@ -108,7 +108,7 @@ harness-flow/                       ← product repo "Codinal"
   provenance header. **Progress:** provider-neutral contract + conformance
   bridge, OpenAI, Anthropic และ Gemini adapters เสร็จแล้ว; tool calls ถูก revalidate
   ผ่าน policy parser และ keys อ่านจาก native-backed memory store เท่านั้น.
-  secure router และ TurnEngine ยัง pending.
+  secure router + loopback-only Ollama เสร็จแล้ว; TurnEngine ยัง pending.
 - 2.2 vendor MCP transport + conversation storage
 - 2.3 tool registry: manifest ใน `harness/policy`, impl ใน `runtime/tools`
 - 2.4 wire runtime → control plane (subscribe model; ห้าม direct exec)

@@ -79,6 +79,24 @@ def test_provider_secret_service_delete_is_idempotent() -> None:
         "provider": "gemini",
         "configured": False,
     }
+
+
+def test_secret_change_listener_failure_rolls_back_without_echoing_key() -> None:
+    marker = "new-key-must-not-echo"
+    service = ProviderSecretService()
+    service.set_api_key("openai", "old-key")
+
+    def reject(_provider):
+        raise RuntimeError(marker)
+
+    service.subscribe(reject)
+
+    with pytest.raises(RuntimeError) as caught:
+        service.set_api_key("openai", marker)
+
+    assert str(caught.value) == "provider secret change rejected"
+    assert marker not in str(caught.value)
+    assert service.get("provider:openai") == {"api_key": "old-key"}
     assert service.delete_api_key("gemini") == {
         "provider": "gemini",
         "configured": False,

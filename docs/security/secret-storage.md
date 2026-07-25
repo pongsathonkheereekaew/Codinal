@@ -33,6 +33,12 @@ control-plane bearer and the native-only secret-sync header. If runtime
 synchronization fails, the host restores the previous Keychain value (or
 removes the newly created item) and reports a value-free error.
 
+The in-memory store notifies the provider router after a successful mutation,
+which discards only the affected cached SDK client. Listener notification is
+transactional: if invalidation fails, the runtime restores its previous
+in-memory value and returns a value-free failure so the native host can roll
+back Keychain too.
+
 Raw secret reads are not exposed as a Tauri command or control-plane endpoint.
 Provider adapters receive the in-memory store through runtime composition and
 resolve only the profile they need.

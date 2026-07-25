@@ -20,7 +20,8 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 - `providers/` — Phase 2 provider contract and conformance bridge; normalized
   assistant tool calls are revalidated by the runtime policy parser before use;
   vendored OpenAI, Anthropic, and Gemini adapters resolve keys only from the
-  native-backed memory store (secure router remains pending)
+  native-backed memory store; the fail-closed router supports those providers
+  plus loopback-only Ollama and invalidates cached SDK clients on key changes
 - `mcp/` — vendored transport
 - `tools/` — tool implementations (manifest lives in `harness/policy`)
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes

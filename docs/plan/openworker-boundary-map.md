@@ -130,6 +130,12 @@ Function-call/thought-signature normalization เดิมถูก revalidate �
 contract; Codinal ลบทั้ง `GEMINI_API_KEY` และ `GOOGLE_API_KEY` env fallback
 และ resolve key จาก memory-only service เท่านั้น.
 
+**Phase 2.1 router progress (2026-07-26):** replace upstream registry breadth
+ด้วย fail-closed router สำหรับ OpenAI/Anthropic/Gemini และ loopback-only Ollama.
+Unknown/ambiguous provider ids ถูก reject; Ollama URL ต้องเป็น HTTP loopback
+exact `/v1` และ client ไม่ได้รับ cloud secret store. Secret hot update
+transactionally invalidate cached SDK client ของ provider ที่เปลี่ยน.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

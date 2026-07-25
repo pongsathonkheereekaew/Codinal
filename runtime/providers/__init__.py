@@ -12,6 +12,7 @@ from .base import (
 from .conformance import ProviderConformanceAdapter
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider, resolve_api_key
+from .router import ProviderRouter
 
 __all__ = [
     "AssistantTurn",
@@ -21,6 +22,7 @@ __all__ = [
     "OpenAIProvider",
     "ProviderClient",
     "ProviderConformanceAdapter",
+    "ProviderRouter",
     "StreamChunk",
     "ToolCall",
     "resolve_api_key",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
 
 SUPPORTED_PROVIDERS = ("anthropic", "gemini", "openai")
 MAX_BOOTSTRAP_BYTES = 256 * 1024
@@ -23,6 +23,7 @@ class ProviderSecretService:
     ) -> None:
         self._lock = threading.RLock()
         self._profiles: dict[str, dict[str, str]] = {}
+        self._listeners: list[Callable[[str], None]] = []
         self._sync_token = self._validate_sync_token(sync_token)
         for profile, data in (profiles or {}).items():
             if (
@@ -50,6 +51,12 @@ class ProviderSecretService:
             and secrets.compare_digest(candidate, self._sync_token)
         )
 
+    def subscribe(self, listener: Callable[[str], None]) -> None:
+        if not callable(listener):
+            raise ValueError("secret listener must be callable")
+        with self._lock:
+            self._listeners.append(listener)
+
     def status(self) -> list[dict[str, Any]]:
         with self._lock:
             configured = set(self._profiles)
@@ -71,16 +78,39 @@ class ProviderSecretService:
         if len(normalized_key.encode("utf-8")) > MAX_API_KEY_BYTES:
             raise ValueError("api_key is too large")
         with self._lock:
-            self._profiles[f"provider:{normalized_provider}"] = {
+            profile = f"provider:{normalized_provider}"
+            previous = self._profiles.get(profile)
+            self._profiles[profile] = {
                 "api_key": normalized_key
             }
+            try:
+                self._notify(normalized_provider)
+            except Exception:
+                if previous is None:
+                    self._profiles.pop(profile, None)
+                else:
+                    self._profiles[profile] = previous
+                raise RuntimeError("provider secret change rejected") from None
         return {"provider": normalized_provider, "configured": True}
 
     def delete_api_key(self, provider: str) -> dict[str, Any]:
         normalized_provider = self._validate_provider(provider)
         with self._lock:
-            self._profiles.pop(f"provider:{normalized_provider}", None)
+            profile = f"provider:{normalized_provider}"
+            previous = self._profiles.pop(profile, None)
+            if previous is not None:
+                try:
+                    self._notify(normalized_provider)
+                except Exception:
+                    self._profiles[profile] = previous
+                    raise RuntimeError(
+                        "provider secret change rejected"
+                    ) from None
         return {"provider": normalized_provider, "configured": False}
+
+    def _notify(self, provider: str) -> None:
+        for listener in tuple(self._listeners):
+            listener(provider)
 
     @staticmethod
     def _validate_provider(provider: str) -> str:

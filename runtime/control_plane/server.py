@@ -59,8 +59,8 @@ def load_server_config() -> ServerConfig:
         )
     ).expanduser()
     default_model = (
-        os.environ.get("CODINAL_DEFAULT_MODEL", "openai/gpt-5").strip()
-        or "openai/gpt-5"
+        os.environ.get("CODINAL_DEFAULT_MODEL", "openai:gpt-5").strip()
+        or "openai:gpt-5"
     )
     return ServerConfig(
         token=token,
