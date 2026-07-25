@@ -185,6 +185,14 @@ interrupt ฆ่าทั้ง process group. Read scope จำกัดที�
 system/toolchain paths. Negative tests พิสูจน์ parent/leaf symlink escape,
 outside read/write และ loopback network ถูก block.
 
+**Phase 3.2 isolated Git backend (2026-07-26):** rewrite ใหม่ใน `runtime/git`
+(ไม่ vendor OpenWorker). Service probe repository แบบ argv-only/bounded,
+บันทึก source branch/base commit + deterministic session branch/worktree ใน
+owner-only transactional SQLite แล้วสร้าง worktree ผ่าน Seatbelt ที่เขียนได้
+เฉพาะ private worktree base และ Git common metadata. Source working tree
+เป็น read-only, dirty/untracked files จึงคงเดิม; checkout hooks ถูก disable
+และ restart ต้อง validate branch/repository binding ก่อน reuse.
+
 **Phase 2.2 MCP transport (2026-07-26):** adapt `coworker/mcp/{client,config,
 tools}.py` บน official `mcp==1.28.1` ที่ pin/hash-lock. ตัด env/`.env` secret
 resolution และ OAuth store ของ upstream ออก; connect ต้องรับ explicit host

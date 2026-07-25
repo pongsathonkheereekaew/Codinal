@@ -9,27 +9,26 @@ import subprocess
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Mapping, Optional
+from typing import BinaryIO, Iterable, Mapping, Optional
 
 from runtime.policy.permissions import parse_command_argv
 
 _DEFAULT_SANDBOX_EXECUTABLE = Path("/usr/bin/sandbox-exec")
 _DEFAULT_TIMEOUT_SECONDS = 120.0
 _DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
-_PROFILE = """
+_MAX_DECLARED_ROOTS = 32
+_PROFILE_PREFIX = """
 (version 1)
 (deny default)
 (import "system.sb")
 (allow process*)
 (allow file-read-metadata file-test-existence
-    (path-ancestors (param "WORKSPACE"))
-    (path-ancestors (param "SESSION_TMP"))
+    {read_ancestors}
     (path-ancestors "/Applications/Xcode.app")
     (path-ancestors "/opt/homebrew")
     (path-ancestors "/System/Volumes/Data/opt/homebrew"))
 (allow file-read*
-    (subpath (param "WORKSPACE"))
-    (subpath (param "SESSION_TMP"))
+    {read_roots}
     (subpath "/Applications/Xcode.app")
     (subpath "/Library/Apple")
     (subpath "/Library/Developer")
@@ -44,7 +43,7 @@ _PROFILE = """
     (subpath "/sbin")
     (subpath "/usr"))
 (allow file-map-executable
-    (subpath (param "WORKSPACE"))
+    {read_roots}
     (subpath "/Applications/Xcode.app")
     (subpath "/Library/Apple")
     (subpath "/Library/Developer")
@@ -55,12 +54,31 @@ _PROFILE = """
     (subpath "/usr"))
 (allow sysctl-read)
 (allow file-write*
-    (subpath (param "WORKSPACE"))
-    (subpath (param "SESSION_TMP"))
+    {write_roots}
     (literal "/dev/null"))
 (deny network*)
-""".strip()
+"""
 _SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM")
+
+
+def _sandbox_profile(read_count: int, write_count: int) -> str:
+    read_roots = "\n    ".join(
+        f'(subpath (param "READ_ROOT_{index}"))'
+        for index in range(read_count)
+    )
+    read_ancestors = "\n    ".join(
+        f'(path-ancestors (param "READ_ROOT_{index}"))'
+        for index in range(read_count)
+    )
+    write_roots = "\n    ".join(
+        f'(subpath (param "WRITE_ROOT_{index}"))'
+        for index in range(write_count)
+    )
+    return _PROFILE_PREFIX.format(
+        read_roots=read_roots,
+        read_ancestors=read_ancestors,
+        write_roots=write_roots,
+    ).strip()
 
 
 class InvalidCommandError(ValueError):
@@ -130,6 +148,9 @@ class SandboxedShell:
         max_output_bytes: int = _DEFAULT_MAX_OUTPUT_BYTES,
         sandbox_executable: str | Path = _DEFAULT_SANDBOX_EXECUTABLE,
         environment: Optional[Mapping[str, str]] = None,
+        workspace_writable: bool = True,
+        additional_read_roots: Iterable[str | Path] = (),
+        additional_write_roots: Iterable[str | Path] = (),
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.temp_dir = Path(temp_dir).expanduser().resolve()
@@ -143,6 +164,29 @@ class SandboxedShell:
             raise ValueError("output limit must be positive")
         self.temp_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.temp_dir, 0o700)
+        extra_reads = _existing_roots(
+            additional_read_roots,
+            label="read root",
+        )
+        extra_writes = _existing_roots(
+            additional_write_roots,
+            label="write root",
+        )
+        self.read_roots = _deduplicate_paths(
+            [self.workspace, self.temp_dir, *extra_reads, *extra_writes]
+        )
+        self.write_roots = _deduplicate_paths(
+            [
+                self.temp_dir,
+                *([self.workspace] if workspace_writable else []),
+                *extra_writes,
+            ]
+        )
+        if (
+            len(self.read_roots) > _MAX_DECLARED_ROOTS
+            or len(self.write_roots) > _MAX_DECLARED_ROOTS
+        ):
+            raise ValueError("too many sandbox roots")
         self.timeout_seconds = float(timeout_seconds)
         self.max_output_bytes = int(max_output_bytes)
         self.sandbox_executable = Path(sandbox_executable).expanduser().resolve()
@@ -177,14 +221,19 @@ class SandboxedShell:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
 
+        definitions: list[str] = []
+        for index, root in enumerate(self.read_roots):
+            definitions.extend(["-D", f"READ_ROOT_{index}={root}"])
+        for index, root in enumerate(self.write_roots):
+            definitions.extend(["-D", f"WRITE_ROOT_{index}={root}"])
         argv = [
             str(self.sandbox_executable),
-            "-D",
-            f"WORKSPACE={self.workspace}",
-            "-D",
-            f"SESSION_TMP={self.temp_dir}",
+            *definitions,
             "-p",
-            _PROFILE,
+            _sandbox_profile(
+                len(self.read_roots),
+                len(self.write_roots),
+            ),
             *command_argv,
         ]
         with self._active_lock:
@@ -292,3 +341,30 @@ class SandboxedShell:
                 process.kill()
             except (ProcessLookupError, PermissionError):
                 return
+
+
+def _existing_roots(
+    values: Iterable[str | Path],
+    *,
+    label: str,
+) -> list[Path]:
+    roots: list[Path] = []
+    for value in values:
+        path = Path(value).expanduser().resolve()
+        if path == Path(path.anchor):
+            raise ValueError(f"{label} cannot be a filesystem root")
+        if not path.is_dir():
+            raise ValueError(f"{label} must be an existing directory")
+        roots.append(path)
+    return roots
+
+
+def _deduplicate_paths(paths: Iterable[Path]) -> list[Path]:
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique

@@ -145,7 +145,10 @@ transactional snapshot/restart. การประกาศ live Tier-1 ยั�
   `write_file`/`replace_in_file` กัน root/symlink/concurrent-edit escape.
   Notarization spike ผ่าน Gatekeeper แล้วใน Phase 0a.2 — ปิด P0 shell-prefix
   และ P1 no-sandbox
-- 3.2 `harness/git` worktree service: 1 session = 1 worktree = 1 branch
+- 3.2 🟡 `runtime/git` worktree service: backend + owner-only transactional
+  registry เสร็จแล้ว; 1 session = deterministic branch + private worktree,
+  source dirty state ไม่ถูกแตะ, checkout hooks ปิด และ resume validate binding.
+  Production session wiring + cleanup ยังดำเนินการ
 - 3.3 git status/diff/stage backend + **Apply-back endpoint (F4):** ผู้ใช้กด Apply → merge session branch เข้า working branch (default = branch ที่ forked จาก: fast-forward ถ้าได้ มิฉะนั้น merge commit); optional "Open as PR" ผ่าน `gh`; ไม่ auto-push
 - 3.4 **Conflict = abort + flag (F9):** conflict ตอน Apply (merge session→working) → abort Apply, session branch + worktree intact; ห้าม auto-resolve
 

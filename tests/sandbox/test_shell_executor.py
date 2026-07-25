@@ -154,6 +154,34 @@ def test_seatbelt_denies_read_outside_declared_roots(
 
 
 @requires_seatbelt
+def test_seatbelt_supports_dedicated_read_and_write_roots(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    scratch = tmp_path / "scratch"
+    metadata = tmp_path / "git-metadata"
+    source.mkdir()
+    metadata.mkdir()
+    (source / "readable").write_text("source data", encoding="utf-8")
+    shell = SandboxedShell(
+        workspace=source,
+        temp_dir=scratch,
+        workspace_writable=False,
+        additional_write_roots=[metadata],
+    )
+
+    read = shell.run(f"/bin/cat {source / 'readable'}")
+    source_write = shell.run(f"/usr/bin/touch {source / 'blocked'}")
+    metadata_write = shell.run(f"/usr/bin/touch {metadata / 'allowed'}")
+
+    assert read.stdout == "source data"
+    assert source_write.exit_code != 0
+    assert not (source / "blocked").exists()
+    assert metadata_write.exit_code == 0
+    assert (metadata / "allowed").exists()
+
+
+@requires_seatbelt
 def test_seatbelt_can_run_workspace_git(shell: SandboxedShell) -> None:
     result = shell.run("git init")
 
@@ -218,4 +246,15 @@ def test_rejects_filesystem_root_as_temp_directory(
         SandboxedShell(
             workspace=workspace,
             temp_dir=Path(os.sep),
+        )
+
+
+def test_rejects_filesystem_root_as_additional_write_root(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError):
+        SandboxedShell(
+            workspace=tmp_path,
+            temp_dir=tmp_path / "scratch",
+            additional_write_roots=[Path(os.sep)],
         )

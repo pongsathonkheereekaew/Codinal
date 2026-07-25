@@ -46,6 +46,11 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   limits reads to those roots plus system/toolchain paths, denies network,
   strips inherited credential environment variables, caps output/time, and
   kills the process group on interrupt
+- `git/` — Phase 3.2 owner-only transactional worktree registry and sandboxed
+  lifecycle service. It binds one session to one deterministic `codinal/`
+  branch and private worktree, records the original branch/base commit, keeps
+  dirty source files untouched, disables checkout hooks, and validates the
+  binding on resume
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes
   harness-owned cases through injected adapters and reports Tier 1/Tier 2/
   incompatible without exposing raw provider responses
