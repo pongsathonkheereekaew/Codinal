@@ -1,0 +1,57 @@
+import os
+from pathlib import Path
+
+import pytest
+
+from runtime.control_plane.server import load_server_config
+
+
+TOKEN = "test-session-token-with-at-least-32-characters"
+
+
+def test_server_config_is_loopback_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CODINAL_SESSION_TOKEN", TOKEN)
+    monkeypatch.setenv("CODINAL_PORT", "43123")
+    monkeypatch.setenv("CODINAL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CODINAL_DEFAULT_MODEL", "test/provider-model")
+
+    config = load_server_config()
+
+    assert config.host == "127.0.0.1"
+    assert config.port == 43123
+    assert config.token == TOKEN
+    assert config.data_dir == tmp_path
+    assert config.default_model == "test/provider-model"
+    assert "CODINAL_SESSION_TOKEN" not in os.environ
+
+
+def test_server_config_requires_session_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CODINAL_SESSION_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="CODINAL_SESSION_TOKEN"):
+        load_server_config()
+
+
+def test_server_config_requires_host_selected_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CODINAL_SESSION_TOKEN", TOKEN)
+    monkeypatch.delenv("CODINAL_PORT", raising=False)
+
+    with pytest.raises(ValueError, match="CODINAL_PORT is required"):
+        load_server_config()
+
+
+@pytest.mark.parametrize("value", ["0", "65536", "not-a-port"])
+def test_server_config_rejects_invalid_port(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("CODINAL_SESSION_TOKEN", TOKEN)
+    monkeypatch.setenv("CODINAL_PORT", value)
+
+    with pytest.raises(ValueError, match="CODINAL_PORT"):
+        load_server_config()

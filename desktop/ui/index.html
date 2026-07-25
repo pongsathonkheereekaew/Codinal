@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codinal</title>
+    <style>
+      :root {
+        color: #e8e8ea;
+        background: #111216;
+        font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+      }
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+      }
+      main {
+        width: min(32rem, calc(100% - 3rem));
+      }
+      h1 {
+        margin-bottom: 0.25rem;
+        font-size: 2rem;
+      }
+      #status {
+        color: #a4a7af;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Codinal</h1>
+      <p id="status">Starting secure local runtime…</p>
+    </main>
+    <script src="./startup.js"></script>
+  </body>
+</html>

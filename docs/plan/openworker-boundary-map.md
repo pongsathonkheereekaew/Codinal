@@ -79,7 +79,14 @@ Core composition root อยู่ใน `runtime/composition.py`: ทุก eng
 `PermissionEngine`, injected/default-deny `Approver`, shared roots, session event sink
 และ live default-model settings จาก chokepoint เดียว. `automations` defer post-MVP
 ตาม ADR D9; active remainder คือ connectors gateway ที่จำกัด PR/issue และ
-control-plane integration.
+session/composition route wiring; authenticated transport เสร็จใน Phase 1.3.
+
+**Phase 1.3 progress (2026-07-26):** `server/app.py` ถูก rewrite เป็น
+`runtime.control_plane` โดย auth middleware ครอบ ASGI app ก่อน routing ทำให้ route
+ใหม่ในอนาคต deny-by-default ด้วย. HTTP ใช้ bearer header; WebSocket ใช้
+`Sec-WebSocket-Protocol` เพื่อไม่วาง token ใน URL. Tauri v2 host สร้าง random
+256-bit token ต่อ process, spawn sidecar บน random loopback port และ inject
+credentials เข้า WebView memory. OpenAPI/docs ถูกปิดและ WebView CSP เปิด.
 
 ### server/app.py — REJECT as unit (P0s ครบ)
 

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# harness-flow acceptance — Agent Harness only (no AgentMonitor suite)
+# Codinal product acceptance — harness, Python runtime, and macOS desktop shell
 # Codinal layout: harness content under harness/, product at root.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$ROOT/harness"
+PYTHON_BIN=python3
+if [ -x "$ROOT/.venv/bin/python" ]; then
+  PYTHON_BIN="$ROOT/.venv/bin/python"
+fi
 cd "$ROOT"
 
 echo "=== harness-flow verify ==="
@@ -50,7 +54,7 @@ test -x bootstrap.sh
 test -f "$HARNESS/adapters/CLAUDE.md"
 test -f "$HARNESS/adapters/claude-settings.defaults.json"
 test -f "$HARNESS/scripts/merge-claude-settings.py"
-python3 -c "import ast, pathlib; ast.parse(pathlib.Path('$HARNESS/scripts/merge-claude-settings.py').read_text())"
+"$PYTHON_BIN" -c "import ast, pathlib; ast.parse(pathlib.Path('$HARNESS/scripts/merge-claude-settings.py').read_text())"
 grep -q 'harness update' "$HARNESS/scripts/harness"
 echo "bootstrap assets: OK"
 
@@ -63,8 +67,8 @@ test -d "$HARNESS/scripts/adapters"
 test -f "$HARNESS/scripts/harness_host.py"
 test -f "$HARNESS/scripts/harness_skill.py"
 # manifest validates against its schema (pyyaml + jsonschema required)
-if python3 -c "import yaml, jsonschema" 2>/dev/null; then
-  HARNESS_PATH="$HARNESS" python3 - <<'PY'
+if "$PYTHON_BIN" -c "import yaml, jsonschema" 2>/dev/null; then
+  HARNESS_PATH="$HARNESS" "$PYTHON_BIN" - <<'PY'
 import json, pathlib, os, yaml, jsonschema
 root = pathlib.Path(os.environ["HARNESS_PATH"])
 m = yaml.safe_load((root/"config/hosts.yaml").read_text())
@@ -78,12 +82,22 @@ else
   echo "manifest: SKIP (pyyaml/jsonschema not installed; pip install -r requirements-dev.txt)"
 fi
 
-echo "== contract tests =="
-if python3 -c "import pytest, yaml, jsonschema" 2>/dev/null; then
-  python3 -m pytest tests/contracts/ -q
-  echo "contracts: OK"
+echo "== product tests =="
+if ! "$PYTHON_BIN" -c "import fastapi, httpx, pytest, uvicorn, yaml, jsonschema" 2>/dev/null; then
+  echo "FAIL: test dependencies missing; install requirements-dev.txt" >&2
+  exit 1
+fi
+"$PYTHON_BIN" -m pytest -q
+echo "product tests: OK"
+
+echo "== desktop shell (macOS) =="
+if [ "$(uname -s)" = "Darwin" ] && command -v cargo >/dev/null 2>&1; then
+  cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+  cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+  cargo test --manifest-path desktop/src-tauri/Cargo.toml
+  echo "desktop shell: OK"
 else
-  echo "contracts: SKIP (pip install -r requirements-dev.txt)"
+  echo "desktop shell: SKIP (macOS Rust gate runs in CI)"
 fi
 
 echo "== policy invariants =="
