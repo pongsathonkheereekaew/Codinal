@@ -142,6 +142,16 @@ Registry รับเฉพาะ explicit strict schema, ชื่อ function/
 declare อยู่ใน harness `ToolManifest`; arguments ถูก parse ด้วย policy contract
 ก่อน invoke. นี่เป็น dependency seam ก่อน vendor TurnEngine loop.
 
+**Phase 2.1 TurnEngine progress (2026-07-26):** vendor/adapt
+`coworker/engine.py` เป็น runtime-owned loop แล้ว. ทุก model-requested tool
+รวม interactive controls ต้องมี registry entry และผ่าน `PermissionEngine`
+ก่อนทำงาน; manifest risk เป็น SSOT จึงไม่ลด `git_stage`/`git_commit` เป็น read.
+Unknown tools fail closed, provider/tool exception details ไม่ถูกส่งเข้า event
+หรือ conversation history, และมี fresh tests สำหรับ approval, streaming,
+interrupt, max-iteration rail และ PDF adaptation. `coworker/pdf_support.py`
+ถูก adapt เป็น local-only fallback พร้อม pinned/hash-locked `pypdf` และ
+`pypdfium2`.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)

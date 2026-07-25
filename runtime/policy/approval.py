@@ -23,9 +23,11 @@ class ApprovalOutcome(str, Enum):
 class PermissionRequest:
     tool_name: str
     arguments: dict[str, Any]
-    risk: str               # RiskClass value
     reason: str             # why approval is needed
+    risk: str = ""          # RiskClass value
     command: str = ""       # set for EXEC risk (the command string)
+    metadata: Any = None
+    tool_call_id: str | None = None
 
 
 # Approver: takes a PermissionRequest, returns the user's decision.

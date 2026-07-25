@@ -22,7 +22,12 @@ from .permissions import (
     READ_ONLY_MODES,
     standing_rule_candidate,
 )
-from .approval import ApprovalOutcome, Approver, deny_all
+from .approval import (
+    ApprovalOutcome,
+    Approver,
+    PermissionRequest,
+    deny_all,
+)
 from .manifest import ToolManifest, ToolSpec
 from .tool_calls import (
     ToolCall,
@@ -41,6 +46,7 @@ __all__ = [
     "standing_rule_candidate",
     "ApprovalOutcome",
     "Approver",
+    "PermissionRequest",
     "deny_all",
     "ToolManifest",
     "ToolSpec",

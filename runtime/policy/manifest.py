@@ -59,12 +59,18 @@ class ToolManifest:
         spec = self.tools.get(name)
         if spec is None:
             return None
-        # cheap object with the attributes classify() / evaluate() read
-        return _Meta(spec.category, spec.requires_approval, spec.target_arg)
+        # Cheap object with the attributes classify() / evaluate() read.
+        return _Meta(
+            spec.risk,
+            spec.category,
+            spec.requires_approval,
+            spec.target_arg,
+        )
 
 
 @dataclass(frozen=True)
 class _Meta:
+    risk: RiskClass
     category: str
     requires_approval: bool
     target_arg: Optional[str]

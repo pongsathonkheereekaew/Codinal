@@ -11,8 +11,11 @@ Used at commit `54b4bfd82d75704a4079ecea4f8f622aa152dbde` (MIT).
 Copyright (c) 2024 Andrew Ng.
 
 Vendored / extracted (per `docs/plan/openworker-boundary-map.md`):
-- `coworker/engine.py` (TurnEngine) — vendored
+- `coworker/engine.py`, `coworker/pdf_support.py`, and
+  `coworker/providers/errors.py` — vendored and adapted
 - `coworker/sessions.py`, `coworker/providers/{base,router,anthropic,openai,gemini}_provider.py` — vendored
+- `coworker/permissions.py` and `coworker/risk.py` — adapted behind the
+  harness-owned policy manifest and approval port
 - `coworker/mcp/*` transport — vendored
 - `surfaces/gui/src/components/*` (React + Tauri v2 UI) — vendored (rewired at the seam: `api.ts`, `App.tsx` WS switch, `itemsFromMessages.ts`, `src-tauri/src/lib.rs`)
 - `sessions`, `events`, and non-secret `settings` slices extracted from
@@ -21,7 +24,6 @@ Vendored / extracted (per `docs/plan/openworker-boundary-map.md`):
 
 Rejected / rewritten from scratch (do not derive from OpenWorker):
 - `coworker/server/app.py` control plane (P0 security: unauthenticated routes, spoofable-Origin WS, `/oauth/callback` CSRF)
-- `coworker/permissions.py`, `coworker/risk.py` — replaced by harness risk-class policy
 
 Each vendored file carries a provenance header citing the OpenWorker commit and copyright.
 

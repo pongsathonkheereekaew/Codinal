@@ -1,8 +1,8 @@
 # Vendored from andrewyng/openworker@54b4bfd (coworker/risk.py)
 # MIT, Copyright (c) 2024 Andrew Ng. Faithful copy.
 """Risk classes for tools — the intrinsic side-effect category that drives
-permission gating. A tool's effective risk = optional override ?? base table
-?? aisuite metadata (requires_approval -> external) ?? read."""
+permission gating. Effective risk = optional override ?? manifest metadata ??
+built-in fallback table ?? requires_approval ?? read."""
 from __future__ import annotations
 
 from enum import Enum
@@ -34,6 +34,9 @@ def classify(
         ov = overrides(tool_name)
         if ov is not None:
             return ov
+    declared = getattr(metadata, "risk", None)
+    if isinstance(declared, RiskClass):
+        return declared
     base = _BASE.get(tool_name)
     if base is not None:
         return base

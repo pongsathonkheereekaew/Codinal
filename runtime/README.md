@@ -17,7 +17,11 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 - `oauth/` — Phase 1.5 bounded, expiring, one-time OAuth state registry and
   provider-handler coordinator; browser callbacks carry authorization codes,
   never provider access or refresh tokens
-- `turn_engine/` — vendored from `coworker/engine.py` (TurnEngine, zero server deps)
+- `turn_engine/` — Phase 2 policy-bound agent loop vendored from
+  `coworker/engine.py`; all model-requested tools require a manifest-bound
+  registry entry and a `PermissionEngine` decision before execution.
+  Provider/tool exceptions are value-sanitized, and PDF fallback runs locally
+  without mutating canonical conversation history
 - `providers/` — Phase 2 provider contract and conformance bridge; normalized
   assistant tool calls are revalidated by the runtime policy parser before use;
   vendored OpenAI, Anthropic, and Gemini adapters resolve keys only from the

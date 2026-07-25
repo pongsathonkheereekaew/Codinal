@@ -161,3 +161,10 @@ def test_manifest_metadata_drives_external_classification():
     meta = man.metadata_for("slack_post")
     assert meta is not None and meta.category == "connector"
     assert classify("slack_post", meta) is RiskClass.EXTERNAL
+
+
+def test_manifest_metadata_preserves_declared_risk():
+    man = ToolManifest()
+
+    assert classify("git_stage", man.metadata_for("git_stage")) is RiskClass.WRITE_LOCAL
+    assert classify("git_commit", man.metadata_for("git_commit")) is RiskClass.WRITE_LOCAL
