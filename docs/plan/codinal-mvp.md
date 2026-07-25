@@ -177,10 +177,22 @@ fmt/clippy/tests pass.
 **Gate:** E2E ใน §3 ผ่าน.
 
 ### Phase 5 — Distribution  (gate: signed .app เปิดได้ ไม่มี Gatekeeper warning)
-- 5.1 macOS signing + notarization ของทั้ง bundle — embedded Python (D8/F5) + `sandbox-exec` profile (Phase 3.1) codesign ครบ
-- 5.2 Tauri updater + update channel
-- 5.3 build pipeline CI (release artifact)
-- 5.4 smoke E2E บน clean macOS user
+- 5.1 🟡 macOS signing + notarization ของทั้ง bundle — Developer ID signing
+  และ nested Mach-O hardened runtime ผ่าน; production artifact ยังรอ
+  notarization credentials เพื่อ submit/staple/ประเมิน Gatekeeper
+- 5.2 🟡 Tauri updater + signed update channel contract (`.app.tar.gz`,
+  minisign signature, `latest.json`) ผ่าน; packaged download/install E2E
+  รอ channel จาก release แรก
+- 5.3 ✅ tag-gated GitHub Actions release pipeline (verify → sign →
+  notarize/staple → smoke → publish)
+- 5.4 🟡 packaged smoke E2E ผ่าน local macOS และตรวจ signature ซ้ำหลัง launch;
+  clean hosted-runner จะ unzip artifact, ใส่ quarantine, ตรวจ stapler/Gatekeeper
+  และ launch แต่ยังไม่เคยรันบน tag
+
+**Progress (2026-07-26):** signed app และ updater artifacts สร้างสำเร็จ,
+embedded control plane เปิดจริง, checksum ผ่าน และ signature ยังคง valid
+หลัง launch. Phase gate ยังไม่ผ่านจนกว่า workflow จะ notarize/staple artifact
+จริงและ clean-runner smoke สำเร็จ.
 
 **Gate:** .app signed/notarized เปิดบนเครื่องสะอาดผ่าน.
 

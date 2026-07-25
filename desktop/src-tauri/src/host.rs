@@ -87,12 +87,13 @@ impl SidecarLaunch {
     pub fn command(&self) -> Command {
         let mut command = Command::new(&self.python);
         command
-            .args(["-m", "runtime.control_plane"])
+            .args(["-B", "-m", "runtime.control_plane"])
             .current_dir(&self.runtime_root)
             .env("CODINAL_SESSION_TOKEN", &self.token)
             .env("CODINAL_PORT", self.port.to_string())
             .env("CODINAL_DATA_DIR", &self.data_dir)
             .env("CODINAL_SECRET_BOOTSTRAP", "stdin-v1")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
             .env("PYTHONUNBUFFERED", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -143,4 +144,132 @@ pub fn python_executable(runtime_root: &Path) -> PathBuf {
                 runtime_root.join(".venv/bin/python")
             }
         })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RuntimeLayout {
+    pub runtime_root: PathBuf,
+    pub python: PathBuf,
+}
+
+pub fn runtime_layout(resource_dir: &Path, development: bool) -> RuntimeLayout {
+    let override_root = std::env::var_os("CODINAL_RUNTIME_ROOT").map(PathBuf::from);
+    let override_python = std::env::var_os("CODINAL_PYTHON").map(PathBuf::from);
+    runtime_layout_from(resource_dir, development, override_root, override_python)
+}
+
+pub fn runtime_layout_from(
+    resource_dir: &Path,
+    development: bool,
+    override_root: Option<PathBuf>,
+    override_python: Option<PathBuf>,
+) -> RuntimeLayout {
+    let override_root = development.then_some(override_root).flatten();
+    let override_python = development.then_some(override_python).flatten();
+    let runtime_root = override_root.unwrap_or_else(|| {
+        if development {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .to_path_buf()
+        } else {
+            resource_dir.join("runtime")
+        }
+    });
+    let python = override_python.unwrap_or_else(|| {
+        if development {
+            python_executable(&runtime_root)
+        } else {
+            resource_dir.join("python/bin/python3")
+        }
+    });
+    RuntimeLayout {
+        runtime_root,
+        python,
+    }
+}
+
+pub fn validate_runtime_layout(layout: &RuntimeLayout) -> io::Result<()> {
+    if !layout.runtime_root.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "bundled runtime is unavailable",
+        ));
+    }
+    if !layout.python.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "bundled Python is unavailable",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{runtime_layout_from, RuntimeLayout, SidecarLaunch};
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn release_layout_uses_app_resources() {
+        assert_eq!(
+            runtime_layout_from(Path::new("/App/Resources"), false, None, None),
+            RuntimeLayout {
+                runtime_root: PathBuf::from("/App/Resources/runtime"),
+                python: PathBuf::from("/App/Resources/python/bin/python3"),
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_layout_overrides_are_preserved() {
+        assert_eq!(
+            runtime_layout_from(
+                Path::new("/ignored"),
+                true,
+                Some(PathBuf::from("/custom/runtime")),
+                Some(PathBuf::from("/custom/python")),
+            ),
+            RuntimeLayout {
+                runtime_root: PathBuf::from("/custom/runtime"),
+                python: PathBuf::from("/custom/python"),
+            }
+        );
+    }
+
+    #[test]
+    fn release_layout_ignores_unsigned_environment_overrides() {
+        assert_eq!(
+            runtime_layout_from(
+                Path::new("/App/Resources"),
+                false,
+                Some(PathBuf::from("/unsigned/runtime")),
+                Some(PathBuf::from("/unsigned/python")),
+            ),
+            RuntimeLayout {
+                runtime_root: PathBuf::from("/App/Resources/runtime"),
+                python: PathBuf::from("/App/Resources/python/bin/python3"),
+            }
+        );
+    }
+
+    #[test]
+    fn sidecar_never_writes_bytecode_into_signed_app_resources() {
+        let launch = SidecarLaunch::new(
+            PathBuf::from("/App/Resources/python/bin/python3"),
+            PathBuf::from("/App/Resources/runtime"),
+            PathBuf::from("/Data"),
+            41000,
+            "abcdefghijklmnopqrstuvwxyzABCDEF".to_owned(),
+        )
+        .expect("valid launch");
+        let command = launch.command();
+        let args: Vec<_> = command.get_args().collect();
+        let envs: Vec<_> = command.get_envs().collect();
+
+        assert_eq!(args[0], "-B");
+        assert!(envs.iter().any(|(key, value)| {
+            key.to_string_lossy() == "PYTHONDONTWRITEBYTECODE"
+                && value.is_some_and(|value| value.to_string_lossy() == "1")
+        }));
+    }
 }

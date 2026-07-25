@@ -18,12 +18,19 @@
       "desktop": {
         "schemes": ["codinal"]
       }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0NEUzQkQyQkZFQkQxOUUKUldTZTBldS8wanRPeEV3a1JkYkdHU1dqNmVkUE8zNUQ3cTBxRFhSNTYxT1VEam5IMnorbmtDZlEK",
+      "endpoints": [
+        "https://github.com/pongsathonkheereekaew/harness-flow/releases/latest/download/latest.json"
+      ],
+      "dangerousInsecureTransportProtocol": false
     }
   },
   "bundle": {
     "active": false,
     "targets": "all",
-    "icon": ["icons/icon.png"],
+    "icon": ["icons/icon.icns"],
     "macOS": {
       "minimumSystemVersion": "12.0"
     }

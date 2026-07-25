@@ -1066,9 +1066,28 @@ body.is-dragging .drop-hint {
 }
 
 .settings-copy,
-.settings-section-title p {
+.settings-section-title p,
+#update-status {
   margin: 0;
   color: var(--muted);
+}
+
+.update-row,
+.update-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.update-row {
+  justify-content: space-between;
+}
+
+.update-actions button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 7px;
+  white-space: nowrap;
 }
 
 .provider-list {

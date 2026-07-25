@@ -10,12 +10,13 @@ use std::sync::Mutex;
 use serde::Serialize;
 use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_updater::UpdaterExt;
 use zeroize::{Zeroize, Zeroizing};
 
 use control_client::{relay_oauth_callback, sync_provider_secret};
 use host::{
-    development_runtime_root, free_loopback_port, initialization_script, mint_session_token,
-    python_executable, SidecarLaunch,
+    free_loopback_port, initialization_script, mint_session_token, runtime_layout,
+    validate_runtime_layout, SidecarLaunch,
 };
 use oauth::parse_oauth_deep_link;
 use secrets::{
@@ -65,6 +66,15 @@ struct SecretMutationResult {
 struct OAuthRelayStatus {
     flow: String,
     ok: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateStatus {
+    available: bool,
+    current_version: String,
+    version: Option<String>,
+    notes: Option<String>,
 }
 
 #[tauri::command]
@@ -125,6 +135,51 @@ fn pick_workspace() -> Result<String, String> {
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateStatus, String> {
+    let current_version = app.package_info().version.to_string();
+    let update = available_update(&app).await?;
+    Ok(match update {
+        Some(update) => UpdateStatus {
+            available: true,
+            current_version,
+            version: Some(update.version),
+            notes: update.body,
+        },
+        None => UpdateStatus {
+            available: false,
+            current_version,
+            version: None,
+            notes: None,
+        },
+    })
+}
+
+async fn available_update(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    app.updater()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn install_update(expected_version: String, app: tauri::AppHandle) -> Result<(), String> {
+    let update = available_update(&app)
+        .await?
+        .ok_or_else(|| "No update is available".to_owned())?;
+    if update.version != expected_version {
+        return Err("The available update changed; check again before installing".to_owned());
+    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    app.restart();
+}
+
 fn relay_deep_links(app_handle: tauri::AppHandle, urls: Vec<url::Url>) {
     for url in urls {
         let Ok(callback) = parse_oauth_deep_link(&url) else {
@@ -146,22 +201,26 @@ fn relay_deep_links(app_handle: tauri::AppHandle, urls: Vec<url::Url>) {
 pub fn run() {
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             list_provider_secret_status,
             set_provider_secret,
             delete_provider_secret,
-            pick_workspace
+            pick_workspace,
+            check_for_update,
+            install_update
         ])
         .setup(|app| {
             let token = mint_session_token()?;
             let secret_sync_token = mint_session_token()?;
             let port = free_loopback_port()?;
-            let runtime_root = development_runtime_root();
+            let layout = runtime_layout(&app.path().resource_dir()?, cfg!(debug_assertions));
+            validate_runtime_layout(&layout)?;
             let vault = PlatformSecretVault;
             let secret_bootstrap = encode_secret_bootstrap(&vault, &secret_sync_token)?;
             let launch = SidecarLaunch::new(
-                python_executable(&runtime_root),
-                runtime_root,
+                layout.python,
+                layout.runtime_root,
                 app.path().app_data_dir()?,
                 port,
                 token.clone(),

@@ -36,7 +36,7 @@ fn sidecar_token_is_in_environment_not_arguments() {
         .find(|(name, _)| *name == std::ffi::OsStr::new("CODINAL_SECRET_BOOTSTRAP"))
         .and_then(|(_, value)| value);
 
-    assert_eq!(arguments, ["-m", "runtime.control_plane"]);
+    assert_eq!(arguments, ["-B", "-m", "runtime.control_plane"]);
     assert!(!arguments
         .iter()
         .any(|argument| { argument.to_string_lossy().contains("test-session-token") }));

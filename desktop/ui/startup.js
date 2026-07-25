@@ -18,6 +18,7 @@ const state = {
   settings: null,
   diff: "",
   managedSession: null,
+  updateVersion: null,
 };
 
 const el = Object.fromEntries(
@@ -30,7 +31,8 @@ const el = Object.fromEntries(
     "workspace-label", "agent-mode", "model-select", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
-    "model-summary", "provider-list", "toast-region",
+    "model-summary", "update-status", "check-update", "install-update",
+    "provider-list", "toast-region",
     "session-dialog", "session-title-input", "rename-session",
     "pin-session", "archive-session", "delete-session",
   ].map((id) => [id, document.getElementById(id)])
@@ -617,6 +619,51 @@ async function openSettings() {
   }
 }
 
+async function checkForUpdate() {
+  if (!invoke) {
+    el["update-status"].textContent = "Updates are available in the desktop app.";
+    return;
+  }
+  el["check-update"].disabled = true;
+  el["install-update"].classList.add("is-hidden");
+  state.updateVersion = null;
+  el["update-status"].textContent = "Checking for updates…";
+  try {
+    const update = await invoke("check_for_update");
+    if (update.available) {
+      state.updateVersion = update.version;
+      el["update-status"].textContent =
+        `Codinal ${update.version} is available. ${update.notes || ""}`.trim();
+      el["install-update"].classList.remove("is-hidden");
+    } else {
+      el["update-status"].textContent =
+        `Codinal ${update.currentVersion} is up to date.`;
+    }
+  } catch (error) {
+    el["update-status"].textContent = "Could not check for updates.";
+    toast(String(error), "error");
+  } finally {
+    el["check-update"].disabled = false;
+  }
+}
+
+async function installUpdate() {
+  if (!invoke || !state.updateVersion) return;
+  el["check-update"].disabled = true;
+  el["install-update"].disabled = true;
+  el["update-status"].textContent = "Downloading and verifying update…";
+  try {
+    await invoke("install_update", {
+      expectedVersion: state.updateVersion,
+    });
+  } catch (error) {
+    el["check-update"].disabled = false;
+    el["install-update"].disabled = false;
+    el["update-status"].textContent = "Update installation failed.";
+    toast(String(error), "error");
+  }
+}
+
 async function renderProviders() {
   el["provider-list"].replaceChildren();
   if (!invoke) {
@@ -689,6 +736,8 @@ function wireEvents() {
   el["session-search"].addEventListener("input", renderSessions);
   el["theme-toggle"].addEventListener("click", toggleTheme);
   el["open-settings"].addEventListener("click", openSettings);
+  el["check-update"].addEventListener("click", checkForUpdate);
+  el["install-update"].addEventListener("click", installUpdate);
   el["rename-session"].addEventListener("click", async () => {
     const title = el["session-title-input"].value.trim();
     if (!title) return;
