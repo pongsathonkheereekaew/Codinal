@@ -6,7 +6,8 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   approval, roots, event sink, and live settings into every engine build
 - `sessions/` — Phase 1.2 session lifecycle boundary (injected store/engine,
   roots, artifacts)
-- `events/` — Phase 1.2 global/per-session async event fan-out
+- `events/` — Phase 1.2 global/per-session async fan-out plus the Phase 2
+  provider-neutral turn event contract
 - `settings/` — Phase 1.2 atomic non-secret preferences; provider credentials
   remain behind the Phase 1.4 Keychain port
 - `control_plane/` — Phase 1.3 FastAPI sidecar; loopback-only HTTP and
@@ -23,7 +24,8 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   native-backed memory store; the fail-closed router supports those providers
   plus loopback-only Ollama and invalidates cached SDK clients on key changes
 - `mcp/` — vendored transport
-- `tools/` — tool implementations (manifest lives in `harness/policy`)
+- `tools/` — manifest-bound implementation registry; requires explicit strict
+  schemas and refuses undeclared tools (implementations remain incremental)
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes
   harness-owned cases through injected adapters and reports Tier 1/Tier 2/
   incompatible without exposing raw provider responses

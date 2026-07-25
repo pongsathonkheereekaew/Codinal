@@ -136,6 +136,12 @@ Unknown/ambiguous provider ids ถูก reject; Ollama URL ต้องเป�
 exact `/v1` และ client ไม่ได้รับ cloud secret store. Secret hot update
 transactionally invalidate cached SDK client ของ provider ที่เปลี่ยน.
 
+**Phase 2 TurnEngine seam progress (2026-07-26):** vendor provider-neutral
+`Event`/`EventType`; rewrite `ToolRegistry` โดยไม่พึ่ง aisuite reflection.
+Registry รับเฉพาะ explicit strict schema, ชื่อ function/schema ต้องตรงและต้อง
+declare อยู่ใน harness `ToolManifest`; arguments ถูก parse ด้วย policy contract
+ก่อน invoke. นี่เป็น dependency seam ก่อน vendor TurnEngine loop.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)
