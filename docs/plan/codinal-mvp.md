@@ -94,7 +94,12 @@ harness-flow/                       ← product repo "Codinal"
   relay; Python เก็บ expiring flow-bound state และ consume แบบ atomic ครั้งเดียว
   ก่อน provider handler. รับเฉพาะ authorization code/provider error, ไม่รับ
   access/refresh token และไม่ echo code.
-- 1.6 `harness/conformance` **cases/spec** (policy) + `runtime/conformance` **runner** (mechanics, M4) — **Tier-1 gate แค่ 2 แกน (F7):** (1) tool-call schema ที่ policy port parse ได้, (2) system-prompt fidelity; streaming + JSON mode = informational (Tier-1.5, โชว์ใน picker ไม่ block)
+- 1.6 ✅ `harness/conformance` **cases/spec** (policy) +
+  `runtime/conformance` **runner** (mechanics, M4): Tier‑1 ต้องผ่านทุก case
+  ของ 2 แกน—strict normalized tool-call schema ผ่าน policy parser เดียวกับ
+  execution boundary และ system-prompt fidelity. Fresh nonce ต่อ run,
+  fail-closed/sanitized report; streaming + JSON mode เป็น informational.
+  Live provider tiers รอ adapter และผล run จริงใน Phase 2.
 
 **Gate:** negative test ว่าทุก `/v1/*` route + WS ปฏิเสธ request ไม่มี/ผิด bearer token; runtime sidecar ไม่สามารถ exec tool โดยไม่ผ่าน `PermissionEngine` (harness-controlled); conformance runner รันได้.
 

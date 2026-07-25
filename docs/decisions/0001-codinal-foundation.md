@@ -84,6 +84,13 @@ per-file provenance header; ไม่ commit OpenWorker source tree ทั้ง
 - Tier-3/unknown: chat-only + warning
 - **Local (Ollama) = tier-best-effort:** ไม่ fix ว่าถึง Tier-1 (หลาย model tool-calling อ่อน); ตั้งตามผล suite จริง
 - **Ownership split (M4):** cases/spec = policy → `harness/conformance/`; runner (execute provider calls, network, credentials) = mechanics → `runtime/conformance/`. คงเส้น D7 (harness=control, runtime=mechanics)
+- **Phase 1.6 implementation (2026-07-26):** versioned JSON cases/schema อยู่ใน
+  `harness/conformance`; provider-neutral async runner อยู่ใน
+  `runtime/conformance`. Adapter ต้อง normalize tool calls แล้วผ่าน strict
+  `runtime.policy.parse_tool_calls` contract เดียวกับ execution boundary.
+  ทุก case ในแกนต้องผ่านจึงนับแกนนั้น; report ไม่เก็บ raw response/exception.
+  Streaming/JSON mode ยัง informational และยังไม่ประกาศ live provider tier
+  จนกว่า adapter/conformance run จริงใน Phase 2.
 
 ### D7 — Harness ownership: Harness=control, Runtime=mechanics
 - **Harness SSOT:** policy/approval, skills, memory (durable), subagent defs, session/event store, git/worktree service, sandbox policy, tool manifest (ชื่อ + perms)

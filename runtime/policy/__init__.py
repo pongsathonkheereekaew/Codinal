@@ -24,6 +24,11 @@ from .permissions import (
 )
 from .approval import ApprovalOutcome, Approver, deny_all
 from .manifest import ToolManifest, ToolSpec
+from .tool_calls import (
+    ToolCall,
+    ToolCallValidationError,
+    parse_tool_calls,
+)
 
 __all__ = [
     "RiskClass",
@@ -39,4 +44,7 @@ __all__ = [
     "deny_all",
     "ToolManifest",
     "ToolSpec",
+    "ToolCall",
+    "ToolCallValidationError",
+    "parse_tool_calls",
 ]

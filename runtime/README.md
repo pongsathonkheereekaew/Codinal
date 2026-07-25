@@ -20,7 +20,9 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 - `providers/` — vendored `{base,router,anthropic,openai,gemini}_provider.py`
 - `mcp/` — vendored transport
 - `tools/` — tool implementations (manifest lives in `harness/policy`)
-- `conformance/` — suite **runner** (executes provider calls) — cases/spec live in `harness/conformance`
+- `conformance/` — Phase 1.6 provider-neutral suite runner; executes
+  harness-owned cases through injected adapters and reports Tier 1/Tier 2/
+  incompatible without exposing raw provider responses
 - `storage/` — vendored conversation/event mechanics
 
 Bridge to host: loopback HTTP+WS + mandatory per-session bearer token (see ADR D7). Policy enforced via `PermissionEngine` collaborator (harness-controlled) — runtime must not bypass.

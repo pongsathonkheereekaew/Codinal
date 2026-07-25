@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codinal.dev/schemas/conformance-cases-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "cases"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 16,
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/toolCallCase"
+          },
+          {
+            "$ref": "#/$defs/systemPromptCase"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "baseProperties": {
+      "id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-z0-9-]+$"
+      },
+      "system": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      },
+      "user": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      }
+    },
+    "toolCallCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "axis", "system", "user", "tool", "expected"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/baseProperties/id"
+        },
+        "axis": {
+          "const": "tool_call_schema"
+        },
+        "system": {
+          "$ref": "#/$defs/baseProperties/system"
+        },
+        "user": {
+          "$ref": "#/$defs/baseProperties/user"
+        },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "description", "input_schema"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "input_schema": {
+              "type": "object"
+            }
+          }
+        },
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool_name", "arguments"],
+          "properties": {
+            "tool_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "arguments": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "systemPromptCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "axis", "system", "user", "expected"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/baseProperties/id"
+        },
+        "axis": {
+          "const": "system_prompt_fidelity"
+        },
+        "system": {
+          "$ref": "#/$defs/baseProperties/system"
+        },
+        "user": {
+          "$ref": "#/$defs/baseProperties/user"
+        },
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text"],
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            }
+          }
+        }
+      }
+    }
+  }
+}
