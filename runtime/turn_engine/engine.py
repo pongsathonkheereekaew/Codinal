@@ -52,6 +52,7 @@ class TurnEngine:
         model_settings: Optional[dict[str, Any]] = None,
         messages: Optional[list[dict[str, Any]]] = None,
         audit_sink: Optional[Callable[[dict[str, Any]], None]] = None,
+        approval_id_factory: Optional[Callable[[ToolCall], str]] = None,
         context_provider: Optional[Callable[[], str]] = None,
         directory_requester: Optional[
             Callable[[dict[str, Any], str], "Awaitable[dict[str, Any]]"]
@@ -80,6 +81,7 @@ class TurnEngine:
         self.model_settings = dict(model_settings or {})
         self.messages: list[dict[str, Any]] = list(messages or [])
         self.audit_sink = audit_sink
+        self.approval_id_factory = approval_id_factory
         # Returns an ephemeral `<system-context>` block appended to the LAST user message at
         # send-time only (never persisted). We can't reliably inject system messages mid-thread
         # across providers, so dynamic per-turn context (e.g. the live directory list) rides on
@@ -540,12 +542,34 @@ class TurnEngine:
             )
 
         if not allowed and decision.needs_user:
+            request = PermissionRequest(
+                tool_name=tool_call.name,
+                arguments=tool_call.arguments,
+                metadata=metadata,
+                reason=decision.reason,
+                tool_call_id=tool_call.id,
+                risk=classify(
+                    tool_call.name,
+                    metadata,
+                    self.permissions.risk_overrides,
+                ).value,
+                command=str(tool_call.arguments.get("command", "")),
+            )
+            approval_task = asyncio.create_task(self.approver(request))
+            approval_id = (
+                self.approval_id_factory(tool_call)
+                if self.approval_id_factory is not None
+                else tool_call.id
+            )
             yield Event(
                 EventType.PERMISSION_REQUIRED,
                 {
+                    "approval_id": approval_id,
                     "name": tool_call.name,
                     "arguments": tool_call.arguments,
                     "reason": decision.reason,
+                    "risk": request.risk,
+                    "command": request.command,
                     "category": getattr(metadata, "category", ""),
                     # The exact target a standing rule could pin, or None when the call
                     # isn't eligible (no declared target arg / exec risk). Surfaces use it
@@ -560,23 +584,7 @@ class TurnEngine:
             )
             self._audit(tool_call, stage="approval_requested", reason=decision.reason)
             outcome = await self._interruptible(
-                self.approver(
-                    PermissionRequest(
-                        tool_name=tool_call.name,
-                        arguments=tool_call.arguments,
-                        metadata=metadata,
-                        reason=decision.reason,
-                        tool_call_id=tool_call.id,
-                        risk=classify(
-                            tool_call.name,
-                            metadata,
-                            self.permissions.risk_overrides,
-                        ).value,
-                        command=str(
-                            tool_call.arguments.get("command", "")
-                        ),
-                    )
-                ),
+                approval_task,
                 interrupted=ApprovalOutcome.DENY,
             )
             if outcome is ApprovalOutcome.DENY:

@@ -42,6 +42,7 @@ class TurnCoordinator:
         user_input: str | list[dict[str, Any]],
         workspace: str | Path | None = None,
         agent: str = "code",
+        model: str | None = None,
         source: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         active = self._active.get(session_id)
@@ -55,11 +56,16 @@ class TurnCoordinator:
         self._starting.add(session_id)
         try:
             try:
+                engine_options: dict[str, Any] = {
+                    "workspace": workspace,
+                    "agent": agent,
+                }
+                if model is not None:
+                    engine_options["model"] = model
                 engine = await asyncio.to_thread(
                     self._sessions.get_engine,
                     session_id,
-                    workspace=workspace,
-                    agent=agent,
+                    **engine_options,
                 )
             except Exception:
                 raise SessionWorkspaceError(

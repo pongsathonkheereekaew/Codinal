@@ -1,25 +1,843 @@
-const status = document.querySelector("#status");
+"use strict";
 
-async function connect(attemptsRemaining = 25) {
+const HTTP = window.__CODINAL_HTTP__;
+const WS = window.__CODINAL_WS__;
+const TOKEN = window.__CODINAL_TOKEN__;
+const invoke = window.__TAURI__?.core?.invoke;
+
+const state = {
+  online: false,
+  busy: false,
+  sessions: [],
+  sessionId: null,
+  workspace: null,
+  messages: [],
+  socket: null,
+  liveAssistant: null,
+  activities: new Map(),
+  settings: null,
+  diff: "",
+  managedSession: null,
+};
+
+const el = Object.fromEntries(
+  [
+    "startup", "startup-status", "app", "sidebar", "new-task",
+    "session-search", "refresh-sessions", "session-list", "theme-toggle",
+    "open-settings", "toggle-sidebar", "task-title", "workspace-path",
+    "runtime-status", "review-button", "change-count", "conversation",
+    "empty-state", "message-list", "prompt", "choose-workspace",
+    "workspace-label", "agent-mode", "model-select", "stop-turn",
+    "send-turn", "review-panel", "close-review", "review-summary",
+    "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
+    "model-summary", "provider-list", "toast-region",
+    "session-dialog", "session-title-input", "rename-session",
+    "pin-session", "archive-session", "delete-session",
+  ].map((id) => [id, document.getElementById(id)])
+);
+
+function node(tag, className, text) {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text !== undefined && text !== null) element.textContent = String(text);
+  return element;
+}
+
+function shortPath(path) {
+  if (!path) return "Choose a workspace to begin";
+  const parts = path.split("/").filter(Boolean);
+  return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : path;
+}
+
+function basename(path) {
+  return path?.split("/").filter(Boolean).at(-1) || "Workspace";
+}
+
+function formatAge(value) {
+  if (!value) return "";
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+async function api(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("Authorization", `Bearer ${TOKEN}`);
+  if (options.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${HTTP}${path}`, { ...options, headers });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.detail || `Runtime returned HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+function toast(message, kind = "") {
+  const item = node("div", `toast ${kind}`.trim(), message);
+  el["toast-region"].append(item);
+  window.setTimeout(() => item.remove(), 4200);
+}
+
+function setRuntimeStatus(label, kind = "online") {
+  const indicator = el["runtime-status"];
+  indicator.classList.toggle("is-online", kind === "online");
+  indicator.classList.toggle("is-busy", kind === "busy");
+  indicator.querySelector("span").textContent = label;
+}
+
+async function connect(attemptsRemaining = 30) {
   try {
-    const response = await fetch(`${window.__CODINAL_HTTP__}/v1/health`, {
-      headers: {
-        Authorization: `Bearer ${window.__CODINAL_TOKEN__}`,
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Runtime returned HTTP ${response.status}`);
-    }
-    status.textContent = "Secure local runtime connected.";
+    await api("/v1/health");
+    state.online = true;
+    setRuntimeStatus("Local runtime", "online");
   } catch (error) {
-    if (attemptsRemaining <= 1) {
-      throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    if (attemptsRemaining <= 1) throw error;
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
     return connect(attemptsRemaining - 1);
   }
 }
 
-connect().catch((error) => {
-  status.textContent = `Runtime unavailable: ${error.message}`;
-});
+async function loadSettings() {
+  state.settings = await api("/v1/settings");
+  const models = Array.isArray(state.settings.models)
+    ? state.settings.models
+    : [state.settings.model].filter(Boolean);
+  el["model-select"].replaceChildren();
+  for (const model of models) {
+    const option = node("option", "", model);
+    option.value = model;
+    option.selected = model === state.settings.model;
+    el["model-select"].append(option);
+  }
+  if (!models.length) {
+    const option = node("option", "", "Default model");
+    el["model-select"].append(option);
+  }
+  el["model-summary"].textContent = state.settings.model
+    ? `Current model: ${state.settings.model}`
+    : "The runtime will use its configured default model.";
+}
+
+async function loadSessions() {
+  state.sessions = await api("/v1/sessions");
+  renderSessions();
+}
+
+function renderSessions() {
+  const query = el["session-search"].value.trim().toLowerCase();
+  const sessions = state.sessions.filter((session) => {
+    if (session.archived) return false;
+    return !query || `${session.title} ${session.workspace}`
+      .toLowerCase().includes(query);
+  });
+  el["session-list"].replaceChildren();
+  if (!sessions.length) {
+    el["session-list"].append(
+      node("p", "session-empty", query ? "No matching tasks" : "No tasks yet")
+    );
+    return;
+  }
+  for (const session of sessions) {
+    const item = node("div", "session-item");
+    item.classList.toggle("is-active", session.session_id === state.sessionId);
+    item.dataset.sessionId = session.session_id;
+    const button = node("button", "session-main");
+    button.type = "button";
+    button.append(
+      node("strong", "", session.title || "New task"),
+      node("time", "", formatAge(session.updated_at)),
+      node("small", "", basename(session.workspace))
+    );
+    button.addEventListener("click", () => selectSession(session));
+    const menu = node("button", "icon-button session-menu-button", "•••");
+    menu.type = "button";
+    menu.setAttribute("aria-label", `Options for ${session.title || "task"}`);
+    menu.addEventListener("click", () => openSessionOptions(session));
+    item.append(button, menu);
+    el["session-list"].append(item);
+  }
+}
+
+function openSessionOptions(session) {
+  state.managedSession = session;
+  el["session-title-input"].value = session.title || "";
+  el["pin-session"].textContent = session.pinned ? "Unpin task" : "Pin task";
+  el["archive-session"].textContent = session.archived
+    ? "Unarchive task"
+    : "Archive task";
+  el["session-dialog"].showModal();
+  el["session-title-input"].select();
+}
+
+async function patchManagedSession(update) {
+  const session = state.managedSession;
+  if (!session) return;
+  const result = await api(
+    `/v1/sessions/${encodeURIComponent(session.session_id)}`,
+    { method: "PATCH", body: JSON.stringify(update) }
+  );
+  Object.assign(session, update, result);
+  if (session.session_id === state.sessionId && update.title) {
+    el["task-title"].textContent = result.title || update.title;
+  }
+  await loadSessions();
+  el["session-dialog"].close();
+}
+
+async function selectSession(session) {
+  if (state.sessionId === session.session_id) return;
+  disconnectSocket();
+  state.sessionId = session.session_id;
+  state.workspace = session.workspace;
+  state.messages = [];
+  state.liveAssistant = null;
+  state.activities.clear();
+  el["task-title"].textContent = session.title || "New task";
+  selectModel(session.model);
+  updateWorkspaceLabel();
+  renderSessions();
+  renderConversation();
+  try {
+    state.messages = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/messages`
+    );
+    renderConversation();
+    connectSocket();
+    await Promise.all([loadPendingApprovals(), loadDiff(false)]);
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+function selectModel(model) {
+  if (!model) return;
+  let option = [...el["model-select"].options]
+    .find((candidate) => candidate.value === model);
+  if (!option) {
+    option = node("option", "", model);
+    option.value = model;
+    el["model-select"].append(option);
+  }
+  el["model-select"].value = model;
+}
+
+async function newTask() {
+  const workspace = await pickWorkspace();
+  if (!workspace) return;
+  disconnectSocket();
+  state.sessionId = `session-${crypto.randomUUID()}`;
+  state.workspace = workspace;
+  state.messages = [];
+  state.liveAssistant = null;
+  state.activities.clear();
+  state.diff = "";
+  el["task-title"].textContent = "New task";
+  updateWorkspaceLabel();
+  renderSessions();
+  renderConversation();
+  renderDiff();
+  connectSocket();
+  el.prompt.focus();
+}
+
+async function pickWorkspace() {
+  try {
+    if (invoke) return await invoke("pick_workspace");
+    const fallback = window.prompt("Enter an absolute workspace path");
+    return fallback?.startsWith("/") ? fallback : null;
+  } catch (error) {
+    if (!String(error).toLowerCase().includes("cancel")) {
+      toast(String(error), "error");
+    }
+    return null;
+  }
+}
+
+function updateWorkspaceLabel() {
+  el["workspace-path"].textContent = shortPath(state.workspace);
+  el["workspace-label"].textContent = basename(state.workspace);
+  updateComposer();
+}
+
+function connectSocket() {
+  if (!state.sessionId || !state.online) return;
+  disconnectSocket();
+  const session = encodeURIComponent(state.sessionId);
+  const socket = new WebSocket(
+    `${WS}/ws/session/${session}`,
+    ["codinal.v1", `codinal.auth.${TOKEN}`]
+  );
+  state.socket = socket;
+  socket.addEventListener("message", (message) => {
+    try {
+      handleEvent(JSON.parse(message.data));
+    } catch {
+      toast("Received an invalid runtime event", "error");
+    }
+  });
+  socket.addEventListener("close", () => {
+    if (state.socket === socket) state.socket = null;
+  });
+}
+
+function disconnectSocket() {
+  if (state.socket) state.socket.close();
+  state.socket = null;
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  el["model-select"].disabled = busy;
+  el["agent-mode"].disabled = busy;
+  el["stop-turn"].classList.toggle("is-hidden", !busy);
+  el["send-turn"].classList.toggle("is-hidden", busy);
+  setRuntimeStatus(busy ? "Codinal is working" : "Local runtime", busy ? "busy" : "online");
+  updateComposer();
+}
+
+function handleEvent(event) {
+  switch (event.type) {
+    case "turn_start":
+      setBusy(true);
+      break;
+    case "assistant_delta":
+      state.liveAssistant = (state.liveAssistant || "") + (event.text || "");
+      renderConversation();
+      break;
+    case "assistant_message":
+      state.liveAssistant = event.text || null;
+      renderConversation();
+      break;
+    case "tool_proposed":
+      addActivity(event.name, "Proposed");
+      break;
+    case "tool_started":
+      addActivity(event.name, "Running", true);
+      break;
+    case "tool_finished":
+      addActivity(event.name, event.status || "Finished");
+      break;
+    case "permission_required":
+      renderApproval(event);
+      break;
+    case "error":
+      toast(event.error || "Turn failed", "error");
+      setBusy(false);
+      break;
+    case "interrupted":
+      toast("Turn stopped");
+      finishTurn();
+      break;
+    case "turn_end":
+      finishTurn();
+      break;
+    default:
+      break;
+  }
+}
+
+async function finishTurn() {
+  setBusy(false);
+  state.liveAssistant = null;
+  try {
+    state.messages = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/messages`
+    );
+    await Promise.all([loadSessions(), loadDiff(false)]);
+  } catch (error) {
+    toast(error.message, "error");
+  }
+  renderConversation();
+}
+
+function renderConversation() {
+  const visible = state.messages.filter(
+    (message) => message.role === "user" || message.role === "assistant"
+  );
+  el["empty-state"].classList.toggle(
+    "is-hidden",
+    Boolean(visible.length || state.liveAssistant || state.activities.size)
+  );
+  el["message-list"].replaceChildren();
+  for (const message of visible) {
+    el["message-list"].append(renderMessage(message.role, contentText(message.content)));
+  }
+  if (state.liveAssistant) {
+    el["message-list"].append(renderMessage("assistant", state.liveAssistant, true));
+  }
+  for (const activity of state.activities.values()) {
+    el["message-list"].append(renderActivity(activity));
+  }
+  el.conversation.scrollTop = el.conversation.scrollHeight;
+}
+
+function contentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part) => part && part.type === "text")
+    .map((part) => part.text || "")
+    .join("\n");
+}
+
+function renderMessage(role, content, streaming = false) {
+  const article = node("article", `message ${role}`);
+  const who = role === "assistant" ? "C" : "You";
+  article.append(node("div", "message-avatar", role === "assistant" ? "C" : "Y"));
+  const body = node("div", "message-body");
+  body.append(
+    node("div", "message-meta", streaming ? "Codinal · Writing…" : who),
+    node("p", "message-content", content)
+  );
+  article.append(body);
+  return article;
+}
+
+function addActivity(name, status, running = false) {
+  const key = `${name}-${state.activities.size}`;
+  for (const [existingKey, activity] of state.activities) {
+    if (activity.name === name && activity.running) {
+      state.activities.set(existingKey, { name, status, running });
+      renderConversation();
+      return;
+    }
+  }
+  state.activities.set(key, { name, status, running });
+  renderConversation();
+}
+
+function renderActivity(activity) {
+  const card = node("div", `activity-card${activity.running ? " is-running" : ""}`);
+  card.append(
+    node("span", "activity-icon", activity.running ? "◌" : "◇"),
+    node("strong", "", activity.name),
+    node("span", "activity-status", activity.status)
+  );
+  return card;
+}
+
+async function loadPendingApprovals() {
+  if (!state.sessionId) return;
+  const pending = await api(
+    `/v1/sessions/${encodeURIComponent(state.sessionId)}/approvals`
+  );
+  for (const approval of pending) renderApproval(approval);
+}
+
+function renderApproval(approval) {
+  if (document.querySelector(`[data-approval-id="${approval.approval_id}"]`)) return;
+  const card = node("section", "approval-card");
+  card.dataset.approvalId = approval.approval_id;
+  const content = node("div", "approval-content");
+  const title = node("div", "approval-title");
+  title.append(node("span", "", "⚠"), node("strong", "", "Approval required"));
+  content.append(
+    title,
+    node("p", "", `${approval.tool_name || approval.name} wants to run.`),
+    node("p", "", approval.reason || "This action changes local state.")
+  );
+  const args = approval.arguments || {};
+  content.append(node("pre", "approval-arguments", JSON.stringify(args, null, 2)));
+  const actions = node("div", "approval-actions");
+  const deny = node("button", "", "Deny");
+  const once = node("button", "approve-once", "Allow once");
+  deny.type = once.type = "button";
+  deny.addEventListener("click", () => resolveApproval(card, approval, "deny"));
+  once.addEventListener("click", () => resolveApproval(card, approval, "once"));
+  actions.append(deny);
+  const persistent = approval.risk === "exec"
+    ? "always_command"
+    : approval.risk === "write_local"
+      ? "always_tool"
+      : null;
+  if (persistent) {
+    const always = node("button", "", "Allow for task");
+    always.type = "button";
+    always.addEventListener(
+      "click",
+      () => resolveApproval(card, approval, persistent)
+    );
+    actions.append(always);
+  }
+  actions.append(once);
+  card.append(content, actions);
+  el["message-list"].append(card);
+  el.conversation.scrollTop = el.conversation.scrollHeight;
+}
+
+async function resolveApproval(card, approval, outcome) {
+  for (const button of card.querySelectorAll("button")) button.disabled = true;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/approvals/${approval.approval_id}`,
+      { method: "POST", body: JSON.stringify({ outcome }) }
+    );
+    card.remove();
+  } catch (error) {
+    for (const button of card.querySelectorAll("button")) button.disabled = false;
+    toast(error.message, "error");
+  }
+}
+
+async function sendTurn() {
+  const input = el.prompt.value.trim();
+  if (!input || !state.workspace || !state.sessionId || state.busy) return;
+  state.messages.push({ role: "user", content: input });
+  el.prompt.value = "";
+  resizePrompt();
+  renderConversation();
+  setBusy(true);
+  try {
+    await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/turns`, {
+      method: "POST",
+      body: JSON.stringify({
+        input,
+        workspace: state.workspace,
+        agent: el["agent-mode"].value,
+        model: el["model-select"].value,
+      }),
+    });
+  } catch (error) {
+    state.messages.pop();
+    setBusy(false);
+    renderConversation();
+    toast(error.message, "error");
+  }
+}
+
+async function stopTurn() {
+  if (!state.sessionId || !state.busy) return;
+  try {
+    await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/interrupt`, {
+      method: "POST",
+    });
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+function updateComposer() {
+  const hasInput = Boolean(el.prompt.value.trim());
+  el["send-turn"].disabled = !state.online || !state.workspace
+    || !state.sessionId || !hasInput || state.busy;
+}
+
+function resizePrompt() {
+  el.prompt.style.height = "auto";
+  el.prompt.style.height = `${Math.min(el.prompt.scrollHeight, 180)}px`;
+  updateComposer();
+}
+
+async function loadDiff(showPanel = true) {
+  if (!state.sessionId) return;
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/git/diff?against_base=true`
+    );
+    state.diff = typeof result.diff === "string" ? result.diff : "";
+  } catch (error) {
+    if (!error.message.includes("not found")) {
+      toast(error.message, "error");
+    }
+    state.diff = "";
+  }
+  renderDiff();
+  if (showPanel) openReview();
+}
+
+function renderDiff() {
+  const lines = state.diff ? state.diff.split("\n") : [];
+  const files = lines.filter((line) => line.startsWith("diff --git ")).length;
+  el["change-count"].textContent = String(files);
+  el["change-count"].classList.toggle("is-hidden", files === 0);
+  el["review-button"].disabled = !state.sessionId;
+  el["review-summary"].textContent = files
+    ? `${files} changed ${files === 1 ? "file" : "files"}`
+    : "No un-applied changes";
+  el["apply-changes"].disabled = !state.diff;
+  el["diff-view"].replaceChildren();
+  if (!lines.length) {
+    el["diff-view"].append(node("span", "diff-line", "No changes to review."));
+    return;
+  }
+  for (const line of lines) {
+    let kind = "";
+    if (line.startsWith("diff --git ") || line.startsWith("@@")) kind = "header";
+    else if (line.startsWith("+") && !line.startsWith("+++")) kind = "add";
+    else if (line.startsWith("-") && !line.startsWith("---")) kind = "delete";
+    el["diff-view"].append(node("span", `diff-line ${kind}`.trim(), line));
+  }
+}
+
+function openReview() {
+  el.app.classList.add("review-open");
+  el["review-panel"].setAttribute("aria-hidden", "false");
+}
+
+function closeReview() {
+  el.app.classList.remove("review-open");
+  el["review-panel"].setAttribute("aria-hidden", "true");
+}
+
+async function applyChanges() {
+  if (!state.sessionId || !state.diff) return;
+  el["apply-changes"].disabled = true;
+  try {
+    await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/git/apply`, {
+      method: "POST",
+    });
+    toast("Changes applied to the source workspace");
+    await loadDiff(false);
+  } catch (error) {
+    toast(error.message, "error");
+    el["apply-changes"].disabled = false;
+  }
+}
+
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme;
+  const next = current === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("codinal-theme", next);
+}
+
+async function openSettings() {
+  el["settings-dialog"].showModal();
+  try {
+    await loadSettings();
+    await renderProviders();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function renderProviders() {
+  el["provider-list"].replaceChildren();
+  if (!invoke) {
+    el["provider-list"].append(
+      node("p", "settings-copy", "Provider key management is available in the desktop app.")
+    );
+    return;
+  }
+  const providers = await invoke("list_provider_secret_status");
+  for (const provider of providers) {
+    const row = node("div", "provider-row");
+    const label = node("label", "", provider.provider);
+    const status = node(
+      "span",
+      `provider-state${provider.configured ? " is-configured" : ""}`,
+      provider.configured ? "Configured" : "Not configured"
+    );
+    label.append(node("br"), status);
+    const input = node("input");
+    input.type = "password";
+    input.autocomplete = "off";
+    input.placeholder = provider.configured ? "Replace key…" : "API key";
+    const save = node("button", "", provider.configured ? "Update" : "Save");
+    save.type = "button";
+    save.addEventListener("click", async () => {
+      if (!input.value) return;
+      save.disabled = true;
+      try {
+        await invoke("set_provider_secret", {
+          provider: provider.provider,
+          apiKey: input.value,
+        });
+        input.value = "";
+        await renderProviders();
+        toast(`${provider.provider} credential saved`);
+      } catch (error) {
+        toast(String(error), "error");
+        save.disabled = false;
+      }
+    });
+    const actions = node("div", "provider-actions");
+    actions.append(save);
+    if (provider.configured) {
+      const remove = node("button", "remove-provider", "Remove");
+      remove.type = "button";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Remove the ${provider.provider} credential?`)) return;
+        remove.disabled = true;
+        try {
+          await invoke("delete_provider_secret", {
+            provider: provider.provider,
+          });
+          await renderProviders();
+          toast(`${provider.provider} credential removed`);
+        } catch (error) {
+          toast(String(error), "error");
+          remove.disabled = false;
+        }
+      });
+      actions.append(remove);
+    }
+    row.append(label, input, actions);
+    el["provider-list"].append(row);
+  }
+}
+
+function wireEvents() {
+  el["new-task"].addEventListener("click", newTask);
+  el["refresh-sessions"].addEventListener("click", loadSessions);
+  el["session-search"].addEventListener("input", renderSessions);
+  el["theme-toggle"].addEventListener("click", toggleTheme);
+  el["open-settings"].addEventListener("click", openSettings);
+  el["rename-session"].addEventListener("click", async () => {
+    const title = el["session-title-input"].value.trim();
+    if (!title) return;
+    try {
+      await patchManagedSession({ title });
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+  el["pin-session"].addEventListener("click", async () => {
+    try {
+      await patchManagedSession({ pinned: !state.managedSession?.pinned });
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+  el["archive-session"].addEventListener("click", async () => {
+    try {
+      await patchManagedSession({ archived: !state.managedSession?.archived });
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+  el["delete-session"].addEventListener("click", async () => {
+    const session = state.managedSession;
+    if (!session || !window.confirm(`Delete “${session.title || "New task"}”?`)) return;
+    try {
+      await api(`/v1/sessions/${encodeURIComponent(session.session_id)}`, {
+        method: "DELETE",
+      });
+      if (state.sessionId === session.session_id) {
+        disconnectSocket();
+        state.sessionId = null;
+        state.workspace = null;
+        state.messages = [];
+        el["task-title"].textContent = "New task";
+        updateWorkspaceLabel();
+        renderConversation();
+      }
+      state.managedSession = null;
+      el["session-dialog"].close();
+      await loadSessions();
+      toast("Task deleted");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+  el["toggle-sidebar"].addEventListener("click", () => {
+    el.app.classList.toggle("sidebar-collapsed");
+  });
+  el["choose-workspace"].addEventListener("click", async () => {
+    const workspace = await pickWorkspace();
+    if (!workspace) return;
+    state.workspace = workspace;
+    if (!state.sessionId) state.sessionId = `session-${crypto.randomUUID()}`;
+    updateWorkspaceLabel();
+    connectSocket();
+  });
+  el["model-select"].addEventListener("change", async () => {
+    const session = state.sessions.find(
+      (candidate) => candidate.session_id === state.sessionId
+    );
+    if (!session || state.busy) return;
+    try {
+      const result = await api(
+        `/v1/sessions/${encodeURIComponent(state.sessionId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ model: el["model-select"].value }),
+        }
+      );
+      session.model = result.model;
+      toast(`Model changed to ${result.model}`);
+    } catch (error) {
+      selectModel(session.model);
+      toast(error.message, "error");
+    }
+  });
+  el.prompt.addEventListener("input", resizePrompt);
+  el.prompt.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.metaKey) {
+      event.preventDefault();
+      sendTurn();
+    }
+  });
+  el["send-turn"].addEventListener("click", sendTurn);
+  el["stop-turn"].addEventListener("click", stopTurn);
+  el["review-button"].addEventListener("click", () => loadDiff(true));
+  el["refresh-diff"].addEventListener("click", () => loadDiff(false));
+  el["close-review"].addEventListener("click", closeReview);
+  el["apply-changes"].addEventListener("click", applyChanges);
+  for (const suggestion of document.querySelectorAll("[data-prompt]")) {
+    suggestion.addEventListener("click", async () => {
+      if (!state.workspace) await newTask();
+      el.prompt.value = suggestion.dataset.prompt;
+      resizePrompt();
+      el.prompt.focus();
+    });
+  }
+  document.addEventListener("keydown", (event) => {
+    if (event.metaKey && event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      newTask();
+    }
+    if (event.metaKey && event.shiftKey && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      loadDiff(true);
+    }
+    if (event.key === "Escape" && el.app.classList.contains("review-open")) {
+      closeReview();
+    }
+  });
+  document.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    document.body.classList.add("is-dragging");
+  });
+  document.addEventListener("dragleave", (event) => {
+    if (!event.relatedTarget) document.body.classList.remove("is-dragging");
+  });
+  document.addEventListener("drop", (event) => {
+    event.preventDefault();
+    document.body.classList.remove("is-dragging");
+    const path = event.dataTransfer?.files?.[0]?.path;
+    if (path?.startsWith("/")) {
+      state.workspace = path;
+      if (!state.sessionId) state.sessionId = `session-${crypto.randomUUID()}`;
+      updateWorkspaceLabel();
+      connectSocket();
+    }
+  });
+}
+
+async function boot() {
+  const savedTheme = localStorage.getItem("codinal-theme");
+  if (savedTheme === "light" || savedTheme === "dark") {
+    document.documentElement.dataset.theme = savedTheme;
+  }
+  wireEvents();
+  try {
+    await connect();
+    await Promise.all([loadSettings(), loadSessions()]);
+    el.startup.classList.add("is-hidden");
+    el.app.classList.remove("is-hidden");
+    const first = state.sessions.find((session) => !session.archived);
+    if (first) await selectSession(first);
+    else updateWorkspaceLabel();
+  } catch (error) {
+    el["startup-status"].textContent = `Runtime unavailable: ${error.message}`;
+  }
+}
+
+boot();

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import (
     Any,
@@ -165,6 +165,7 @@ class SessionService:
         *,
         workspace: Optional[str | Path] = None,
         agent: str = "code",
+        model: str | None = None,
     ) -> Optional[SessionEngine]:
         engine = self._engines.get(session_id)
         if engine is not None:
@@ -189,12 +190,17 @@ class SessionService:
                 (self._default_model_provider() or "").strip()
                 or self._default_model
             )
+        selected_model = (
+            (model or "").strip()
+            if record is None and (model or "").strip()
+            else record.model if record else default_model
+        )
         engine = self._engine_factory(
             EngineRequest(
                 session_id=session_id,
                 workspace=resolved_workspace,
                 record=record,
-                model=record.model if record else default_model,
+                model=selected_model,
                 mode=record.mode if record else self._default_mode,
                 agent=record.agent if record else agent,
                 messages=list(record.messages) if record else [],
@@ -273,6 +279,34 @@ class SessionService:
                 archived=archived,
             ),
             "session_id": session_id,
+        }
+
+    def set_model(self, session_id: str, model: str) -> dict[str, Any]:
+        if session_id.startswith("__"):
+            return {"ok": False, "error": "internal session"}
+        normalized = (model or "").strip()
+        if (
+            not normalized
+            or len(normalized.encode("utf-8")) > 256
+            or any(ord(character) < 32 for character in normalized)
+        ):
+            return {"ok": False, "error": "invalid model"}
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            previous = str(getattr(engine, "model", ""))
+            engine.model = normalized
+            if not self.persist(session_id):
+                engine.model = previous
+                return {"ok": False, "error": "model persistence failed"}
+        else:
+            record = self._store.load(session_id)
+            if record is None:
+                return {"ok": False, "error": "session not found"}
+            self._store.save(replace(record, model=normalized))
+        return {
+            "ok": True,
+            "session_id": session_id,
+            "model": normalized,
         }
 
     def delete(self, session_id: str) -> dict[str, Any]:

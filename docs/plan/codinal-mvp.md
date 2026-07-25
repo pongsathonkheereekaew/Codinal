@@ -163,11 +163,16 @@ write/stage/commit → review diff → Apply ไป recorded working branch โ�
 user's main branch ไม่ถูกแตะ; conflict E2E abort + restore source สำเร็จ.
 
 ### Phase 4 — UI  (gate: E2E success scenario ผ่าน)
-- 4.1 reuse sidebar/composer/transcript/provider-picker จาก OpenWorker (filter Tier-1)
-- 4.2 approval UI ตาม risk-class
-- 4.3 **inline git diff/review ใน WebView — net-new build (F8, ไม่ใช่ vendored)** + CSP on (แก้ P1)
-- 4.4 session/worktree management UI
-- 4.5 model swap mid-session
+- 4.1 ✅ native macOS sidebar/composer/transcript/provider settings
+- 4.2 ✅ approval UI ตาม risk-class (once / task-scoped command or tool / deny)
+- 4.3 ✅ **inline git diff/review ใน WebView — net-new build (F8)** + strict CSP
+- 4.4 ✅ session/worktree management UI + native folder picker
+- 4.5 ✅ model selection for new sessions + swap between turns
+
+**Gate: ✅ PASSED (2026-07-26)** production approval broker E2E resumes an
+awaiting mutation; authenticated session/history/diff/Apply routes are wired;
+native Tauri render inspected on macOS; Python UI/runtime suite and Rust
+fmt/clippy/tests pass.
 
 **Gate:** E2E ใน §3 ผ่าน.
 

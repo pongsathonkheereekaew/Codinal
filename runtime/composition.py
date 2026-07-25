@@ -14,7 +14,7 @@ from typing import Any, Awaitable, Callable, Iterable, Optional, Protocol
 from .events import EventHub
 from .mcp import MCPManager, MCPService
 from .oauth import OAuthCoordinator
-from .policy import Approver, Mode, PermissionEngine, deny_all
+from .policy import ApprovalBroker, Approver, Mode, PermissionEngine, deny_all
 from .secrets import ProviderSecretService
 from .sessions import EngineRequest, RootDir, SessionService
 from .sessions.service import (
@@ -58,6 +58,7 @@ class RuntimeServices:
     oauth: OAuthCoordinator
     mcp: MCPService | None = None
     git: Any | None = None
+    approvals: ApprovalBroker | None = None
 
 
 def compose_runtime(
@@ -68,6 +69,7 @@ def compose_runtime(
     snapshotter: SessionSnapshotter,
     default_model: str,
     approver: Approver = deny_all,
+    approver_factory: Callable[[str], Approver] | None = None,
     curated_models: Iterable[str] = (),
     delete_callbacks: Iterable[DeleteCallback] = (),
     artifact_opener: Optional[ArtifactOpener] = None,
@@ -76,6 +78,7 @@ def compose_runtime(
     mcp_manager: MCPManager | None = None,
     workspace_preparer: WorkspacePreparer | None = None,
     git_service: Any | None = None,
+    approval_broker: ApprovalBroker | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -129,7 +132,11 @@ def compose_runtime(
             EngineBuildContext(
                 request=request,
                 permissions=permissions,
-                approver=approver,
+                approver=(
+                    approver_factory(request.session_id)
+                    if approver_factory is not None
+                    else approver
+                ),
                 roots=roots,
                 emit=emit,
                 secrets=secrets,
@@ -165,4 +172,5 @@ def compose_runtime(
         oauth=oauth_service,
         mcp=mcp,
         git=git_service,
+        approvals=approval_broker,
     )

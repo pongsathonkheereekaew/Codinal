@@ -135,6 +135,47 @@ def test_write_tool_cannot_execute_when_default_approver_denies(
     assert denied.data["status"] == "denied"
 
 
+def test_permission_event_exposes_surface_safe_approval_id(tmp_path) -> None:
+    def write_file(path):
+        return {"ok": True, "path": path}
+
+    registry = ToolRegistry(ToolManifest())
+    registry.register(
+        write_file,
+        schema=schema("write_file"),
+    )
+    provider = SequenceProvider(
+        [
+            AssistantTurn(
+                tool_calls=[
+                    ToolCall(
+                        "provider/call 1",
+                        "write_file",
+                        {"path": "file.txt"},
+                    )
+                ]
+            ),
+            AssistantTurn(text="done"),
+        ]
+    )
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(tmp_path, mode=Mode.INTERACTIVE),
+        model="openai:gpt-test",
+        approval_id_factory=lambda call: f"safe-{call.id}",
+    )
+
+    events = asyncio.run(collect(engine))
+
+    approval = next(
+        event
+        for event in events
+        if event.type is EventType.PERMISSION_REQUIRED
+    )
+    assert approval.data["approval_id"] == "safe-provider/call 1"
+
+
 def test_manifest_declared_write_tool_cannot_bypass_policy(tmp_path) -> None:
     calls = []
 

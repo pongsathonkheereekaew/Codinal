@@ -69,6 +69,16 @@ bump independently.
   `uninstall` would have deleted the policy file. Regression-locked by
   `test_uninstall_removes_only_owned`.
 
+### Added — Codinal runtime and desktop (Phases 1–4)
+- Model-agnostic OpenAI, Anthropic, and Gemini turn adapters; persistent
+  conversations; authenticated HTTP/WebSocket control plane; MCP tools.
+- Harness risk-class approval chokepoint, macOS Seatbelt execution, bounded
+  atomic mutation tools, and per-session Git worktree isolation with verified
+  apply-back and conflict rollback.
+- Native Tauri desktop shell with macOS Keychain credentials, folder picker,
+  task sidebar, transcript/composer, approval cards, model switching, and
+  inline Git diff/review.
+
 ### Pending (next session — Phase 4/5)
 - gemini-cli user-policy TOML permission mapping; deeper project-override
   detection for non-OpenCode hosts; `harness migrate` catalog/ enabled-view

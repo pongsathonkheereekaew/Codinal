@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from runtime.events import EventHub
 from runtime.git import GitWorkspaceError
 from runtime.mcp import MCPServerDef
+from runtime.policy import ApprovalOutcome
 from runtime.turns import (
     SessionBusyError,
     SessionNotFoundError,
@@ -76,12 +77,43 @@ class TurnControl(Protocol):
         user_input: str,
         workspace: str | None = None,
         agent: str = "code",
+        model: str | None = None,
         source: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
     def interrupt(self, session_id: str) -> bool: ...
 
     def is_active(self, session_id: str) -> bool: ...
+
+
+class SessionControl(Protocol):
+    def list_sessions(
+        self,
+        *,
+        workspace: str | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def messages(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def roots(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def rename(self, session_id: str, title: str) -> dict[str, Any]: ...
+
+    def set_flags(
+        self,
+        session_id: str,
+        *,
+        pinned: bool | None = None,
+        archived: bool | None = None,
+    ) -> dict[str, Any]: ...
+
+    def set_model(
+        self,
+        session_id: str,
+        model: str,
+    ) -> dict[str, Any]: ...
+
+    def delete(self, session_id: str) -> dict[str, Any]: ...
 
 
 class MCPControl(Protocol):
@@ -115,14 +147,29 @@ class GitControl(Protocol):
     def close(self) -> None: ...
 
 
+class ApprovalControl(Protocol):
+    def pending(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def resolve(
+        self,
+        session_id: str,
+        approval_id: str,
+        outcome: ApprovalOutcome,
+    ) -> bool: ...
+
+    def close(self) -> None: ...
+
+
 class ControlPlaneServices(Protocol):
     events: EventHub
     settings: SettingsView
     secrets: ProviderSecrets
     oauth: OAuthCallbacks
     turns: TurnControl
+    sessions: SessionControl
     mcp: MCPControl | None
     git: GitControl | None
+    approvals: ApprovalControl | None
 
 
 def create_control_plane_app(
@@ -144,6 +191,9 @@ def create_control_plane_app(
             git = getattr(services, "git", None)
             if git is not None:
                 git.close()
+            approvals = getattr(services, "approvals", None)
+            if approvals is not None:
+                approvals.close()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -161,6 +211,83 @@ def create_control_plane_app(
     @app.get("/v1/settings")
     async def settings() -> dict[str, Any]:
         return services.settings.view()
+
+    @app.get("/v1/sessions")
+    async def list_sessions(
+        workspace: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if workspace is not None and (
+            not 1 <= len(workspace) <= 4096
+            or not Path(workspace).is_absolute()
+        ):
+            raise HTTPException(status_code=400, detail="invalid workspace")
+        return services.sessions.list_sessions(workspace=workspace)
+
+    @app.get("/v1/sessions/{session_id}/messages")
+    async def session_messages(
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        return services.sessions.messages(session_id)
+
+    @app.get("/v1/sessions/{session_id}/roots")
+    async def session_roots(
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        return services.sessions.roots(session_id)
+
+    @app.patch("/v1/sessions/{session_id}")
+    async def update_session(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        update = await _read_session_update(request)
+        if "model" in update and services.turns.is_active(session_id):
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            )
+        result: dict[str, Any] = {"ok": True, "session_id": session_id}
+        if "title" in update:
+            result = services.sessions.rename(session_id, update["title"])
+            if not result.get("ok"):
+                raise HTTPException(status_code=404, detail="session not found")
+        if "pinned" in update or "archived" in update:
+            result = services.sessions.set_flags(
+                session_id,
+                pinned=update.get("pinned"),
+                archived=update.get("archived"),
+            )
+            if not result.get("ok"):
+                raise HTTPException(status_code=404, detail="session not found")
+        if "model" in update:
+            result = services.sessions.set_model(
+                session_id,
+                update["model"],
+            )
+            if not result.get("ok"):
+                raise HTTPException(status_code=404, detail="session not found")
+        return result
+
+    @app.delete("/v1/sessions/{session_id}")
+    async def delete_session(session_id: str) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.turns.is_active(session_id):
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            )
+        result = services.sessions.delete(session_id)
+        if result.get("cleanup_errors"):
+            raise HTTPException(
+                status_code=409,
+                detail="session cleanup failed",
+            )
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail="session not found")
+        return result
 
     @app.get("/v1/secrets/providers")
     async def provider_secret_status() -> list[dict[str, Any]]:
@@ -210,6 +337,7 @@ def create_control_plane_app(
                 user_input=turn["input"],
                 workspace=turn.get("workspace"),
                 agent=turn.get("agent", "code"),
+                model=turn.get("model"),
                 source=turn.get("source"),
             )
         except SessionNotFoundError:
@@ -233,6 +361,34 @@ def create_control_plane_app(
             "ok": services.turns.interrupt(session_id),
             "session_id": session_id,
         }
+
+    @app.get("/v1/sessions/{session_id}/approvals")
+    async def list_approvals(session_id: str) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        approvals = getattr(services, "approvals", None)
+        if approvals is None:
+            return []
+        return approvals.pending(session_id)
+
+    @app.post("/v1/sessions/{session_id}/approvals/{approval_id}")
+    async def resolve_approval(
+        session_id: str,
+        approval_id: str,
+        request: Request,
+    ) -> dict[str, bool]:
+        _validate_public_session_id(session_id)
+        if re.fullmatch(r"[a-f0-9]{32}", approval_id) is None:
+            raise HTTPException(status_code=400, detail="invalid approval id")
+        approvals = getattr(services, "approvals", None)
+        if approvals is None:
+            raise HTTPException(status_code=503, detail="approvals unavailable")
+        outcome = await _read_approval(request)
+        if not approvals.resolve(session_id, approval_id, outcome):
+            raise HTTPException(
+                status_code=409,
+                detail="approval is not pending or outcome is not applicable",
+            )
+        return {"ok": True}
 
     @app.post("/v1/sessions/{session_id}/mcp/connect")
     async def connect_mcp(
@@ -385,6 +541,7 @@ async def _read_turn(request: Request) -> dict[str, Any]:
             "input",
             "workspace",
             "agent",
+            "model",
             "source",
         }
         or not isinstance(body["input"], str)
@@ -405,6 +562,15 @@ async def _read_turn(request: Request) -> dict[str, Any]:
             )
         )
         or (
+            "model" in body
+            and (
+                not isinstance(body["model"], str)
+                or not 1 <= len(body["model"].encode("utf-8")) <= 256
+                or not body["model"].strip()
+                or any(ord(character) < 32 for character in body["model"])
+            )
+        )
+        or (
             "source" in body
             and (
                 not isinstance(body["source"], dict)
@@ -413,6 +579,69 @@ async def _read_turn(request: Request) -> dict[str, Any]:
         )
     ):
         raise HTTPException(status_code=400, detail="invalid turn payload")
+    return body
+
+
+async def _read_approval(request: Request) -> ApprovalOutcome:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid approval payload",
+        ) from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"outcome"}
+        or not isinstance(body["outcome"], str)
+    ):
+        raise HTTPException(status_code=400, detail="invalid approval payload")
+    try:
+        return ApprovalOutcome(body["outcome"])
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="invalid approval payload",
+        ) from None
+
+
+async def _read_session_update(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid session update",
+        ) from None
+    if (
+        not isinstance(body, dict)
+        or not body
+        or not set(body) <= {"title", "pinned", "archived", "model"}
+        or (
+            "title" in body
+            and (
+                not isinstance(body["title"], str)
+                or len(body["title"].encode("utf-8")) > 512
+            )
+        )
+        or (
+            "pinned" in body
+            and not isinstance(body["pinned"], bool)
+        )
+        or (
+            "archived" in body
+            and not isinstance(body["archived"], bool)
+        )
+        or (
+            "model" in body
+            and (
+                not isinstance(body["model"], str)
+                or not 1 <= len(body["model"].encode("utf-8")) <= 256
+                or any(ord(character) < 32 for character in body["model"])
+            )
+        )
+    ):
+        raise HTTPException(status_code=400, detail="invalid session update")
     return body
 
 

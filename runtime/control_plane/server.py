@@ -20,7 +20,7 @@ from runtime.git import (
 )
 from runtime.mcp import MCPManager
 from runtime.oauth import OAuthCoordinator
-from runtime.policy import Approver, deny_all
+from runtime.policy import ApprovalBroker, Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.sandbox import SandboxedShell
@@ -92,6 +92,7 @@ def build_services(
     store = ConversationStore(config.data_dir)
     provider_client = provider or ProviderRouter(secret_service)
     git_service = GitWorktreeService(config.data_dir)
+    approval_broker = ApprovalBroker()
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -138,6 +139,10 @@ def build_services(
             model=context.request.model,
             instructions=_coding_instructions(),
             approver=context.approver,
+            approval_id_factory=lambda call: approval_broker.approval_id(
+                context.request.session_id,
+                call.id,
+            ),
             messages=context.request.messages,
             interrupt_hooks=[
                 shell.interrupt,
@@ -199,13 +204,22 @@ def build_services(
         engine_builder=build_engine,
         snapshotter=snapshot,
         default_model=config.default_model,
+        curated_models=(
+            "openai:gpt-5.6-sol",
+            "anthropic:claude-sonnet-4-6",
+            "gemini:gemini-2.5-flash",
+        ),
         approver=approver,
+        approver_factory=(
+            approval_broker.approver if approver is deny_all else None
+        ),
         delete_callbacks=(delete_git_workspace, delete_sandbox),
         provider_secrets=secret_service,
         oauth=oauth or OAuthCoordinator(),
         mcp_manager=mcp_manager or MCPManager(),
         workspace_preparer=prepare_workspace,
         git_service=git_service,
+        approval_broker=approval_broker,
     )
 
 

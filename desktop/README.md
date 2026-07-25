@@ -1,13 +1,30 @@
-# desktop/
+# Codinal desktop
 
-Codinal Tauri app — React + Tauri v2 (Rust host). Populated in Phase 1+.
+Codinal is a native macOS Tauri v2 application backed by an authenticated
+Python sidecar.
 
-- `src-tauri/` — Rust: policy host (mints per-session bearer token, spawns Python sidecar), worktree service, sandbox launcher (`sandbox-exec` profile)
-- `ui/` — React UI (vendored from OpenWorker `surfaces/gui/src/components/*`, rewired at the seam: `api.ts`, `App.tsx` WS event switch, `itemsFromMessages.ts`)
+- `src-tauri/` owns process launch, one-time bearer credentials, macOS
+  Keychain provider secrets, OAuth deep links, the native titlebar, and the
+  workspace folder picker.
+- `ui/` is a dependency-free WebView client with a task sidebar, transcript,
+  composer, risk-scoped approval cards, session/model controls, and an inline
+  Git review/apply panel.
+- The UI can reach only the random loopback sidecar under the production CSP.
+  Mutations still pass through runtime policy, sandbox, and Git worktree
+  isolation.
 
-See:
-- `docs/decisions/0001-codinal-foundation.md` — D4 (sandbox), D7 (control-plane + token), D8 (distribution)
-- `docs/plan/codinal-mvp.md` — Phase 1/3/4
-- `docs/plan/openworker-boundary-map.md` — vendor/rewire/rewrite split
+Run the development app:
 
-**Phase 0a spikes (de-risked 2026-07-25):** control-plane auth ✅, sandbox-exec notarization ✅, embedded-Python notarization ✅. See plan for evidence.
+```bash
+cargo run --manifest-path desktop/src-tauri/Cargo.toml
+```
+
+Run all acceptance gates from the repository root:
+
+```bash
+bash verify.sh
+```
+
+Architecture and release gates are documented in
+`docs/decisions/0001-codinal-foundation.md` and
+`docs/plan/codinal-mvp.md`.

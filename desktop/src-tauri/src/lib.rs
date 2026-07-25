@@ -2,6 +2,7 @@ pub mod control_client;
 pub mod host;
 pub mod oauth;
 pub mod secrets;
+pub mod workspace;
 
 use std::process::Child;
 use std::sync::Mutex;
@@ -20,6 +21,7 @@ use oauth::parse_oauth_deep_link;
 use secrets::{
     encode_secret_bootstrap, provider_secret_status, update_provider_secret, PlatformSecretVault,
 };
+use workspace::choose_workspace;
 
 struct DesktopState {
     process: Mutex<Option<Child>>,
@@ -116,6 +118,13 @@ fn delete_provider_secret(
     .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn pick_workspace() -> Result<String, String> {
+    choose_workspace()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| error.to_string())
+}
+
 fn relay_deep_links(app_handle: tauri::AppHandle, urls: Vec<url::Url>) {
     for url in urls {
         let Ok(callback) = parse_oauth_deep_link(&url) else {
@@ -140,7 +149,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_provider_secret_status,
             set_provider_secret,
-            delete_provider_secret
+            delete_provider_secret,
+            pick_workspace
         ])
         .setup(|app| {
             let token = mint_session_token()?;
@@ -173,12 +183,17 @@ pub fn run() {
                 relay_deep_links(app.handle().clone(), urls);
             }
 
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("Codinal")
-                .inner_size(1180.0, 760.0)
-                .min_inner_size(760.0, 520.0)
-                .initialization_script(initialization_script(port, &token))
-                .build()?;
+            let window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("Codinal")
+                    .inner_size(1180.0, 760.0)
+                    .min_inner_size(760.0, 520.0)
+                    .initialization_script(initialization_script(port, &token));
+            #[cfg(target_os = "macos")]
+            let window = window
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+            window.build()?;
             Ok(())
         })
         .build(tauri::generate_context!())

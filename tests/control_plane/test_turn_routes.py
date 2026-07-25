@@ -30,10 +30,11 @@ class FakeTurns:
         user_input,
         workspace=None,
         agent="code",
+        model=None,
         source=None,
     ):
         self.started.append(
-            (session_id, user_input, workspace, agent, source)
+            (session_id, user_input, workspace, agent, model, source)
         )
         return {"ok": True, "session_id": session_id}
 
@@ -81,6 +82,7 @@ def test_turn_route_requires_auth_and_starts_bounded_request(tmp_path):
             "inspect the project",
             str(tmp_path),
             "code",
+            None,
             None,
         )
     ]

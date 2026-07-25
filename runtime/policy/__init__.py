@@ -28,6 +28,7 @@ from .approval import (
     PermissionRequest,
     deny_all,
 )
+from .approval_broker import ApprovalBroker
 from .manifest import ToolManifest, ToolSpec
 from .tool_calls import (
     ToolCall,
@@ -45,6 +46,7 @@ __all__ = [
     "READ_ONLY_MODES",
     "standing_rule_candidate",
     "ApprovalOutcome",
+    "ApprovalBroker",
     "Approver",
     "PermissionRequest",
     "deny_all",

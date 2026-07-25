@@ -161,6 +161,25 @@ def test_new_engine_requires_existing_workspace_and_touches_it(tmp_path):
     assert store.touched_workspaces == [str(workspace.resolve())]
 
 
+def test_new_engine_accepts_selected_model_without_overriding_restore(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    requests = []
+    service = SessionService(
+        MemorySessionStore(),
+        scratch_base=tmp_path / "scratch",
+        engine_factory=lambda request: requests.append(request) or object(),
+    )
+
+    service.get_engine(
+        "new",
+        workspace=workspace,
+        model="gemini:gemini-selected",
+    )
+
+    assert requests[0].model == "gemini:gemini-selected"
+
+
 def test_persist_saves_snapshot_from_injected_adapter(tmp_path):
     store = MemorySessionStore()
     engine = object()
@@ -255,6 +274,26 @@ def test_set_flags_updates_public_session_only(tmp_path):
     assert store.load("s1").pinned is True
     assert store.load("s1").archived is True
     assert service.set_flags("__system", pinned=True)["ok"] is False
+
+
+def test_set_model_updates_persisted_session_and_validates_value(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="openai:gpt-old",
+        mode="interactive",
+    )
+    store = MemorySessionStore(record)
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    assert service.set_model("s1", " anthropic:claude-new ") == {
+        "ok": True,
+        "session_id": "s1",
+        "model": "anthropic:claude-new",
+    }
+    assert store.load("s1").model == "anthropic:claude-new"
+    assert service.set_model("s1", "\n")["ok"] is False
+    assert service.set_model("missing", "openai:gpt")["ok"] is False
 
 
 def test_delete_interrupts_engine_runs_cleanup_and_removes_only_scratch(tmp_path):

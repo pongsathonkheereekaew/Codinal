@@ -216,6 +216,92 @@ def test_production_mutation_requires_approval_and_persists_result(
     assert not sandbox_directories[0].exists()
 
 
+def test_production_default_approval_broker_resumes_turn(tmp_path):
+    class WriteThenAnswerProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "provider/call 1",
+                            "write_file",
+                            {
+                                "path": "broker-approved.txt",
+                                "content": "approved through UI\n",
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text="mutation complete")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=WriteThenAnswerProvider(),
+    )
+    events = []
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/session-broker",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/session-broker/turns",
+                headers=AUTH,
+                json={
+                    "input": "create broker-approved.txt",
+                    "workspace": str(workspace),
+                },
+            )
+            while not events or events[-1]["type"] != "turn_end":
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "permission_required":
+                    resolved = client.post(
+                        (
+                            "/v1/sessions/session-broker/approvals/"
+                            f"{event['approval_id']}"
+                        ),
+                        headers=AUTH,
+                        json={"outcome": "once"},
+                    )
+                    assert resolved.status_code == 200
+
+    assert accepted.status_code == 202
+    assert (workspace / "broker-approved.txt").read_text(
+        encoding="utf-8"
+    ) == "approved through UI\n"
+    approval_event = next(
+        event
+        for event in events
+        if event["type"] == "permission_required"
+    )
+    assert approval_event["approval_id"] == services.approvals.approval_id(
+        "session-broker",
+        "provider/call 1",
+    )
+
+
 @pytest.mark.skipif(
     platform.system() != "Darwin",
     reason="production worktree creation uses macOS Seatbelt",
