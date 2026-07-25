@@ -33,7 +33,9 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 - `mcp/` — Phase 2 official-SDK transport adapted from OpenWorker; connections
   require an explicit approved host action, remote HTTP is HTTPS or loopback,
   stdio receives only a minimal safe environment, and registered tools are
-  always manifest-declared `external` actions requiring approval
+  always manifest-declared `external` actions requiring approval. Authenticated
+  session connect mutates only an idle engine registry, and app shutdown closes
+  every live transport/child process
 - `tools/` — manifest-bound implementation registry; requires explicit strict
   schemas and refuses undeclared tools; production currently exposes bounded
   root-scoped `read_file`, `list_files`, and literal `grep` without spawning

@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from runtime.events import Event, EventHub
+from runtime.events import Event, EventHub, EventType
 from runtime.sessions import SessionService
 
 
@@ -71,20 +71,26 @@ class TurnCoordinator:
         *,
         source: dict[str, Any] | None,
     ) -> None:
+        terminal: dict[str, Any] | None = None
         try:
             async for event in engine.run(user_input, source=source):
-                await self._events.publish_session(
-                    session_id,
-                    _wire_event(event),
-                )
+                message = _wire_event(event)
+                if event.type in {
+                    EventType.TURN_END,
+                    EventType.ERROR,
+                    EventType.INTERRUPTED,
+                }:
+                    terminal = message
+                else:
+                    await self._events.publish_session(
+                        session_id,
+                        message,
+                    )
         except Exception:
-            await self._events.publish_session(
-                session_id,
-                {
-                    "type": "error",
-                    "error": "turn execution failed",
-                },
-            )
+            terminal = {
+                "type": "error",
+                "error": "turn execution failed",
+            }
         finally:
             try:
                 persisted = self._sessions.persist(session_id)
@@ -102,6 +108,8 @@ class TurnCoordinator:
             if self._active.get(session_id) is current:
                 self._active.pop(session_id, None)
                 self._engines.pop(session_id, None)
+            if terminal is not None:
+                await self._events.publish_session(session_id, terminal)
 
     def interrupt(self, session_id: str) -> bool:
         task = self._active.get(session_id)
@@ -110,6 +118,10 @@ class TurnCoordinator:
             return False
         engine.request_interrupt()
         return True
+
+    def is_active(self, session_id: str) -> bool:
+        task = self._active.get(session_id)
+        return task is not None and not task.done()
 
     async def wait(self, session_id: str) -> bool:
         task = self._active.get(session_id)

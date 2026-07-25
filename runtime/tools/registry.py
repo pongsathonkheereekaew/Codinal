@@ -46,6 +46,10 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
+    @property
+    def manifest(self) -> ToolManifest:
+        return self._manifest
+
     def get(self, name: str) -> Optional[ToolSpec]:
         return self._tools.get(name)
 

@@ -118,8 +118,9 @@ harness-flow/                       ← product repo "Codinal"
   validation และ rollback tests. MCP official-SDK transport + dynamic tool
   wrapper เสร็จแล้ว: explicit-approved connect เท่านั้น, HTTPS/loopback HTTP,
   minimal stdio env, collision-resistant names, strict bounded schemas และทุก
-  tool ถูกประกาศเป็น external/requires-approval. Session/UI connect wiring
-  ยัง pending.
+  tool ถูกประกาศเป็น external/requires-approval. Authenticated session connect
+  wiring เสร็จแล้วและ block registry mutation ระหว่าง active turn; UI จัดการ
+  server/disconnect อยู่ Phase 4.
 - 2.3 tool registry: manifest ใน `harness/policy`, impl ใน `runtime/tools`
 - 2.4 wire runtime → control plane (subscribe model; ห้าม direct exec).
   **Progress:** เพิ่ม authenticated bounded turn/interrupt routes +
@@ -129,6 +130,11 @@ harness-flow/                       ← product repo "Codinal"
   root-scoped read registry จริงแล้ว; E2E bearer POST → WebSocket tool events →
   restart/load history ผ่าน. Write/shell tools และ approval UI ยัง pending.
 - 2.5 รัน conformance → ประกาศ Tier-1 เบื้องต้น (≥ 3 cloud; local = tier-best-effort ตามผล suite จริง)
+
+**Phase 2 engineering gate progress:** scripted production E2E ผ่านครบ
+prompt → MCP tool-call → permission approval → remote result → final answer →
+transactional snapshot/restart. การประกาศ live Tier-1 ยัง pending credentials
+และ conformance run จริงของแต่ละ provider; ห้ามอนุมานจาก scripted test.
 
 **Gate:** Tier-1 turn ครบ (prompt → tool-call → approval → result) โดยผ่าน policy port ทุกขั้น.
 

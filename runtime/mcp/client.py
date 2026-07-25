@@ -28,6 +28,7 @@ class _Connection:
 class MCPManager:
     def __init__(self) -> None:
         self._connections: dict[str, _Connection] = {}
+        self._definitions: dict[str, MCPServerDef] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
 
@@ -43,12 +44,15 @@ class MCPManager:
         async with self._lock:
             existing = self._connections.get(server.name)
             if existing is not None:
+                if self._definitions.get(server.name) != server:
+                    raise ValueError("MCP server definition changed")
                 return list(existing.tools)
             ready = asyncio.get_running_loop().create_future()
             task = asyncio.create_task(self._serve(server, ready))
             self._tasks[server.name] = task
             connection = await ready
             self._connections[server.name] = connection
+            self._definitions[server.name] = server
             return list(connection.tools)
 
     async def call(
@@ -77,6 +81,7 @@ class MCPManager:
             except Exception:
                 pass
         self._connections.clear()
+        self._definitions.clear()
         self._tasks.clear()
 
     async def _serve(
@@ -116,6 +121,7 @@ class MCPManager:
                 )
         finally:
             self._connections.pop(server.name, None)
+            self._definitions.pop(server.name, None)
             self._tasks.pop(server.name, None)
 
 

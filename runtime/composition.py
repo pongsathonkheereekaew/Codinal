@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional, Protocol
 
 from .events import EventHub
+from .mcp import MCPManager, MCPService
 from .oauth import OAuthCoordinator
 from .policy import Approver, Mode, PermissionEngine, deny_all
 from .secrets import ProviderSecretService
@@ -51,6 +52,7 @@ class RuntimeServices:
     settings: SettingsService
     secrets: ProviderSecretService
     oauth: OAuthCoordinator
+    mcp: MCPService | None = None
 
 
 def compose_runtime(
@@ -66,6 +68,7 @@ def compose_runtime(
     artifact_opener: Optional[ArtifactOpener] = None,
     provider_secrets: ProviderSecretService | None = None,
     oauth: OAuthCoordinator | None = None,
+    mcp_manager: MCPManager | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -130,6 +133,15 @@ def compose_runtime(
         default_model_provider=lambda: str(settings.view()["model"]),
     )
     turns = TurnCoordinator(sessions=sessions, events=events)
+    mcp = (
+        MCPService(
+            manager=mcp_manager,
+            sessions=sessions,
+            turns=turns,
+        )
+        if mcp_manager is not None
+        else None
+    )
     return RuntimeServices(
         sessions=sessions,
         turns=turns,
@@ -137,4 +149,5 @@ def compose_runtime(
         settings=settings,
         secrets=secrets,
         oauth=oauth_service,
+        mcp=mcp,
     )

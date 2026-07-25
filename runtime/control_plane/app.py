@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from runtime.events import EventHub
+from runtime.mcp import MCPServerDef
 from runtime.turns import SessionBusyError, SessionNotFoundError
 
 from .auth import (
@@ -76,12 +77,25 @@ class TurnControl(Protocol):
     def interrupt(self, session_id: str) -> bool: ...
 
 
+class MCPControl(Protocol):
+    async def connect(
+        self,
+        session_id: str,
+        server: MCPServerDef,
+        *,
+        approved: bool,
+    ) -> dict[str, Any]: ...
+
+    async def aclose(self) -> None: ...
+
+
 class ControlPlaneServices(Protocol):
     events: EventHub
     settings: SettingsView
     secrets: ProviderSecrets
     oauth: OAuthCallbacks
     turns: TurnControl
+    mcp: MCPControl | None
 
 
 def create_control_plane_app(
@@ -91,11 +105,22 @@ def create_control_plane_app(
     allowed_origins: tuple[str, ...] = DEFAULT_ALLOWED_ORIGINS,
 ) -> FastAPI:
     validate_session_token(token)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            mcp = getattr(services, "mcp", None)
+            if mcp is not None:
+                await mcp.aclose()
+
     app = FastAPI(
         title="Codinal Control Plane",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
     app.state.services = services
 
@@ -174,6 +199,41 @@ def create_control_plane_app(
             "session_id": session_id,
         }
 
+    @app.post("/v1/sessions/{session_id}/mcp/connect")
+    async def connect_mcp(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.mcp is None:
+            raise HTTPException(status_code=503, detail="MCP unavailable")
+        server = await _read_mcp_server(request)
+        try:
+            return await services.mcp.connect(
+                session_id,
+                server,
+                approved=True,
+            )
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail="session not found") from None
+        except SessionBusyError:
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            ) from None
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="MCP connect denied") from None
+        except ValueError:
+            raise HTTPException(
+                status_code=409,
+                detail="MCP server definition changed",
+            ) from None
+        except RuntimeError:
+            raise HTTPException(
+                status_code=502,
+                detail="MCP connection failed",
+            ) from None
+
     @app.websocket("/ws/events")
     async def global_events(websocket: WebSocket) -> None:
         await _serve_events(websocket, services.events.subscribe_global)
@@ -251,6 +311,40 @@ async def _read_turn(request: Request) -> dict[str, Any]:
     ):
         raise HTTPException(status_code=400, detail="invalid turn payload")
     return body
+
+
+async def _read_mcp_server(request: Request) -> MCPServerDef:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="invalid MCP server") from None
+    allowed = {
+        "name",
+        "transport",
+        "command",
+        "args",
+        "cwd",
+        "url",
+        "include_tools",
+        "exclude_tools",
+    }
+    server = body.get("server") if isinstance(body, dict) else None
+    try:
+        encoded = json.dumps(server, allow_nan=False)
+    except (TypeError, ValueError, OverflowError):
+        encoded = ""
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"server"}
+        or not isinstance(server, dict)
+        or not set(server) <= allowed
+        or len(encoded.encode("utf-8")) > 65_536
+    ):
+        raise HTTPException(status_code=400, detail="invalid MCP server")
+    try:
+        return MCPServerDef(**server)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid MCP server") from None
 
 
 async def _read_api_key(request: Request) -> str:

@@ -183,7 +183,15 @@ approval. Remote HTTP จำกัด HTTPS หรือ loopback HTTP ไม่
 query, stdio ใช้ executable+argv ไม่ผ่าน shell และ child env เป็น safe
 allowlist. Dynamic names กัน collision ด้วย hash, schemas ถูก bound/strict,
 manifest risk เป็น external+requires-approval เสมอ และ remote error body ไม่
-เข้า model history. Session/UI connect wiring เป็น slice ถัดไป.
+เข้า model history.
+
+**Phase 2.4 MCP session wiring (2026-07-26):** authenticated explicit-connect
+route attach remote tools เข้าเฉพาะ idle live session; missing session ไม่เปิด
+external connection และถ้า turn เริ่มระหว่าง connect จะไม่ mutate registry.
+Server name reuse กับ definition อื่นถูก reject, app lifespan ปิด transports/
+stdio children. Scripted production E2E พิสูจน์ prompt → dynamic MCP call →
+external approval → result → final answer → persisted restart. UI server
+management/disconnect อยู่ Phase 4; live provider tier ยังต้อง conformance จริง.
 
 ### server/app.py — REJECT as unit (P0s ครบ)
 

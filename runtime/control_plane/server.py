@@ -11,7 +11,9 @@ from typing import Any, TextIO
 import uvicorn
 
 from runtime import RuntimeServices, compose_runtime
+from runtime.mcp import MCPManager
 from runtime.oauth import OAuthCoordinator
+from runtime.policy import Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.sessions import SessionRecord
@@ -71,6 +73,8 @@ def build_services(
     secrets: ProviderSecretService | None = None,
     oauth: OAuthCoordinator | None = None,
     provider: ProviderClient | None = None,
+    mcp_manager: MCPManager | None = None,
+    approver: Approver = deny_all,
 ) -> RuntimeServices:
     secret_service = secrets or ProviderSecretService()
     store = ConversationStore(config.data_dir)
@@ -126,8 +130,10 @@ def build_services(
         engine_builder=build_engine,
         snapshotter=snapshot,
         default_model=config.default_model,
+        approver=approver,
         provider_secrets=secret_service,
         oauth=oauth or OAuthCoordinator(),
+        mcp_manager=mcp_manager or MCPManager(),
     )
 
 
