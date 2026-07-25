@@ -86,7 +86,7 @@ harness-flow/                       ← product repo "Codinal"
 
 ### Phase 1 — Control plane core  (gate: policy ห้าม bypass ได้)
 - 1.1 `harness/policy` risk-class engine (read/write_local/exec/external) + approval port
-- 1.2 แยก `SessionManager` (`server/manager.py` ~3,300 จริง, ไม่ใช่ `sessions.py`) → EXTRACT 5 slices (sessions/events/automations/connectors-gateway/settings) + REWRITE glue (per `docs/plan/openworker-boundary-map.md`). ทำทีละ vertical slice พร้อม test/commit แยก โดยเริ่ม `sessions`; checkout source ที่ pin ใน `/tmp` แล้ว copy เฉพาะ module ที่ใช้พร้อม provenance header (ไม่ commit source tree ทั้งก้อน). **Progress:** `sessions` และ `events` อยู่ใน `runtime/` แล้ว; อีก 3 slices + glue ยัง pending.
+- 1.2 แยก `SessionManager` (`server/manager.py` ~3,300 จริง, ไม่ใช่ `sessions.py`) → EXTRACT boundary slices + REWRITE glue (per `docs/plan/openworker-boundary-map.md`). ทำทีละ vertical slice พร้อม test/commit แยก โดยเริ่ม `sessions`; checkout source ที่ pin ใน `/tmp` แล้ว copy เฉพาะ module ที่ใช้พร้อม provenance header (ไม่ commit source tree ทั้งก้อน). **Progress:** `sessions`, `events` และ non-secret `settings` อยู่ใน `runtime/` แล้ว; `automations` defer post-MVP ตาม D9; scoped `connectors-gateway` และ glue ยัง pending.
 - 1.3 Control plane auth (F1-reopen): สร้าง Tauri skeleton ขั้นต่ำใน phase นี้; loopback HTTP+WS **+ mandatory per-session bearer token** บนทุก `/v1/*` route + 2 WS; Rust host mint token + inject ผ่าน spawn channel (เดียวกับ `lib.rs:576-583` ที่ inject port). P0 #2 แก้ด้วย auth ไม่ใช่ด้วยการเอา server ออก (stdio บังคับ rewrite UI bridge — แพง; spike 0a.4)
 - 1.4 Keychain secret adapter (แก้ P1 plaintext)
 - 1.5 OAuth module: consume `app_state` ให้ถูก (แก้ P0)

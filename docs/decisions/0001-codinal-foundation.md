@@ -100,6 +100,10 @@ per-file provenance header; ไม่ commit OpenWorker source tree ทั้ง
 
 **Out (non-goals v1):** remote worker runtime · subagent fan-out เต็มรูปแบบ · connector นอก PR/issue · schedule/inbox · Windows/Linux · plugin marketplace · team collab · mobile · self-host server mode · inline review นอก coding artifacts
 
+**Phase 1 scope amendment (2026-07-26):** defer `automations` slice จาก
+OpenWorker `SessionManager` ไป post-MVP เพราะ schedule/inbox เป็น v1 non-goal ตาม D9;
+ไม่ vendor dead surface เพียงเพื่อให้ครบ boundary-map เดิม.
+
 ### D10 — Repo layout: Product repo, harness เป็น subpath (contract-preserving migration)
 repo `harness-flow` นี้กลายเป็น product repo "Codinal". harness policy/skills/memory/standards ย้ายไว้ใน `harness/` subpath ทำหน้าที่เป็น vendored control plane ของ Codinal เอง. root มี Tauri app + backend (Rust + Python). docs/ คงไว้ และเพิ่ม `docs/decisions/` (ที่นี่) กับ `docs/plan/`.
 

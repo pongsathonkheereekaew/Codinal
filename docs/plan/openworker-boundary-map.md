@@ -20,7 +20,7 @@ source: andrewyng/openworker@54b4bfd82d75704a4079ecea4f8f622aa152dbde
 | `coworker/tools/*` | — | **EXTRACT/REWRITE** | tool impl ใช้ได้; manifest ย้ายไป harness/policy |
 | `coworker/permissions.py` `risk.py` | 296 | **VENDOR + light-adapt** | already risk-class-based + stdlib-only; Codinal adaptation = drop the `connectors.tool_defs` import in `standing_rule_candidate` (connectors deferred). Vendored 2026-07-25 into `runtime/policy/` (20 tests green). |
 | `coworker/mcp/*` | — | **VENDOR (transport)** | แยก transport จาก policy |
-| `coworker/server/manager.py` (SessionManager) | 3,505 | **EXTRACT 5 slices + REWRITE glue** | `sessions` + `events` → `runtime/` ✅; อีก 3 slices + glue pending — see §server |
+| `coworker/server/manager.py` (SessionManager) | 3,505 | **EXTRACT slices + REWRITE glue** | `sessions` + `events` + `settings` ✅; `automations` deferred; scoped connectors + glue pending |
 | `coworker/server/app.py` (control plane) | 1,773 | **REWRITE (reject as unit)** | ทุก `/v1/*` unauthenticated; 2 WS เช็คแค่ spoofable Origin; `/oauth/callback` CSRF P0 |
 | `coworker/server/run.py` orphan-watcher | 156 | **REUSE logic** | orphan-kill; launcher entry ทิ้ง |
 | `coworker/connectors/integration_tools.py` | 4,892 | **REWRITE / out-of-scope v1** | connector นอก PR/issue เป็น non-goal |
@@ -72,8 +72,11 @@ REWRITE (entangled): `__init__` (105-226 wires-everything), policy/approval glue
 `runtime.sessions.SessionService` หลัง injected `SessionStore`, engine factory/snapshotter,
 delete callbacks และ artifact opener. Runtime ไม่ own provider/MCP และไม่เรียก OS opener
 โดยตรง. `events` ถูก extract เป็น `runtime.events.EventHub` สำหรับ global/per-session
-async fan-out พร้อม unsubscribe และ dead-listener pruning. อีก 3 slices และ composition
-glue ยังไม่เริ่ม.
+async fan-out พร้อม unsubscribe และ dead-listener pruning. `settings` ถูก extract เป็น
+`runtime.settings.SettingsService` + atomic `JsonPreferenceStore`; JSON เก็บเฉพาะ
+non-secret preferences ส่วน provider credentials เป็น Phase 1.4 Keychain port.
+`automations` defer post-MVP ตาม ADR D9; active remainder คือ connectors gateway
+ที่จำกัด PR/issue และ composition glue.
 
 ### server/app.py — REJECT as unit (P0s ครบ)
 
