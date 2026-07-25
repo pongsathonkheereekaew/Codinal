@@ -111,6 +111,13 @@ conformance runner ที่รักษา system role/tool schema และ sa
 SDK-specific adapters/router ยังไม่ถูก vendor ใน slice นี้ เพื่อแยก review
 credential resolution ออกจาก contract.
 
+**Phase 2.1 OpenAI adapter progress (2026-07-26):** vendor
+`coworker/providers/openai_provider.py` พร้อม provenance, pin OpenAI SDK ใน
+hashed runtime lock และคง text/tool/stream/reasoning normalization เดิม.
+Codinal adaptation ลบ `OPENAI_API_KEY` environment fallback: production key
+resolve จาก `ProviderSecretService` memory mirror เท่านั้น; error และ outbound
+message ไม่ echo key/foreign provider sidecar.
+
 ### server/app.py — REJECT as unit (P0s ครบ)
 
 - Bind `127.0.0.1:8765` (config.py:51); desktop sidecar random port → `COWORKER_PORT` (run.py:146)
