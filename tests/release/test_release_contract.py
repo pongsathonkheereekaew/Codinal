@@ -20,6 +20,9 @@ def test_release_builder_pins_and_verifies_embedded_python():
     assert "codesign --verify --deep --strict" in script
     assert "stapler validate" in script
     assert "spctl --assess" in script
+    assert "--keychain-profile" in script
+    assert "notarytool submit" in script
+    assert "stapler staple" in script
     assert "TAURI_SIGNING_PRIVATE_KEY_PATH" in script
     assert 'UPDATER_SOURCE_SIGNATURE="$UPDATER_SOURCE.sig"' in script
     assert '"$TAURI_ROOT/Cargo.toml"' in script

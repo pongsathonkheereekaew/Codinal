@@ -121,6 +121,14 @@ test -f "$APP/Contents/Resources/runtime/python-sbom.cdx.json"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
+  if [ -n "${CODINAL_NOTARY_PROFILE:-}" ]; then
+    NOTARY_ARCHIVE="$BUILD_DIR/Codinal-notary.zip"
+    ditto -c -k --keepParent "$APP" "$NOTARY_ARCHIVE"
+    xcrun notarytool submit "$NOTARY_ARCHIVE" \
+      --keychain-profile "$CODINAL_NOTARY_PROFILE" \
+      --wait
+    xcrun stapler staple "$APP"
+  fi
   xcrun stapler validate "$APP"
   spctl --assess --type execute --verbose=2 "$APP"
 fi

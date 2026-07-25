@@ -35,13 +35,26 @@ It never creates a release from an untagged commit.
 
 ## Local release check
 
-Set the same signing, notarization, and updater variables used by CI, then run:
+For a local release, store a fresh app-specific password in Keychain using the
+secure prompt (the password does not enter shell history):
+
+```bash
+xcrun notarytool store-credentials codinal-release \
+  --apple-id YOUR_APPLE_ID \
+  --team-id BL28MB2PM9
+```
+
+Set the signing and updater variables, then run:
 
 ```bash
 CODINAL_REQUIRE_SIGNING=1 \
 CODINAL_REQUIRE_NOTARIZATION=1 \
+CODINAL_NOTARY_PROFILE=codinal-release \
 bash scripts/build-macos-release.sh
 ```
+
+CI instead uses the Apple and updater secrets listed above. Do not reuse an
+old credential profile after its password has been exposed or revoked.
 
 Success requires all of these checks to pass:
 
