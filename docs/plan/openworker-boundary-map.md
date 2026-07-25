@@ -157,8 +157,8 @@ coordinator และ authenticated `POST /v1/sessions/{id}/turns|interrupt`.
 หนึ่ง session มี active turn ได้หนึ่งงาน; events จาก TurnEngine ถูก serialize
 เป็น `{type, ...data}` ไป session WebSocket และ snapshot ใน `finally`.
 Payload/session id ถูก bound และ unexpected error ไม่ echo exception.
-Standalone sidecar ยังใช้ unavailable/fail-closed turn service จนกว่า
-production conversation store + engine builder จะถูก compose ใน slice ถัดไป.
+Standalone production composition ถูกปิดใน slice ถัดมา: ConversationStore,
+ProviderRouter, TurnEngine และ bounded read registry ถูก wire เข้าด้วยกัน.
 
 **Phase 2.2 conversation storage (2026-07-26):** adapt
 `coworker/conversations.py` จาก SQLite-index + แยก JSONL มาเป็น SQLite
@@ -167,6 +167,14 @@ split-brain ระหว่าง index/log. Store validate public session id �
 non-finite/non-JSON data ก่อน transaction, รองรับ append และ atomic replace
 เมื่อ history diverge, เปิด foreign-key cascade และตั้ง directory/database
 เป็น owner-only. MCP transport ยัง pending.
+
+**Phase 2.4 production composition (2026-07-26):** standalone sidecar เลิกใช้
+placeholder แล้ว. `build_services()` compose transactional store, secure
+provider router, policy-bound TurnEngine, session coordinator และ core read
+registry. `read_file`/`list_files`/literal `grep` validate live roots ซ้ำ,
+block parent/symlink escape, จำกัด bytes/lines/files/results/time และไม่ spawn
+subprocess. E2E test พิสูจน์ bearer turn → session WebSocket tool lifecycle →
+snapshot → restart/load history. Mutation/shell tools รอ Phase 3 sandbox.
 
 ### server/app.py — REJECT as unit (P0s ครบ)
 

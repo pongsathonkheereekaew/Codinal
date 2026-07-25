@@ -121,7 +121,9 @@ harness-flow/                       ← product repo "Codinal"
   **Progress:** เพิ่ม authenticated bounded turn/interrupt routes +
   one-active-turn-per-session coordinator ที่ stream typed events ไป session
   WebSocket, sanitize unexpected failure และ persist ใน `finally`.
-  Standalone production engine/store composition ยัง fail closed และ pending.
+  Standalone sidecar compose ConversationStore + ProviderRouter + TurnEngine +
+  root-scoped read registry จริงแล้ว; E2E bearer POST → WebSocket tool events →
+  restart/load history ผ่าน. Write/shell tools และ approval UI ยัง pending.
 - 2.5 รัน conformance → ประกาศ Tier-1 เบื้องต้น (≥ 3 cloud; local = tier-best-effort ตามผล suite จริง)
 
 **Gate:** Tier-1 turn ครบ (prompt → tool-call → approval → result) โดยผ่าน policy port ทุกขั้น.

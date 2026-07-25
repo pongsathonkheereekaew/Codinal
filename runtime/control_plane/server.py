@@ -6,15 +6,18 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 import uvicorn
 
-from runtime.events import EventHub
+from runtime import RuntimeServices, compose_runtime
 from runtime.oauth import OAuthCoordinator
+from runtime.providers import ProviderClient, ProviderRouter
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
-from runtime.settings import JsonPreferenceStore, SettingsService
-from runtime.turns import SessionNotFoundError
+from runtime.sessions import SessionRecord
+from runtime.storage import ConversationStore
+from runtime.tools import build_core_registry
+from runtime.turn_engine import TurnEngine
 
 from .app import create_control_plane_app
 from .auth import validate_session_token
@@ -27,25 +30,6 @@ class ServerConfig:
     data_dir: Path
     default_model: str
     host: str = "127.0.0.1"
-
-
-@dataclass(frozen=True)
-class StandaloneServices:
-    events: EventHub
-    settings: SettingsService
-    secrets: ProviderSecretService
-    oauth: OAuthCoordinator
-    turns: "UnavailableTurns"
-
-
-class UnavailableTurns:
-    """Fail-closed placeholder until the persisted engine builder is composed."""
-
-    async def start(self, session_id: str, **_kwargs):
-        raise SessionNotFoundError(session_id)
-
-    def interrupt(self, _session_id: str) -> bool:
-        return False
 
 
 def load_server_config() -> ServerConfig:
@@ -86,16 +70,73 @@ def build_services(
     config: ServerConfig,
     secrets: ProviderSecretService | None = None,
     oauth: OAuthCoordinator | None = None,
-) -> StandaloneServices:
-    return StandaloneServices(
-        events=EventHub(),
-        settings=SettingsService(
-            JsonPreferenceStore(config.data_dir / "settings.json"),
-            default_model=config.default_model,
-        ),
-        secrets=secrets or ProviderSecretService(),
+    provider: ProviderClient | None = None,
+) -> RuntimeServices:
+    secret_service = secrets or ProviderSecretService()
+    store = ConversationStore(config.data_dir)
+    provider_client = provider or ProviderRouter(secret_service)
+
+    def build_engine(context):
+        engine = TurnEngine(
+            provider=provider_client,
+            registry=build_core_registry(context.roots),
+            permissions=context.permissions,
+            model=context.request.model,
+            instructions=_coding_instructions(),
+            approver=context.approver,
+            messages=context.request.messages,
+        )
+        engine.agent = context.request.agent
+        return engine
+
+    def snapshot(session_id: str, engine: Any) -> SessionRecord:
+        existing = store.load(session_id)
+        roots = list(engine.roots)
+        permissions = engine.permissions
+        return SessionRecord(
+            session_id=session_id,
+            workspace=str(roots[0].path),
+            model=engine.model,
+            mode=permissions.mode.value,
+            messages=list(engine.messages),
+            title=existing.title if existing else None,
+            agent=str(getattr(engine, "agent", "code")),
+            message_count=len(engine.messages),
+            extra_roots=[
+                {
+                    "path": str(root.path),
+                    "writable": bool(root.writable),
+                    "label": root.label,
+                }
+                for root in roots[1:]
+            ],
+            grants={
+                "tools": sorted(permissions.session_allow_tools),
+                "commands": sorted(permissions.session_allow_commands),
+            },
+            pinned=existing.pinned if existing else False,
+            archived=existing.archived if existing else False,
+            origin=existing.origin if existing else "desktop",
+            origin_label=existing.origin_label if existing else "Codinal",
+        )
+
+    return compose_runtime(
+        data_dir=config.data_dir,
+        session_store=store,
+        engine_builder=build_engine,
+        snapshotter=snapshot,
+        default_model=config.default_model,
+        provider_secrets=secret_service,
         oauth=oauth or OAuthCoordinator(),
-        turns=UnavailableTurns(),
+    )
+
+
+def _coding_instructions() -> str:
+    return (
+        "You are Codinal, a local coding agent. Inspect the workspace with "
+        "the provided tools, cite concrete file paths and line numbers, and "
+        "state clearly when the available tool set cannot perform a requested "
+        "mutation. Never claim a file changed unless a tool result proves it."
     )
 
 

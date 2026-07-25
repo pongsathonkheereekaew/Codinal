@@ -109,7 +109,7 @@ def test_runtime_secrets_reject_unknown_bootstrap_channel(
         )
 
 
-def test_standalone_turn_service_fails_closed_until_runtime_is_composed(
+def test_standalone_turn_service_rejects_missing_session_without_workspace(
     tmp_path,
 ) -> None:
     services = build_services(

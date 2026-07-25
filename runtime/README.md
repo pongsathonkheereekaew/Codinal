@@ -32,7 +32,9 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
   plus loopback-only Ollama and invalidates cached SDK clients on key changes
 - `mcp/` — vendored transport
 - `tools/` — manifest-bound implementation registry; requires explicit strict
-  schemas and refuses undeclared tools (implementations remain incremental)
+  schemas and refuses undeclared tools; production currently exposes bounded
+  root-scoped `read_file`, `list_files`, and literal `grep` without spawning
+  subprocesses (write/shell tools wait for the Phase 3 sandbox)
 - `conformance/` — Phase 1.6 provider-neutral suite runner; executes
   harness-owned cases through injected adapters and reports Tier 1/Tier 2/
   incompatible without exposing raw provider responses
@@ -47,6 +49,11 @@ passes `CODINAL_SESSION_TOKEN`, `CODINAL_PORT`, and `CODINAL_DATA_DIR` in the
 child environment, and never places the token in command-line arguments. The
 sidecar consumes and deletes the token environment entry during startup so
 later tool subprocesses cannot inherit it.
+
+Standalone startup now composes the transactional conversation store,
+provider router, policy-bound TurnEngine, live-root read registry, session
+coordinator, and authenticated HTTP/WebSocket surfaces. A new public session
+is created only when its first turn supplies an absolute existing workspace.
 
 Native `codinal://oauth/callback` links are strictly parsed by the Tauri host
 and relayed to the sidecar with both the control-plane bearer and the
