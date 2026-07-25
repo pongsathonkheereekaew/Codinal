@@ -52,6 +52,38 @@ python3 -c "import ast, pathlib; ast.parse(pathlib.Path('scripts/merge-claude-se
 grep -q 'harness update' scripts/harness
 echo "bootstrap assets: OK"
 
+echo "== capability manifest =="
+test -f config/hosts.yaml
+test -f schemas/host-capability.schema.json
+test -f config/skills.yaml
+test -d scripts/lib
+test -d scripts/adapters
+test -f scripts/harness_host.py
+test -f scripts/harness_skill.py
+# manifest validates against its schema (pyyaml + jsonschema required)
+if python3 -c "import yaml, jsonschema" 2>/dev/null; then
+  python3 - <<'PY'
+import json, pathlib, yaml, jsonschema
+root = pathlib.Path(".")
+m = yaml.safe_load((root/"config/hosts.yaml").read_text())
+s = json.loads((root/"schemas/host-capability.schema.json").read_text())
+jsonschema.validate(m, s)
+assert m["hosts"]["opencode"]["tier"] == 1
+assert "core" in yaml.safe_load((root/"config/skills.yaml").read_text())
+PY
+  echo "manifest: OK"
+else
+  echo "manifest: SKIP (pyyaml/jsonschema not installed; pip install -r requirements-dev.txt)"
+fi
+
+echo "== contract tests =="
+if python3 -c "import pytest, yaml, jsonschema" 2>/dev/null; then
+  python3 -m pytest tests/contracts/ -q
+  echo "contracts: OK"
+else
+  echo "contracts: SKIP (pip install -r requirements-dev.txt)"
+fi
+
 echo "== policy invariants =="
 # F1 regression guard: no fictional Mode enum in guardrails (hosts have no Mode type)
 if grep -q 'discuss.*plan.*interactive.*auto' standards/agent-guardrails.md; then

@@ -7,6 +7,51 @@ bump independently.
 
 ## [Unreleased]
 
+### Added — capability-driven harness (Phases 1–3 of the cross-agent plan)
+- `config/hosts.yaml` + `schemas/host-capability.schema.json`: central
+  capability manifest. Each host declares tier, paths, discovery rules, native
+  permission mechanism, and per-capability status
+  (`supported`/`partial`/`unsupported`/`unverified`). Adapters and the CLIs
+  read this; edit here, never in generated output.
+- `scripts/lib/`: `manifest.py` (loader + baseline→host permission mapping),
+  `jsonc.py` (comment-preserving JSONC editor — inserts/replaces a top-level
+  key without destroying user comments), `ownership.py` (ownership journal +
+  atomic writes + timestamped backups), `symlink.py` (idempotent relative
+  links).
+- `scripts/adapters/`: `OpenCodeAdapter` (Tier-1, behaviorally verified) wires
+  `~/.config/opencode/{AGENTS.md,commands/,opencode.jsonc}` and merges the
+  universal permission baseline; `PolicyLinkAdapter` gives every other host
+  (claude-code, codex, cursor, gemini-cli, zcode, openclaw, hermes) honest
+  config-driven provisioning + verification.
+- `harness host list|inspect|provision|uninstall`, `harness verify
+  [--host|--tier|--project|--json]`: effective-state verification. Tier-1 gate
+  returns NOT-READY while any required capability is unsupported/unverified.
+- `config/skills.yaml` + `harness skill list|enable|disable|reset|audit`:
+  explicit core/catalog model. Disabling never deletes source skills; for
+  OpenCode it adds a native `permission.skill.<name>: deny` rule. Respects
+  user-owned permission blocks (never overwrites).
+- `tests/contracts/` (pytest): manifest/schema validation, JSONC editor, the 7
+  locked OpenCode smoke probes (isolated temp HOME), skill model + journal,
+  PolicyLinkAdapter behavior, and the CLI end-to-end. `verify.sh` now runs the
+  suite.
+
+### Changed
+- `install.sh`: rsyncs `scripts/` recursively (carries `lib/` + `adapters/`)
+  and deploys `config/` + `schemas/` so the runtime CLI can read the manifest.
+- `scripts/harness`: dispatches `host`/`verify`/`skill`/`install`/`uninstall`
+  to the Python CLIs; help text updated.
+
+### Fixed
+- Ownership journal no longer follows symlinks when keying paths — previously
+  a harness link back to `~/.agents/AGENTS.md` was recorded as the source, so
+  `uninstall` would have deleted the policy file. Regression-locked by
+  `test_uninstall_removes_only_owned`.
+
+### Pending (next session — Phase 4/5)
+- gemini-cli user-policy TOML permission mapping; deeper project-override
+  detection for non-OpenCode hosts; `harness migrate` catalog/ enabled-view
+  layout split (`--dry-run`, backup, idempotent).
+
 ## [1.0.0] - 2026-07-24
 
 ### Changed

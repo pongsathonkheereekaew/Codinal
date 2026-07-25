@@ -7,3 +7,10 @@ node_modules/
 # local e2e checkpoints
 test-e2e*.txt
 .zcode/
+
+# runtime ownership/backups journals (created by harness host provision etc.)
+state/
+backups/
+__pycache__/
+*.pyc
+.pytest_cache/

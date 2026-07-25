@@ -25,10 +25,15 @@ install_agents_md() {
 
 install_agents_md
 
-# Scripts CLI
-cp -f "$ROOT"/scripts/* "$DEST/scripts/"
+# Scripts CLI (recursive — carries scripts/lib + scripts/adapters Python packages)
+rsync -a --delete "$ROOT/scripts/" "$DEST/scripts/"
 chmod +x "$DEST/scripts/"*
 echo "scripts/ ← repo"
+
+# Capability manifest + schema (read by harness host/verify)
+rsync -a --delete "$ROOT/config/" "$DEST/config/" 2>/dev/null || mkdir -p "$DEST/config"
+rsync -a --delete "$ROOT/schemas/" "$DEST/schemas/" 2>/dev/null || mkdir -p "$DEST/schemas"
+echo "config/ + schemas/ ← repo"
 
 # Standards + commands
 rsync -a --delete "$ROOT/standards/" "$DEST/standards/"

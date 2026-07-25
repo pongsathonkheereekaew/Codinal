@@ -1,0 +1,256 @@
+# Central host capability manifest.
+#
+# Source of truth for every supported host: tier, paths, discovery rules,
+# native permission mechanism, and per-capability status. Adapters and the
+# `harness host` / `harness verify` CLIs read this file. Edit here, never in
+# generated adapter output.
+#
+# Capability status vocabulary (locked decision #6 — never silently skip):
+#   supported   — harness enforces/provides this and verifies it
+#   partial     — harness provides a behavioral fallback; host lacks native support
+#   unsupported — host cannot do this; harness reports it and does nothing
+#   unverified  — declared but not yet proven by a smoke/contract test
+#
+# $schema: ../schemas/host-capability.schema.json
+
+schema_version: 1
+
+# Universal permission baseline (locked decision #3). Hosts map this to their
+# native mechanism. Hosts without an enforceable mechanism install the AGENTS.md
+# behavioral fallback and mark native_permissions: partial.
+permission_baseline:
+  read: allow
+  edit: ask
+  bash: ask
+  webfetch: ask
+  websearch: ask
+  external_directory: ask
+  # Destructive actions are denied regardless of the catch-all above.
+  destructive_deny:
+    - "rm -rf *"
+    - "rm *"
+    - "git push *"
+    - "git commit *"
+    - "git reset --hard *"
+    - "git clean *"
+    - "git branch -D *"
+
+hosts:
+  opencode:
+    tier: 1
+    min_version: "1.1.1"  # permission config introduced (legacy `tools` deprecated)
+    config_dir: "~/.config/opencode"
+    config_file: "~/.config/opencode/opencode.jsonc"
+    config_format: jsonc
+    instruction_files:
+      - path: "~/.config/opencode/AGENTS.md"
+        kind: symlink
+        precedence: high
+    skill_discovery:
+      # OpenCode reads these natively (docs/skills). Only flat <name>/SKILL.md
+      # is discovered — nested skills need flat aliases.
+      - "~/.agents/skills/<name>/SKILL.md"
+      - "~/.config/opencode/skills/<name>/SKILL.md"
+    skill_frontmatter_recognized: [name, description, license, compatibility, metadata]
+    command_dir: "~/.config/opencode/commands"
+    project_config:
+      - ".opencode/opencode.json"
+      - ".opencode/opencode.jsonc"
+      - "opencode.json"
+      - "opencode.jsonc"
+    permission:
+      mechanism: config.permission
+      # Maps baseline -> opencode permission rules.
+      map:
+        catch_all: "ask"
+        rules:
+          read: allow
+          edit: ask
+          bash:
+            "*": ask
+            deny: destructive_deny   # each destructive pattern -> "deny"
+          webfetch: ask
+          websearch: ask
+          external_directory: ask
+    capabilities:
+      policy_file: { status: supported, mechanism: symlink-to-AGENTS.md }
+      skill_discovery: { status: supported, mechanism: native-agents-skills }
+      nested_skill_aliases: { status: supported, mechanism: flat-symlink }
+      command_dir: { status: supported, mechanism: symlink-commands-dir }
+      native_permissions: { status: supported, mechanism: config.permission }
+      config_merge: { status: supported, mechanism: jsonc-preserving-merge }
+      project_override: { status: supported, mechanism: project-config-detector }
+      uninstall_ownership: { status: supported, mechanism: ownership-journal }
+    smoke:
+      - policy-link-resolves
+      - command-dir-wired
+      - permission-present
+      - enabled-skills-only
+      - nested-alias-resolves
+      - malformed-jsonc-rejected
+      - project-override-detected
+
+  claude-code:
+    tier: 1
+    config_dir: "~/.claude"
+    config_file: "~/.claude/settings.json"
+    config_format: json
+    instruction_files:
+      - path: "~/.claude/CLAUDE.md"
+        kind: adapter
+        precedence: high
+    skill_discovery:
+      - "~/.claude/skills/<name>/SKILL.md"
+    command_dir: "~/.claude/commands"
+    permission:
+      mechanism: settings.permissions
+    capabilities:
+      policy_file: { status: unverified }
+      skill_discovery: { status: unverified }
+      nested_skill_aliases: { status: unverified }
+      command_dir: { status: unverified }
+      native_permissions: { status: unverified }
+      config_merge: { status: unverified }
+      project_override: { status: unverified }
+      uninstall_ownership: { status: unverified }
+
+  codex:
+    tier: 1
+    config_dir: "~/.codex"
+    config_file: "~/.codex/config.toml"
+    config_format: toml
+    instruction_files:
+      - path: "~/.codex/AGENTS.md"
+        kind: symlink
+        precedence: high
+    skill_discovery:
+      - "~/.agents/skills/<name>/SKILL.md"
+    capabilities:
+      policy_file: { status: unverified }
+      skill_discovery: { status: unverified }
+      nested_skill_aliases: { status: unverified }
+      command_dir: { status: unverified }
+      native_permissions: { status: unverified }
+      config_merge: { status: unverified }
+      project_override: { status: unverified }
+      uninstall_ownership: { status: unverified }
+
+  cursor:
+    tier: 1
+    config_dir: "~/.cursor"
+    config_format: mdc
+    instruction_files:
+      - path: "~/.cursor/rules/agents-policy.mdc"
+        kind: generated
+        precedence: high
+    skill_discovery:
+      - "~/.cursor/skills/<name>/SKILL.md"
+    command_dir: "~/.cursor/commands"
+    capabilities:
+      policy_file: { status: unverified }
+      skill_discovery: { status: unverified }
+      nested_skill_aliases: { status: unverified }
+      command_dir: { status: unverified }
+      native_permissions: { status: unsupported, mechanism: none }
+      config_merge: { status: unverified }
+      project_override: { status: unverified }
+      uninstall_ownership: { status: unverified }
+
+  gemini-cli:
+    tier: 1
+    min_version: "latest"
+    config_dir: "~/.gemini"
+    config_file: "~/.gemini/settings.json"
+    config_format: json
+    instruction_files:
+      - path: "~/.gemini/GEMINI.md"
+        kind: symlink
+        precedence: high
+    skill_discovery:
+      - "~/.agents/skills/<name>/SKILL.md"
+      - "~/.gemini/skills/<name>/SKILL.md"
+    permission:
+      # User policy TOML under ~/.gemini/policies/*.toml (workspace policy
+      # documented as non-functional — user scope only).
+      mechanism: user-policy-toml
+      policy_dir: "~/.gemini/policies"
+    capabilities:
+      policy_file: { status: unverified }
+      skill_discovery: { status: unverified }
+      nested_skill_aliases: { status: unverified }
+      command_dir: { status: unverified }
+      native_permissions: { status: unverified }
+      config_merge: { status: unverified }
+      project_override: { status: unverified }
+      uninstall_ownership: { status: unverified }
+
+  zcode:
+    tier: 2
+    config_dir: "~/.zcode"
+    instruction_files:
+      - path: "~/.zcode/AGENTS.md"
+        kind: symlink
+        precedence: high
+    skill_discovery:
+      - "~/.zcode/skills/<name>/SKILL.md"
+    command_dir: "~/.zcode/commands"
+    capabilities:
+      policy_file: { status: unverified }
+      skill_discovery: { status: unverified }
+      nested_skill_aliases: { status: unverified }
+      command_dir: { status: unverified }
+      native_permissions: { status: unverified }
+      config_merge: { status: unverified }
+      project_override: { status: unverified }
+      uninstall_ownership: { status: unverified }
+
+  openclaw:
+    tier: 2
+    config_dir: "~/.openclaw"
+    skill_discovery:
+      - "~/.openclaw/skills/<name>/SKILL.md"
+    capabilities:
+      policy_file: { status: unverified }
+      skill_discovery: { status: unverified }
+      nested_skill_aliases: { status: unverified }
+      command_dir: { status: unverified }
+      native_permissions: { status: unverified }
+      config_merge: { status: unverified }
+      project_override: { status: unverified }
+      uninstall_ownership: { status: unverified }
+
+  hermes:
+    tier: 2
+    config_dir: "~/.hermes"
+    config_file: "~/.hermes/config.yaml"
+    config_format: yaml
+    skill_discovery:
+      # Hermes reads ~/.agents/skills via skills.external_dirs (not a symlink tree).
+      mechanism: external_dirs
+    capabilities:
+      policy_file: { status: unverified }
+      skill_discovery: { status: unverified }
+      nested_skill_aliases: { status: unverified }
+      command_dir: { status: unverified }
+      native_permissions: { status: unverified }
+      config_merge: { status: unverified }
+      project_override: { status: unverified }
+      uninstall_ownership: { status: unverified }
+
+  generic:
+    tier: 3
+    instruction_files:
+      - path: "./AGENTS.md"
+        kind: project
+        precedence: high
+    skill_discovery:
+      - "~/.agents/skills/<name>/SKILL.md"
+    capabilities:
+      policy_file: { status: partial, mechanism: AGENTS.md-behavioral-fallback }
+      skill_discovery: { status: partial, mechanism: AGENTS.md-skill-router }
+      nested_skill_aliases: { status: unsupported }
+      command_dir: { status: unsupported }
+      native_permissions: { status: unsupported, mechanism: none }
+      config_merge: { status: unsupported }
+      project_override: { status: unsupported }
+      uninstall_ownership: { status: unsupported }
