@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://harness-flow/schemas/host-capability.schema.json",
+  "title": "Host capability manifest",
+  "type": "object",
+  "required": ["schema_version", "hosts"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "permission_baseline": {
+      "type": "object",
+      "required": ["read", "edit", "bash", "webfetch", "websearch", "external_directory", "destructive_deny"],
+      "properties": {
+        "read": { "enum": ["allow", "ask", "deny"] },
+        "edit": { "enum": ["allow", "ask", "deny"] },
+        "bash": { "enum": ["allow", "ask", "deny"] },
+        "webfetch": { "enum": ["allow", "ask", "deny"] },
+        "websearch": { "enum": ["allow", "ask", "deny"] },
+        "external_directory": { "enum": ["allow", "ask", "deny"] },
+        "destructive_deny": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      },
+      "additionalProperties": false
+    },
+    "hosts": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-z0-9]+(-[a-z0-9]+)*$": { "$ref": "#/$defs/host" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "host": {
+      "type": "object",
+      "required": ["tier", "capabilities"],
+      "properties": {
+        "tier": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "min_version": { "type": "string" },
+        "config_dir": { "type": "string" },
+        "config_file": { "type": "string" },
+        "config_format": {
+          "enum": ["json", "jsonc", "toml", "yaml", "mdc", "none"]
+        },
+        "instruction_files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+              "path": { "type": "string" },
+              "kind": { "enum": ["symlink", "adapter", "generated", "project", "real"] },
+              "precedence": { "enum": ["high", "normal", "low"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "skill_discovery": {
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" } },
+            {
+              "type": "object",
+              "required": ["mechanism"],
+              "properties": { "mechanism": { "type": "string" } },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "skill_frontmatter_recognized": { "type": "array", "items": { "type": "string" } },
+        "command_dir": { "type": "string" },
+        "project_config": { "type": "array", "items": { "type": "string" } },
+        "permission": { "$ref": "#/$defs/permission" },
+        "capabilities": {
+          "type": "object",
+          "patternProperties": {
+            "^[a-z_]+$": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": { "enum": ["supported", "partial", "unsupported", "unverified"] },
+                "mechanism": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "smoke": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "permission": {
+      "type": "object",
+      "required": ["mechanism"],
+      "properties": {
+        "mechanism": { "type": "string" },
+        "policy_dir": { "type": "string" },
+        "map": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -1,0 +1,136 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve and validate release version
+        id: release
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${DISPATCH_TAG}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) echo "release tag must start with v" >&2; exit 1 ;;
+          esac
+          VERSION="${TAG#v}"
+          CARGO_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("desktop/src-tauri/Cargo.toml", "rb"))["package"]["version"])')"
+          test "$VERSION" = "$CARGO_VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install verification dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Verify source
+        run: bash verify.sh
+
+      - name: Install pinned Tauri CLI
+        run: cargo install tauri-cli --version 2.11.4 --locked
+
+      - name: Import Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$APPLE_CERTIFICATE_BASE64"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$KEYCHAIN_PASSWORD"
+          CERTIFICATE_PATH="$RUNNER_TEMP/codinal-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/codinal-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Stage updater signing key
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          test -n "$UPDATER_PRIVATE_KEY"
+          printf '%s' "$UPDATER_PRIVATE_KEY" > "$RUNNER_TEMP/codinal-updater.key"
+          chmod 600 "$RUNNER_TEMP/codinal-updater.key"
+
+      - name: Build, sign, notarize, and staple
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ runner.temp }}/codinal-updater.key
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CODINAL_REQUIRE_SIGNING: "1"
+          CODINAL_REQUIRE_NOTARIZATION: "1"
+        run: bash scripts/build-macos-release.sh
+
+      - name: Smoke quarantined package on clean runner
+        run: bash scripts/smoke-macos-gatekeeper.sh
+
+      - name: Generate signed update manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          BUNDLE="desktop/src-tauri/target/release/bundle"
+          UPDATE_NAME="Codinal-${VERSION}-macos-arm64.app.tar.gz"
+          python scripts/generate_update_manifest.py \
+            --version "$VERSION" \
+            --url "https://github.com/${REPOSITORY}/releases/download/v${VERSION}/${UPDATE_NAME}" \
+            --signature-file "$BUNDLE/${UPDATE_NAME}.sig" \
+            --notes "Codinal ${VERSION}" \
+            --pub-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --output "$BUNDLE/latest.json"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          BUNDLE="desktop/src-tauri/target/release/bundle"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes
+          fi
+          gh release upload "$TAG" --clobber \
+            "$BUNDLE/Codinal-${VERSION}-macos-arm64.zip" \
+            "$BUNDLE/Codinal-${VERSION}-macos-arm64.zip.sha256" \
+            "$BUNDLE/Codinal-${VERSION}-macos-arm64.app.tar.gz" \
+            "$BUNDLE/Codinal-${VERSION}-macos-arm64.app.tar.gz.sig" \
+            "$BUNDLE/Codinal-${VERSION}-macos-arm64.app.tar.gz.sha256" \
+            "$BUNDLE/latest.json"

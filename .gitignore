@@ -2,8 +2,20 @@
 *.bak
 .DS_Store
 node_modules/
+.venv/
+target/
+/desktop/src-tauri/gen/
+/desktop/src-tauri/resources/python/
+/desktop/src-tauri/resources/runtime/
 .obsidian/workspace*.json
 
 # local e2e checkpoints
 test-e2e*.txt
 .zcode/
+
+# runtime ownership/backups journals (created by harness host provision etc.)
+state/
+backups/
+__pycache__/
+*.pyc
+.pytest_cache/

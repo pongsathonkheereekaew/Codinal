@@ -6,9 +6,25 @@ on:
   pull_request:
 
 jobs:
-  harness:
+  product:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run harness-flow verify
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install product test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run Codinal product verification
         run: bash verify.sh
+
+  desktop:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+      - name: Lint desktop shell
+        run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Test desktop shell
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml

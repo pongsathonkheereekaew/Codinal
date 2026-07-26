@@ -15,6 +15,36 @@ SCRIPTS="$ROOT/scripts"
 unset _harness_src _harness_dir
 
 cmd="${1:-help}"
+# Commands implemented in Python (host / verify) take their own subargs.
+uninstall_cmd() {
+  local host="${1:-}"
+  if [[ -z "$host" ]]; then
+    echo "usage: harness uninstall <host>   (ownership-aware; removes only harness-owned paths)" >&2
+    exit 2
+  fi
+  exec python3 "$SCRIPTS/harness_host.py" --agents-home "$ROOT" host uninstall "$host"
+}
+
+case "$cmd" in
+  host|verify)
+    exec python3 "$SCRIPTS/harness_host.py" "$@"
+    ;;
+  skill)
+    exec python3 "$SCRIPTS/harness_skill.py" "${@:2}"
+    ;;
+  install)
+    local_repo="${HARNESS_FLOW_HOME:-$HOME/harness-flow}"
+    if [[ ! -x "$local_repo/install.sh" ]]; then
+      echo "ERROR: no install.sh at $local_repo (set HARNESS_FLOW_HOME or clone ~/harness-flow)" >&2
+      exit 1
+    fi
+    exec "$local_repo/install.sh"
+    ;;
+  uninstall)
+    shift
+    uninstall_cmd "$@"
+    ;;
+esac
 
 sync_cmd() {
   exec "$SCRIPTS/sync-skill-links.sh"
@@ -273,11 +303,23 @@ help_cmd() {
 harness — ~/.agents universal content harness
 
 Usage:
-  harness sync     Symlink skills + wire AGENTS.md for all adapters
-  harness rules    Regenerate ~/.cursor/rules/*.mdc from standards/
-  harness doctor   Drift / health check
-  harness update   git pull ~/harness-flow && ./install.sh
-  harness help     This text
+  harness sync                          Symlink skills + wire AGENTS.md for all adapters
+  harness rules                         Regenerate ~/.cursor/rules/*.mdc from standards/
+  harness doctor                        Drift / health check
+  harness host list                     List hosts + tier + capability coverage
+  harness host inspect [name|--all]     Show capabilities + smoke probes
+  harness host provision <name>         Render host adapter into \$HOME
+                                         (--dry-run, --enable SKILL)
+  harness host uninstall <name>         Remove harness-owned paths for a host
+  harness verify [--host N] [--tier N]  Effective-state verification
+                  [--project DIR] [--json]
+  harness skill list [--all] [--json]   List skills with class + state
+  harness skill enable NAME             Enable a catalog skill
+  harness skill disable NAME            Disable a catalog skill (core refused)
+  harness skill reset                   Re-enable every disabled skill
+  harness skill audit [--json]          Classification + journal health
+  harness update                        git pull ~/harness-flow && ./install.sh
+  harness help                          This text
 
 New machine (once):
   git clone <repo> ~/harness-flow && ~/harness-flow/bootstrap.sh

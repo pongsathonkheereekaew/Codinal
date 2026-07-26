@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Codinal",
+  "version": "0.1.0",
+  "identifier": "dev.codinal.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; connect-src http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self'; script-src 'self'"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "codinal"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg5NkRCRUM5QkNFMTUxMzcKUldRM1VlRzh5YjV0aVkyOU9FQkFDdEQ5ZXRnSlN1Nk85SHdSY0NHejdrcTJyN0lySkFJM2tteXMK",
+      "endpoints": [
+        "https://github.com/pongsathonkheereekaew/harness-flow/releases/latest/download/latest.json"
+      ],
+      "dangerousInsecureTransportProtocol": false
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": [
+      "icons/icon.icns"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}

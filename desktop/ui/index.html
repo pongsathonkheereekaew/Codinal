@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Codinal</title>
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body>
+    <div id="startup" class="startup" role="status" aria-live="polite">
+      <div class="startup-mark" aria-hidden="true">C</div>
+      <p id="startup-status">Starting secure local runtime…</p>
+    </div>
+
+    <div id="app" class="app-shell is-hidden">
+      <aside id="sidebar" class="sidebar">
+        <div class="traffic-spacer" data-tauri-drag-region></div>
+        <div class="brand-row" data-tauri-drag-region>
+          <div class="brand-mark" aria-hidden="true">C</div>
+          <strong>Codinal</strong>
+          <span class="local-badge">Local</span>
+        </div>
+
+        <button id="new-task" class="new-task" type="button">
+          <span aria-hidden="true">＋</span>
+          New task
+          <kbd>⌘N</kbd>
+        </button>
+
+        <label class="search-box">
+          <span aria-hidden="true">⌕</span>
+          <span class="sr-only">Search tasks</span>
+          <input id="session-search" type="search" placeholder="Search tasks" />
+        </label>
+
+        <div class="sidebar-heading">
+          <span>Tasks</span>
+          <button id="refresh-sessions" class="icon-button" type="button"
+            aria-label="Refresh tasks" title="Refresh tasks">↻</button>
+        </div>
+        <nav id="session-list" class="session-list"
+          aria-label="Recent tasks"></nav>
+
+        <section class="context-panel" aria-label="Project context">
+          <div class="sidebar-heading">
+            <span>Project</span>
+            <button id="add-context-root" class="icon-button" type="button"
+              aria-label="Add project folder" title="Add project folder"
+              disabled>＋</button>
+          </div>
+          <div id="context-roots" class="context-roots"
+            aria-label="Approved project folders"></div>
+          <div class="project-search-controls" role="search">
+            <label class="search-box">
+              <span aria-hidden="true">⌕</span>
+              <span class="sr-only">Search project files</span>
+              <input id="project-search" type="search"
+                placeholder="Search project" disabled />
+            </label>
+            <select id="project-search-mode" aria-label="Project search mode"
+              disabled>
+              <option value="text">Text</option>
+              <option value="symbol">Symbols</option>
+              <option value="semantic">Semantic</option>
+            </select>
+          </div>
+          <div class="project-index-controls">
+            <span id="project-index-status">Semantic index not built</span>
+            <button id="project-index-build" type="button" disabled>
+              Index
+            </button>
+            <button id="project-index-clear" type="button" disabled>
+              Clear
+            </button>
+          </div>
+          <div id="project-search-status" class="project-search-status"
+            aria-live="polite"></div>
+          <div id="project-search-results" class="project-search-results"
+            aria-label="Project search results"></div>
+          <div id="project-tree" class="project-tree"
+            aria-label="Project files"></div>
+        </section>
+
+        <div class="sidebar-footer">
+          <button id="theme-toggle" class="footer-button" type="button">
+            <span aria-hidden="true">◐</span>
+            Appearance
+          </button>
+          <button id="open-settings" class="footer-button" type="button">
+            <span aria-hidden="true">⚙</span>
+            Settings
+          </button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="task-header" data-tauri-drag-region>
+          <button id="toggle-sidebar" class="icon-button" type="button"
+            aria-label="Toggle sidebar" title="Toggle sidebar">☰</button>
+          <div class="task-identity" data-tauri-drag-region>
+            <strong id="task-title">New task</strong>
+            <span id="workspace-path">Choose a workspace to begin</span>
+          </div>
+          <div class="header-actions">
+            <button id="return-to-parent" class="secondary-button is-hidden"
+              type="button">← Parent task</button>
+            <div class="thread-search-controls" role="search">
+              <label>
+                <span class="sr-only">Search this conversation</span>
+                <input id="thread-search" type="search"
+                  placeholder="Find in task" />
+              </label>
+              <button id="thread-search-previous" class="icon-button"
+                type="button" aria-label="Previous conversation match"
+                title="Previous match" disabled>↑</button>
+              <button id="thread-search-next" class="icon-button"
+                type="button" aria-label="Next conversation match"
+                title="Next match" disabled>↓</button>
+            </div>
+            <button id="export-thread" class="icon-button" type="button"
+              aria-label="Export conversation as Markdown"
+              title="Export Markdown" disabled>⇩</button>
+            <span id="runtime-status" class="status-chip">
+              <i></i><span>Connecting</span>
+            </span>
+            <button id="review-button" class="secondary-button" type="button"
+              disabled>
+              <span aria-hidden="true">±</span>
+              Review
+              <span id="change-count" class="count-badge is-hidden">0</span>
+            </button>
+          </div>
+        </header>
+
+        <section id="worker-panel" class="worker-panel is-hidden"
+          aria-label="Background workers">
+          <header>
+            <div>
+              <strong>Parallel workers</strong>
+              <span id="worker-summary">No background work</span>
+            </div>
+            <button id="new-worker" class="secondary-button" type="button">
+              ＋ Delegate
+            </button>
+          </header>
+          <div id="worker-list" class="worker-list"
+            aria-live="polite"></div>
+        </section>
+
+        <section id="plan-panel" class="plan-panel is-hidden"
+          aria-label="Saved plans">
+          <header>
+            <strong>Plan</strong>
+            <span id="plan-summary">No saved plan</span>
+          </header>
+          <div id="plan-list" class="plan-list" aria-live="polite"></div>
+        </section>
+
+        <section id="plan-build-panel" class="plan-build-panel is-hidden"
+          aria-label="Plan build comparisons">
+          <header>
+            <strong>Build comparisons</strong>
+            <span id="plan-build-summary">No parallel builds</span>
+          </header>
+          <div id="plan-build-list" class="plan-build-list"
+            aria-live="polite"></div>
+        </section>
+
+        <section id="goal-panel" class="goal-panel is-hidden"
+          aria-label="Persistent goals">
+          <header>
+            <div>
+              <strong>Goals</strong>
+              <span id="goal-summary">No persistent goals</span>
+            </div>
+            <button id="new-goal" class="secondary-button" type="button">
+              ＋ New goal
+            </button>
+          </header>
+          <div id="goal-list" class="goal-list" aria-live="polite"></div>
+        </section>
+
+        <section id="conversation" class="conversation"
+          aria-label="Conversation" aria-live="polite">
+          <div id="empty-state" class="empty-state">
+            <div class="empty-mark" aria-hidden="true">C</div>
+            <h1>What would you like to build?</h1>
+            <p>Codinal can inspect, edit, run, and review code inside an isolated workspace.</p>
+            <div class="suggestions">
+              <button type="button" data-prompt="Inspect this codebase and explain its architecture">
+                <span>⌕</span> Understand this codebase
+              </button>
+              <button type="button" data-prompt="Find and fix the highest-impact bug in this project">
+                <span>◇</span> Find and fix a bug
+              </button>
+              <button type="button" data-prompt="Review the current changes for correctness and security">
+                <span>✓</span> Review current changes
+              </button>
+            </div>
+          </div>
+          <div id="message-list" class="message-list"></div>
+        </section>
+
+        <section id="terminal-panel" class="terminal-panel"
+          aria-label="Terminal runner">
+          <header class="terminal-header">
+            <strong>Terminal</strong>
+            <span id="terminal-status" class="terminal-status">Ready</span>
+          </header>
+          <div class="terminal-toolbar">
+            <textarea id="terminal-command" rows="1"
+              placeholder="Run shell command (e.g. ls, git status)"
+              aria-label="Terminal command"></textarea>
+            <label class="terminal-timeout">
+              <span>Timeout (sec)</span>
+              <input id="terminal-timeout" type="number" min="1" max="600"
+                step="1" value="30" inputmode="numeric"
+                aria-label="Terminal timeout in seconds" />
+            </label>
+            <button id="terminal-run" class="secondary-button" type="button">
+              Run
+            </button>
+            <button id="terminal-stop" class="icon-button" type="button"
+              aria-label="Stop terminal command">■</button>
+            <button id="terminal-clear" class="icon-button" type="button"
+              aria-label="Clear terminal output">×</button>
+          </div>
+          <pre id="terminal-output" class="terminal-output" aria-live="polite"></pre>
+        </section>
+
+        <section class="composer-wrap" aria-label="Message composer">
+          <div id="drop-hint" class="drop-hint">
+            Drop a project folder, image, or PDF
+          </div>
+          <div class="composer">
+            <div id="context-items" class="attachment-list is-hidden"
+              aria-label="Selected project context"></div>
+            <div id="attachment-list" class="attachment-list is-hidden"
+              aria-label="Attachments"></div>
+            <input id="attachment-input" class="is-hidden" type="file" multiple
+              accept="image/png,image/jpeg,image/gif,image/webp,application/pdf" />
+            <textarea id="prompt" rows="1"
+              placeholder="Ask Codinal to build, debug, or explain…"
+              aria-label="Message Codinal"></textarea>
+            <div id="routing-resolution" class="routing-resolution"
+              aria-live="polite"></div>
+            <div class="composer-toolbar">
+              <div class="composer-options">
+                <button id="attach-files" class="tool-button" type="button"
+                  title="Attach image or PDF" aria-label="Attach image or PDF">
+                  <span aria-hidden="true">＋</span>
+                  Attach
+                </button>
+                <button id="choose-workspace" class="tool-button" type="button"
+                  title="Choose workspace">
+                  <span aria-hidden="true">⌁</span>
+                  <span id="workspace-label">Workspace</span>
+                </button>
+                <select id="agent-mode" aria-label="Agent mode">
+                  <option value="code">Code</option>
+                  <option value="review">Review</option>
+                  <option value="plan">Plan</option>
+                </select>
+                <select id="routing-profile"
+                  aria-label="Routing profile"></select>
+                <select id="model-select" aria-label="Model"></select>
+              </div>
+              <div class="send-controls">
+                <span class="shortcut-hint">⌘ ↵</span>
+                <button id="stop-turn" class="stop-button is-hidden"
+                  type="button" aria-label="Stop turn">■</button>
+                <button id="send-turn" class="send-button" type="button"
+                  aria-label="Send message" disabled>↑</button>
+              </div>
+            </div>
+          </div>
+          <p class="composer-note">Changes require approval and stay isolated until you apply them.</p>
+        </section>
+      </main>
+
+      <aside id="review-panel" class="review-panel" aria-label="Review changes"
+        aria-hidden="true">
+        <header class="review-header">
+          <div>
+            <span class="eyebrow">Git worktree</span>
+            <h2>Review changes</h2>
+          </div>
+          <button id="close-review" class="icon-button" type="button"
+            aria-label="Close review">×</button>
+        </header>
+        <div class="review-summary">
+          <span id="review-summary">No changes</span>
+          <button id="refresh-diff" class="icon-button" type="button"
+            aria-label="Refresh diff">↻</button>
+        </div>
+        <pre id="diff-view" class="diff-view" tabindex="0"></pre>
+        <div class="review-footer">
+          <div class="checkpoint-controls">
+            <label for="checkpoint-select">Turn checkpoint</label>
+            <select id="checkpoint-select" disabled>
+              <option value="">No checkpoints</option>
+            </select>
+            <label for="restore-scope">Restore</label>
+            <select id="restore-scope">
+              <option value="both">Code and conversation</option>
+              <option value="code">Code only</option>
+              <option value="conversation">Conversation only</option>
+            </select>
+            <button id="restore-checkpoint" class="secondary-button"
+              type="button" disabled>Restore checkpoint</button>
+          </div>
+          <button id="apply-changes" class="primary-button" type="button"
+            disabled>Apply to workspace</button>
+          <p>Applying uses a fast-forward or verified merge.</p>
+        </div>
+      </aside>
+    </div>
+
+    <dialog id="settings-dialog" class="settings-dialog">
+      <form method="dialog" class="settings-shell">
+        <header>
+          <div>
+            <span class="eyebrow">Codinal</span>
+            <h2>Settings</h2>
+          </div>
+          <button class="icon-button" value="cancel"
+            aria-label="Close settings">×</button>
+        </header>
+        <section>
+          <h3>Models</h3>
+          <p id="model-summary" class="settings-copy">Loading model configuration…</p>
+          <div id="model-catalog" class="model-catalog"></div>
+        </section>
+        <section>
+          <div class="settings-section-title">
+            <div>
+              <h3>MCP servers</h3>
+              <p>Connect per-task MCP servers and review attached tools.</p>
+            </div>
+          </div>
+          <div id="mcp-server-list" class="mcp-server-list"></div>
+          <div class="settings-section-subtitle">
+            <h4>Connect new MCP server</h4>
+          </div>
+          <div class="mcp-connector">
+            <label>
+              Name
+              <input id="mcp-server-name" placeholder="docs" maxlength="64" />
+            </label>
+            <label>
+              Transport
+              <select id="mcp-transport">
+                <option value="http">http</option>
+                <option value="stdio">stdio</option>
+              </select>
+            </label>
+            <label>
+              URL
+              <input id="mcp-url" placeholder="https://example.com/mcp" />
+            </label>
+            <label>
+              Command
+              <input id="mcp-command"
+                placeholder="my-mcp-server-bin" autocomplete="off" />
+            </label>
+            <label>
+              Arguments (comma-separated)
+              <input id="mcp-args"
+                placeholder="arg1, arg2"
+                autocomplete="off" />
+            </label>
+            <label>
+              Working directory (optional)
+              <input id="mcp-cwd" placeholder="/path/to/project" />
+            </label>
+            <label>
+              Include tools (optional, comma-separated)
+              <input id="mcp-include-tools"
+                placeholder="search, fetch"
+                autocomplete="off" />
+            </label>
+            <label>
+              Exclude tools (optional, comma-separated)
+              <input id="mcp-exclude-tools"
+                placeholder="legacy_*"
+                autocomplete="off" />
+            </label>
+            <button id="connect-mcp-server" type="button">Connect</button>
+          </div>
+        </section>
+        <section>
+          <div class="settings-section-title">
+            <div>
+              <h3>Session artifacts</h3>
+              <p>Read, open, and reveal generated or tracked files for this task.</p>
+            </div>
+          </div>
+          <div id="artifact-list" class="artifact-list"></div>
+          <p id="artifact-empty" class="settings-copy">Open settings with an active task to load artifacts.</p>
+          <p id="artifact-preview-path" class="settings-copy"></p>
+          <pre id="artifact-preview" class="artifact-preview" aria-live="polite"></pre>
+        </section>
+        <section>
+          <div class="settings-section-title update-row">
+            <div>
+              <h3>Updates</h3>
+              <p id="update-status">Check for signed Codinal updates.</p>
+            </div>
+            <div class="update-actions">
+              <button id="check-update" type="button">Check now</button>
+              <button id="install-update" class="primary-button is-hidden"
+                type="button">Install and restart</button>
+            </div>
+          </div>
+        </section>
+        <section>
+          <div class="settings-section-title">
+            <div>
+              <h3>Provider credentials</h3>
+              <p>Keys are stored in macOS Keychain and sent only to the local runtime.</p>
+            </div>
+          </div>
+          <div id="provider-list" class="provider-list"></div>
+        </section>
+      </form>
+    </dialog>
+
+    <dialog id="session-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Task options</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close task options">×</button>
+        </header>
+        <label>
+          Task name
+          <input id="session-title-input" maxlength="120" />
+        </label>
+        <button id="rename-session" type="button">Rename</button>
+        <button id="pin-session" type="button">Pin task</button>
+        <button id="archive-session" type="button">Archive task</button>
+        <button id="delete-session" class="danger-button"
+          type="button">Delete task…</button>
+      </form>
+    </dialog>
+
+    <dialog id="worker-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Delegate parallel work</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close worker dialog">×</button>
+        </header>
+        <label>
+          Task
+          <textarea id="worker-task" rows="4" maxlength="32768"
+            placeholder="Implement and test the parser"></textarea>
+        </label>
+        <label>
+          Owned paths
+          <input id="worker-ownership"
+            placeholder="runtime/parser, tests/parser" />
+        </label>
+        <label>
+          Depends on worker IDs (optional)
+          <input id="worker-dependencies"
+            placeholder="worker-…" />
+        </label>
+        <p class="dialog-note">The worker can only change these paths in its own Git worktree.</p>
+        <button id="create-worker" class="primary-button"
+          type="button">Start worker</button>
+      </form>
+    </dialog>
+
+    <dialog id="plan-build-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Build plan in parallel</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close plan build dialog">×</button>
+        </header>
+        <p class="dialog-note">Each candidate runs in an isolated worktree. Select one result per task before any changes are adopted.</p>
+        <div id="plan-build-tasks" class="plan-build-dialog-tasks"></div>
+        <label>
+          Candidate models (2–4, comma separated)
+          <input id="plan-build-models"
+            placeholder="openai:gpt-5.6-sol, anthropic:claude-sonnet-4-6" />
+        </label>
+        <button id="create-plan-build" class="primary-button"
+          type="button">Start parallel comparison</button>
+      </form>
+    </dialog>
+
+    <dialog id="goal-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Create persistent goal</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close goal dialog">×</button>
+        </header>
+        <label>
+          Objective
+          <textarea id="goal-objective" rows="3" maxlength="65536"
+            placeholder="Ship the release with verified requirements"></textarea>
+        </label>
+        <label>
+          Requirements (one per line: id: description)
+          <textarea id="goal-requirements" rows="4" maxlength="65536"
+            placeholder="tests: Full suite passes&#10;package: Signed app smoke passes"></textarea>
+        </label>
+        <label>
+          Continuation instruction
+          <textarea id="goal-continuation" rows="3" maxlength="32768"
+            placeholder="Continue this goal, verify remaining requirements, and report evidence."></textarea>
+        </label>
+        <label>
+          Estimated-token budget (optional)
+          <input id="goal-token-budget" inputmode="numeric"
+            placeholder="100000" />
+        </label>
+        <label>
+          Time budget in minutes (optional)
+          <input id="goal-time-budget" inputmode="numeric"
+            placeholder="120" />
+        </label>
+        <p class="dialog-note">Continuation stops at the first exhausted budget. Completion and blocking require audited evidence.</p>
+        <button id="create-goal" class="primary-button"
+          type="button">Create goal</button>
+      </form>
+    </dialog>
+
+    <dialog id="goal-evidence-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Add goal evidence</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close goal evidence dialog">×</button>
+        </header>
+        <label>
+          Requirement
+          <select id="goal-evidence-requirement"></select>
+        </label>
+        <label>
+          Evidence kind
+          <select id="goal-evidence-kind">
+            <option value="verification">Passing verification</option>
+            <option value="blocker">Blocker observation</option>
+          </select>
+        </label>
+        <label>
+          Summary
+          <input id="goal-evidence-summary" maxlength="8192"
+            placeholder="Full release suite" />
+        </label>
+        <label>
+          Observed result
+          <textarea id="goal-evidence-result" rows="4" maxlength="32768"
+            placeholder="594 passed; signed app smoke PASS"></textarea>
+        </label>
+        <button id="save-goal-evidence" class="primary-button"
+          type="button">Save evidence</button>
+      </form>
+    </dialog>
+
+    <div id="toast-region" class="toast-region"
+      aria-live="polite" aria-atomic="true"></div>
+
+    <script src="./startup.js"></script>
+  </body>
+</html>

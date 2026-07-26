@@ -1,0 +1,38 @@
+# Skill classification manifest.
+#
+# Core skills are always enabled across every host and form the always-on
+# router (mirrors the skill table in AGENTS.md). Every other skill discovered
+# under skills/ is `catalog` — present in the SSOT but opt-in via the runtime
+# journal (state/enabled-skills.json).
+#
+# Why only `core` is listed: keeping a 117-entry file in sync with skills/
+# would drift. New skills default to `catalog` automatically.
+#
+# Locked decisions referenced:
+#   #4  — explicit core/catalog model
+#   #6  — unsupported features reported, never silently skipped
+#   #14 — deprecate behavior >= 2 releases before removal (the default journal
+#         keeps the current all-visible behavior until a release flips it)
+
+schema_version: 1
+
+# Always-on router skills. Editing here changes what every host sees by default.
+core:
+  - ask-matt
+  - grilling
+  - scrutinize
+  - implement
+  - tdd
+  - diagnosing-bugs
+  - verification-before-completion
+  - handoff
+  - wayfinder
+  - orchestrating-workers
+  - skill-creator
+  - writing-great-skills
+
+# Frontmatter fields the universal skill model ignores. Kept here so hosts that
+# still honor them (e.g. Claude Code) are not disturbed during the deprecation
+# window; the harness itself never uses these to decide visibility.
+deprecated_frontmatter:
+  - disable-model-invocation
