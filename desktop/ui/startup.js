@@ -59,6 +59,9 @@ const state = {
   projectSearchTimer: null,
   projectSearchController: null,
   projectSearchResults: null,
+  projectIndexStatus: null,
+  projectIndexGeneration: 0,
+  projectIndexBusySession: null,
   rootMutationPending: false,
   contextItems: [],
   contextGeneration: 0,
@@ -94,6 +97,7 @@ const el = Object.fromEntries(
     "context-roots", "project-tree", "add-context-root",
     "project-search", "project-search-mode", "project-search-status",
     "project-search-results",
+    "project-index-status", "project-index-build", "project-index-clear",
     "thread-search", "thread-search-previous", "thread-search-next",
     "export-thread", "return-to-parent",
     "context-items",
@@ -1260,6 +1264,7 @@ function setBusy(busy) {
   );
   el["project-search"].disabled = busy || !state.roots.length;
   el["project-search-mode"].disabled = busy || !state.roots.length;
+  renderProjectIndexStatus();
   el["restore-checkpoint"].disabled = (
     busy || !el["checkpoint-select"].value
   );
@@ -1392,6 +1397,7 @@ async function loadRootsAndTree() {
   renderContextRoots();
   el["project-search"].disabled = state.busy || !availableRoots.size;
   el["project-search-mode"].disabled = state.busy || !availableRoots.size;
+  loadProjectIndexStatus(sessionId);
   if (el["project-search"].value.trim()) scheduleProjectSearch();
   else renderProjectSearchResults();
   renderProjectTree(generation);
@@ -1442,11 +1448,17 @@ function invalidateProjectSearch() {
   state.projectSearchController = null;
   state.projectSearchGeneration += 1;
   state.projectSearchResults = null;
+  state.projectIndexStatus = null;
+  state.projectIndexGeneration += 1;
+  state.projectIndexBusySession = null;
   el["project-search"].value = "";
   el["project-search-status"].textContent = "";
   el["project-search-results"].replaceChildren();
+  el["project-tree"].classList.remove("is-hidden");
+  el["session-list"].classList.remove("is-project-searching");
   el["project-search"].disabled = true;
   el["project-search-mode"].disabled = true;
+  renderProjectIndexStatus();
 }
 
 function cancelProjectSearch(sessionId = state.sessionId) {
@@ -1474,6 +1486,122 @@ function scheduleProjectSearch() {
       if (error.name !== "AbortError") toast(error.message, "error");
     });
   }, 180);
+}
+
+async function loadProjectIndexStatus(sessionId = state.sessionId) {
+  if (!sessionId || !state.roots.length) {
+    state.projectIndexStatus = null;
+    renderProjectIndexStatus();
+    return;
+  }
+  const generation = ++state.projectIndexGeneration;
+  const rootSnapshot = state.roots
+    .map((root) => `${root.path}:${root.available !== false}`)
+    .join("\n");
+  let result;
+  try {
+    result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/project/index`
+    );
+  } catch (_error) {
+    if (
+      state.sessionId === sessionId
+      && state.projectIndexGeneration === generation
+      && state.roots
+        .map((root) => `${root.path}:${root.available !== false}`)
+        .join("\n") === rootSnapshot
+    ) {
+      state.projectIndexStatus = null;
+      renderProjectIndexStatus();
+    }
+    return;
+  }
+  if (
+    state.sessionId !== sessionId
+    || state.projectIndexGeneration !== generation
+    || state.roots
+      .map((root) => `${root.path}:${root.available !== false}`)
+      .join("\n") !== rootSnapshot
+  ) return;
+  state.projectIndexStatus = result;
+  renderProjectIndexStatus();
+}
+
+function renderProjectIndexStatus() {
+  const status = state.projectIndexStatus;
+  const available = state.roots.some((root) => root.available !== false);
+  const indexBusy = state.projectIndexBusySession === state.sessionId;
+  const busy = state.busy || indexBusy;
+  const files = (status?.roots || [])
+    .reduce((total, root) => total + Number(root.files || 0), 0);
+  const chunks = (status?.roots || [])
+    .reduce((total, root) => total + Number(root.chunks || 0), 0);
+  el["project-index-status"].textContent = (
+    indexBusy
+      ? "Building local index…"
+      : status?.state === "ready"
+        ? `Semantic · ${files} files · ${chunks} chunks`
+        : status?.state === "partial"
+          ? `Semantic index limited · ${chunks} chunks`
+          : "Semantic index not built"
+  );
+  el["project-index-build"].textContent = chunks ? "Reindex" : "Index";
+  el["project-index-build"].disabled = busy || !available;
+  el["project-index-clear"].disabled = busy || !chunks;
+}
+
+async function rebuildProjectIndex() {
+  const sessionId = state.sessionId;
+  if (!sessionId || state.projectIndexBusySession === sessionId) return;
+  state.projectIndexBusySession = sessionId;
+  renderProjectIndexStatus();
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/project/index`,
+      { method: "POST" }
+    );
+    if (state.sessionId !== sessionId) return;
+    await loadProjectIndexStatus(sessionId);
+    toast(
+      `Indexed ${result.indexed_files} files · ${result.indexed_chunks} chunks`
+    );
+    if (
+      el["project-search-mode"].value === "semantic"
+      && el["project-search"].value.trim()
+    ) scheduleProjectSearch();
+  } finally {
+    if (state.projectIndexBusySession === sessionId) {
+      state.projectIndexBusySession = null;
+    }
+    renderProjectIndexStatus();
+  }
+}
+
+async function clearProjectIndex() {
+  const sessionId = state.sessionId;
+  if (
+    !sessionId
+    || state.projectIndexBusySession === sessionId
+    || !window.confirm("Delete the local semantic index for this project?")
+  ) return;
+  state.projectIndexBusySession = sessionId;
+  renderProjectIndexStatus();
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/project/index`,
+      { method: "DELETE" }
+    );
+    if (state.sessionId !== sessionId) return;
+    state.projectSearchResults = null;
+    renderProjectSearchResults();
+    await loadProjectIndexStatus(sessionId);
+    toast("Local semantic index deleted");
+  } finally {
+    if (state.projectIndexBusySession === sessionId) {
+      state.projectIndexBusySession = null;
+    }
+    renderProjectIndexStatus();
+  }
 }
 
 async function loadProjectSearch() {
@@ -1522,15 +1650,28 @@ async function loadProjectSearch() {
 function renderProjectSearchResults() {
   const query = el["project-search"].value.trim();
   const result = state.projectSearchResults;
+  el["session-list"].classList.toggle(
+    "is-project-searching",
+    Boolean(query)
+  );
+  el["project-tree"].classList.toggle("is-hidden", Boolean(query));
+  el["project-search-results"].classList.toggle(
+    "is-active",
+    Boolean(query)
+  );
   el["project-search-results"].replaceChildren();
   if (!query) {
     el["project-search-status"].textContent = "";
     return;
   }
   if (!result) return;
+  const scanLabel = result.mode === "semantic"
+    ? `semantic · ${result.duration_ms} ms`
+    : `${result.files_scanned} files · ${result.duration_ms} ms`;
   el["project-search-status"].textContent = (
     `${result.count} match${result.count === 1 ? "" : "es"} · `
-    + `${result.files_scanned} files · ${result.duration_ms} ms`
+    + scanLabel
+    + `${result.stale_chunks ? ` · ${result.stale_chunks} stale` : ""}`
     + `${result.truncated ? " · limited" : ""}`
   );
   for (const match of result.matches || []) {
@@ -3030,6 +3171,12 @@ function wireEvents() {
     "change",
     scheduleProjectSearch
   );
+  el["project-index-build"].addEventListener("click", () => {
+    rebuildProjectIndex().catch((error) => toast(error.message, "error"));
+  });
+  el["project-index-clear"].addEventListener("click", () => {
+    clearProjectIndex().catch((error) => toast(error.message, "error"));
+  });
   el["thread-search"].addEventListener("input", () => findThreadMatches());
   el["thread-search-previous"].addEventListener(
     "click",

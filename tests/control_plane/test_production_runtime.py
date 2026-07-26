@@ -722,6 +722,10 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
             headers=AUTH,
             params={"q": "DurableGuide", "mode": "symbol"},
         )
+        indexed = client.post(
+            "/v1/sessions/context-session/project/index",
+            headers=AUTH,
+        )
 
     assert added.status_code == 200
     assert added.json()["roots"][1]["writable"] is False
@@ -732,6 +736,8 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
     assert search.status_code == 200
     assert search.json()["matches"][0]["path"] == "docs/guide.md"
     assert search.json()["matches"][0]["kind"] == "class"
+    assert indexed.status_code == 200
+    assert indexed.json()["indexed_chunks"] >= 1
 
     restarted = build_services(
         config,
@@ -749,6 +755,19 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
             headers=AUTH,
             params={"q": "DurableGuide", "mode": "text"},
         )
+        index_status = client.get(
+            "/v1/sessions/context-session/project/index",
+            headers=AUTH,
+        )
+        semantic = client.get(
+            "/v1/sessions/context-session/project/search",
+            headers=AUTH,
+            params={"q": "durable guide", "mode": "semantic"},
+        )
+        cleared = client.delete(
+            "/v1/sessions/context-session/project/index",
+            headers=AUTH,
+        )
         removed = client.request(
             "DELETE",
             "/v1/sessions/context-session/roots",
@@ -760,6 +779,10 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
     assert roots.json()[1]["path"] == str(shared.resolve())
     assert persisted_search.status_code == 200
     assert persisted_search.json()["count"] == 1
+    assert index_status.json()["state"] == "ready"
+    assert semantic.status_code == 200
+    assert semantic.json()["matches"][0]["path"] == "docs/guide.md"
+    assert cleared.json()["deleted_chunks"] >= 1
     assert removed.status_code == 200
     assert len(removed.json()["roots"]) == 1
 

@@ -178,6 +178,12 @@ class SessionControl(Protocol):
 
     def cancel_project_search(self, session_id: str) -> bool: ...
 
+    def project_index_status(self, session_id: str) -> dict[str, Any]: ...
+
+    def rebuild_project_index(self, session_id: str) -> dict[str, Any]: ...
+
+    def clear_project_index(self, session_id: str) -> dict[str, Any]: ...
+
     def project_context(
         self,
         session_id: str,
@@ -485,6 +491,10 @@ def create_control_plane_app(
                 goal_store = getattr(goals, "store", None)
                 if goal_store is not None:
                     goal_store.close()
+                sessions = getattr(services, "sessions", None)
+                close_sessions = getattr(sessions, "close", None)
+                if close_sessions is not None:
+                    close_sessions()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -680,7 +690,7 @@ def create_control_plane_app(
         if (
             not 1 <= len(q.encode("utf-8")) <= 256
             or "\x00" in q
-            or mode not in {"text", "symbol"}
+            or mode not in {"text", "symbol", "semantic"}
             or not 1 <= limit <= 100
         ):
             raise HTTPException(
@@ -701,6 +711,64 @@ def create_control_plane_app(
                 else 400
             )
             raise HTTPException(status_code=status, detail=result["error"])
+        return result
+
+    @app.get("/v1/sessions/{session_id}/project/index")
+    async def project_index_status(
+        session_id: str,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        result = await asyncio.to_thread(
+            services.sessions.project_index_status,
+            session_id,
+        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=404,
+                detail=result.get("error", "project index unavailable"),
+            )
+        return result
+
+    @app.post("/v1/sessions/{session_id}/project/index")
+    async def rebuild_project_index(
+        session_id: str,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        result = await asyncio.to_thread(
+            services.sessions.rebuild_project_index,
+            session_id,
+        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=(
+                    409
+                    if result.get("error")
+                    == "semantic index build already active"
+                    else 404
+                ),
+                detail=result.get("error", "project index unavailable"),
+            )
+        return result
+
+    @app.delete("/v1/sessions/{session_id}/project/index")
+    async def clear_project_index(
+        session_id: str,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        result = await asyncio.to_thread(
+            services.sessions.clear_project_index,
+            session_id,
+        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=(
+                    409
+                    if result.get("error")
+                    == "semantic index build already active"
+                    else 404
+                ),
+                detail=result.get("error", "project index unavailable"),
+            )
         return result
 
     @app.delete("/v1/sessions/{session_id}/project/search")

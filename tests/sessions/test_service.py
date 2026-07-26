@@ -789,6 +789,15 @@ def test_delete_interrupts_engine_runs_cleanup_and_removes_only_scratch(tmp_path
         ),
     )
     cleaned = []
+    cleared = []
+
+    class RecordingIndex:
+        def search(self, *_args, **_kwargs):
+            return {"ok": True, "matches": []}
+
+        def clear_scope(self, scope, *, paths=None):
+            cleared.append((scope, paths))
+            return {"ok": True, "deleted_roots": 1}
 
     class LiveEngine:
         interrupted = False
@@ -801,6 +810,7 @@ def test_delete_interrupts_engine_runs_cleanup_and_removes_only_scratch(tmp_path
         store,
         scratch_base=scratch_base,
         delete_callbacks=[cleaned.append],
+        semantic_index=RecordingIndex(),
     )
     service.attach_engine("s1", engine)
 
@@ -811,6 +821,7 @@ def test_delete_interrupts_engine_runs_cleanup_and_removes_only_scratch(tmp_path
 
     assert service.delete("s2") == {"ok": True, "session_id": "s2"}
     assert project_workspace.is_dir()
+    assert cleared == [("s1", None), ("s2", None)]
     assert service.delete("__system")["ok"] is False
 
 
@@ -853,7 +864,23 @@ def test_add_and_remove_persisted_root_without_mutating_primary(tmp_path):
             mode="interactive",
         )
     )
-    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    class RecordingIndex:
+        def __init__(self):
+            self.cleared = []
+
+        def search(self, *_args, **_kwargs):
+            return {"ok": True, "matches": []}
+
+        def clear_scope(self, scope, *, paths=None):
+            self.cleared.append((scope, paths))
+            return {"ok": True, "deleted_roots": 1, "deleted_chunks": 1}
+
+    semantic_index = RecordingIndex()
+    service = SessionService(
+        store,
+        scratch_base=tmp_path / "scratch",
+        semantic_index=semantic_index,
+    )
 
     added = service.add_root("s1", str(shared), writable=False)
     assert added["ok"] is True
@@ -870,6 +897,9 @@ def test_add_and_remove_persisted_root_without_mutating_primary(tmp_path):
     removed = service.remove_root("s1", str(shared))
     assert removed["ok"] is True
     assert len(removed["roots"]) == 1
+    assert semantic_index.cleared == [
+        ("s1", [str(shared.resolve())])
+    ]
 
 
 def test_add_root_does_not_duplicate_or_downgrade_primary_workspace(tmp_path):

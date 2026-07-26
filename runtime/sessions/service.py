@@ -28,6 +28,7 @@ from typing import (
 )
 
 from runtime.events import Event
+from runtime.indexing import SemanticIndexService
 from runtime.policy import Mode
 from runtime.search import RepositorySearchCoordinator
 
@@ -194,6 +195,7 @@ class SessionService:
         snapshotter: Optional[SessionSnapshotter] = None,
         delete_callbacks: Iterable[DeleteCallback] = (),
         artifact_opener: Optional[ArtifactOpener] = None,
+        semantic_index: SemanticIndexService | None = None,
         default_model: str = "gpt-5.6-sol",
         default_model_provider: Optional[Callable[[], str]] = None,
         default_mode: str = "interactive",
@@ -209,6 +211,18 @@ class SessionService:
         self._default_mode = default_mode
         self._engines: dict[str, SessionEngine] = {}
         self._project_search = RepositorySearchCoordinator()
+        self._semantic_index = semantic_index or SemanticIndexService(
+            self._scratch_base.parent
+        )
+        self._semantic_search = RepositorySearchCoordinator(
+            searcher=self._semantic_index.search,
+            include_session_scope=True,
+        )
+
+    def close(self) -> None:
+        close = getattr(self._semantic_index, "close", None)
+        if close is not None:
+            close()
 
     def attach_engine(self, session_id: str, engine: SessionEngine) -> None:
         self._engines[session_id] = engine
@@ -804,13 +818,18 @@ class SessionService:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
 
-        engine = self._engines.pop(session_id, None)
-        if engine is not None:
-            engine.request_interrupt()
-
+        engine = self._engines.get(session_id)
         record = self._store.load(session_id)
         cleanup_errors = []
         if record is not None:
+            self.cancel_project_search(session_id)
+            cleared = self._semantic_index.clear_scope(session_id)
+            if not cleared.get("ok"):
+                return {
+                    "ok": False,
+                    "session_id": session_id,
+                    "cleanup_errors": ["semantic index cleanup failed"],
+                }
             for callback in self._delete_callbacks:
                 try:
                     callback(session_id)
@@ -825,6 +844,9 @@ class SessionService:
                 "cleanup_errors": cleanup_errors,
             }
 
+        self._engines.pop(session_id, None)
+        if engine is not None:
+            engine.request_interrupt()
         ok = self._store.delete(session_id)
         if ok:
             cleanup_error = self._remove_scratch_workspace(record)
@@ -1009,6 +1031,19 @@ class SessionService:
                 if Path(str(root["path"])).expanduser().absolute()
                 != configured_path
             ]
+        self.cancel_project_search(session_id)
+        cleared = self._semantic_index.clear_scope(
+            session_id,
+            paths=[str(configured_path)],
+        )
+        if not cleared.get("ok"):
+            return {
+                "ok": False,
+                "error": cleared.get(
+                    "error",
+                    "could not delete semantic index",
+                ),
+            }
         self._store.set_extra_roots(session_id, extra_roots)
         if live_roots is not None:
             engine.durable_extra_roots = extra_roots
@@ -1159,6 +1194,49 @@ class SessionService:
         mode: str = "text",
         limit: int = 50,
     ) -> dict[str, Any]:
+        roots = self._project_roots(session_id)
+        if not roots:
+            return {"ok": False, "error": "project roots unavailable"}
+        coordinator = (
+            self._semantic_search
+            if mode == "semantic"
+            else self._project_search
+        )
+        return coordinator.search(
+            session_id,
+            roots,
+            query=query,
+            mode=mode,
+            limit=limit,
+        )
+
+    def project_index_status(self, session_id: str) -> dict[str, Any]:
+        if (
+            session_id not in self._engines
+            and self._store.load(session_id) is None
+        ):
+            return {"ok": False, "error": "project roots unavailable"}
+        return self._semantic_index.project_status(
+            self._project_roots(session_id),
+            scope=session_id,
+        )
+
+    def rebuild_project_index(self, session_id: str) -> dict[str, Any]:
+        roots = self._project_roots(session_id)
+        if not roots:
+            return {"ok": False, "error": "project roots unavailable"}
+        return self._semantic_index.rebuild(roots, scope=session_id)
+
+    def clear_project_index(self, session_id: str) -> dict[str, Any]:
+        if (
+            session_id not in self._engines
+            and self._store.load(session_id) is None
+        ):
+            return {"ok": False, "error": "project roots unavailable"}
+        self.cancel_project_search(session_id)
+        return self._semantic_index.clear_scope(session_id)
+
+    def _project_roots(self, session_id: str) -> list[dict[str, Any]]:
         roots = []
         for root in self.roots(session_id):
             if root.get("available") is False:
@@ -1174,18 +1252,12 @@ class SessionService:
                     "_inode": identity[1],
                 }
             )
-        if not roots:
-            return {"ok": False, "error": "project roots unavailable"}
-        return self._project_search.search(
-            session_id,
-            roots,
-            query=query,
-            mode=mode,
-            limit=limit,
-        )
+        return roots
 
     def cancel_project_search(self, session_id: str) -> bool:
-        return self._project_search.cancel(session_id)
+        text_cancelled = self._project_search.cancel(session_id)
+        semantic_cancelled = self._semantic_search.cancel(session_id)
+        return text_cancelled or semantic_cancelled
 
     def project_context(
         self,

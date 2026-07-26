@@ -116,6 +116,8 @@ class FakeSessions:
         self.removed_roots = []
         self.opened_project_paths = []
         self.cancelled_project_searches = []
+        self.rebuilt_project_indexes = []
+        self.cleared_project_indexes = []
         self.export_too_large = False
 
     def list_sessions(self, *, workspace=None):
@@ -179,6 +181,40 @@ class FakeSessions:
     def cancel_project_search(self, session_id):
         self.cancelled_project_searches.append(session_id)
         return True
+
+    def project_index_status(self, _session_id):
+        return {
+            "ok": True,
+            "schema_version": 1,
+            "state": "ready",
+            "roots": [
+                {
+                    "root": "/tmp/project",
+                    "state": "ready",
+                    "files": 7,
+                    "chunks": 12,
+                    "truncated": False,
+                }
+            ],
+        }
+
+    def rebuild_project_index(self, session_id):
+        self.rebuilt_project_indexes.append(session_id)
+        return {
+            "ok": True,
+            "indexed_roots": 1,
+            "indexed_files": 7,
+            "indexed_chunks": 12,
+            "truncated": False,
+        }
+
+    def clear_project_index(self, session_id):
+        self.cleared_project_indexes.append(session_id)
+        return {
+            "ok": True,
+            "deleted_roots": 1,
+            "deleted_chunks": 12,
+        }
 
     def add_root(self, session_id, path, *, writable=False):
         self.added_roots.append((session_id, path, writable))
@@ -409,6 +445,11 @@ def test_project_search_route_is_bounded():
             headers=AUTH,
             params={"q": "GoalCoordinator", "mode": "symbol", "limit": 20},
         )
+        semantic = client.get(
+            "/v1/sessions/session-1/project/search",
+            headers=AUTH,
+            params={"q": "repair auth", "mode": "semantic", "limit": 20},
+        )
         invalid = client.get(
             "/v1/sessions/session-1/project/search",
             headers=AUTH,
@@ -420,9 +461,37 @@ def test_project_search_route_is_bounded():
         )
 
     assert searched.status_code == 200
+    assert semantic.status_code == 200
     assert searched.json()["matches"][0]["line"] == 7
     assert invalid.status_code == 400
     assert cancelled.json() == {"ok": True}
+
+
+def test_semantic_index_lifecycle_routes_are_authenticated():
+    client, sessions, _turns = make_client()
+    with client:
+        unauthorized = client.get(
+            "/v1/sessions/session-1/project/index",
+        )
+        status = client.get(
+            "/v1/sessions/session-1/project/index",
+            headers=AUTH,
+        )
+        rebuilt = client.post(
+            "/v1/sessions/session-1/project/index",
+            headers=AUTH,
+        )
+        cleared = client.delete(
+            "/v1/sessions/session-1/project/index",
+            headers=AUTH,
+        )
+
+    assert unauthorized.status_code == 401
+    assert status.json()["state"] == "ready"
+    assert rebuilt.json()["indexed_chunks"] == 12
+    assert cleared.json()["deleted_chunks"] == 12
+    assert sessions.rebuilt_project_indexes == ["session-1"]
+    assert sessions.cleared_project_indexes == ["session-1"]
 
 
 def test_project_context_is_authenticated_and_open_actions_are_idle_gated():

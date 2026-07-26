@@ -15,11 +15,13 @@ class RepositorySearchCoordinator:
         *,
         max_concurrent: int = 2,
         searcher: Callable[..., dict[str, Any]] = search_repository_roots,
+        include_session_scope: bool = False,
     ) -> None:
         if not 1 <= max_concurrent <= 16:
             raise ValueError("invalid search concurrency")
         self._slots = threading.BoundedSemaphore(max_concurrent)
         self._searcher = searcher
+        self._include_session_scope = include_session_scope
         self._lock = threading.Lock()
         self._active: dict[str, threading.Event] = {}
 
@@ -61,20 +63,42 @@ class RepositorySearchCoordinator:
                         int((time.monotonic() - started) * 1000),
                     ),
                 )
-            return self._searcher(
+            options = {
+                "query": query,
+                "mode": mode,
+                "limit": limit,
+                "cancelled": cancellation.is_set,
+                "deadline": deadline,
+            }
+            if self._include_session_scope:
+                options["scope"] = session_id
+            result = self._searcher(
                 roots,
-                query=query,
-                mode=mode,
-                limit=limit,
-                cancelled=cancellation.is_set,
-                deadline=deadline,
+                **options,
             )
+            if not self._commit_result(session_id, cancellation):
+                return _cancelled(query, mode)
+            return result
         finally:
             if acquired:
                 self._slots.release()
             with self._lock:
                 if self._active.get(session_id) is cancellation:
                     self._active.pop(session_id, None)
+
+    def _commit_result(
+        self,
+        session_id: str,
+        cancellation: threading.Event,
+    ) -> bool:
+        with self._lock:
+            if (
+                self._active.get(session_id) is not cancellation
+                or cancellation.is_set()
+            ):
+                return False
+            self._active.pop(session_id, None)
+            return True
 
     def cancel(self, session_id: str) -> bool:
         with self._lock:

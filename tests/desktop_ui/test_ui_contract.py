@@ -55,6 +55,7 @@ def test_desktop_ui_has_native_three_pane_product_structure():
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
+    css = (UI / "app.css").read_text(encoding="utf-8")
 
     assert "/approvals/" in script
     assert "/interactions" in script
@@ -106,7 +107,23 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "sessionSelectionGeneration" in script
     assert "/tree?" in script
     assert "/project/search?" in script
+    assert "/project/index" in script
     assert "renderProjectSearchResults" in script
+    assert (
+        'el["project-tree"].classList.toggle("is-hidden", Boolean(query))'
+        in script
+    )
+    assert '"is-active",' in script
+    assert ".project-search-results.is-active" in css
+    assert '"is-project-searching",' in script
+    assert ".session-list.is-project-searching" in css
+    assert "renderProjectIndexStatus" in script
+    assert "projectIndexGeneration" in script
+    assert "projectIndexBusySession" in script
+    assert "rootSnapshot" in script
+    assert "Semantic index not built" in html
+    assert 'option value="semantic"' in html
+    assert "Delete the local semantic index" in script
     assert "cancelProjectSearch" in script
     scheduled_search = script.split(
         "function scheduleProjectSearch()",

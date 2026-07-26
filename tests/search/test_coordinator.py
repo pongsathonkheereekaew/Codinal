@@ -140,3 +140,79 @@ def test_search_coordinator_bounds_slot_wait_within_request_deadline(
     assert elapsed < 0.3
     assert queued["truncated"] is True
     assert queued["cancelled"] is False
+
+
+def test_cancel_discards_results_returned_after_revocation():
+    started = threading.Event()
+    release = threading.Event()
+
+    def searcher(_roots, *, query, mode, **_options):
+        started.set()
+        release.wait(timeout=1)
+        result = _result(query, mode)
+        result["count"] = 1
+        result["matches"] = [{"path": "revoked.py"}]
+        return result
+
+    coordinator = RepositorySearchCoordinator(searcher=searcher)
+    result = {}
+    thread = threading.Thread(
+        target=lambda: result.update(
+            coordinator.search(
+                "session-1",
+                [{"path": "/tmp/repo"}],
+                query="secret",
+                mode="text",
+                limit=10,
+            )
+        )
+    )
+    thread.start()
+    assert started.wait(timeout=1)
+    assert coordinator.cancel("session-1") is True
+    release.set()
+    thread.join(timeout=1)
+
+    assert result["matches"] == []
+    assert result["cancelled"] is True
+
+
+def test_cancel_wins_post_searcher_pre_commit_race():
+    reached_commit = threading.Event()
+    release_commit = threading.Event()
+
+    def searcher(_roots, *, query, mode, **_options):
+        result = _result(query, mode)
+        result["count"] = 1
+        result["matches"] = [{"path": "revoked.py"}]
+        return result
+
+    coordinator = RepositorySearchCoordinator(searcher=searcher)
+    original_commit = coordinator._commit_result
+
+    def delayed_commit(session_id, cancellation):
+        reached_commit.set()
+        release_commit.wait(timeout=1)
+        return original_commit(session_id, cancellation)
+
+    coordinator._commit_result = delayed_commit
+    result = {}
+    thread = threading.Thread(
+        target=lambda: result.update(
+            coordinator.search(
+                "session-1",
+                [{"path": "/tmp/repo"}],
+                query="secret",
+                mode="text",
+                limit=10,
+            )
+        )
+    )
+    thread.start()
+    assert reached_commit.wait(timeout=1)
+    assert coordinator.cancel("session-1") is True
+    release_commit.set()
+    thread.join(timeout=1)
+
+    assert result["matches"] == []
+    assert result["cancelled"] is True

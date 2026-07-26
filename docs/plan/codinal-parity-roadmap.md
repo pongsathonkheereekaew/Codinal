@@ -129,7 +129,7 @@ Acceptance evidence:
   context chips, and multi-root management.
 - [x] Add fast text/symbol search respecting ignore files, symlinks,
   repository boundaries, cancellation, and strict time/file/byte budgets.
-- [ ] Add a local semantic index respecting ignore files, symlinks, repository
+- [x] Add a local semantic index respecting ignore files, symlinks, repository
   boundaries, deletion, resource budgets, and index-schema migration.
 - [x] Add durable global session search, in-thread search, fork from message,
   Markdown export, and side conversations.
@@ -222,9 +222,10 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Add the bounded local semantic index and relevance/latency corpus.
-2. Add transparent model-routing profiles with capability and cost visibility.
-3. Complete the audited MCP lifecycle UI and restart coverage.
+1. Add transparent model-routing profiles with capability and cost visibility.
+2. Complete the audited MCP lifecycle UI and restart coverage.
+3. Add representative repository relevance/latency benchmarks and adversarial
+   resource-pressure coverage.
 
 ## Decisions so far
 
