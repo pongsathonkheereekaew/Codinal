@@ -21,7 +21,13 @@ from runtime.control_plane import (
     websocket_auth_protocol,
 )
 from runtime.control_plane.server import ServerConfig, build_services
-from runtime.git import GitWorkspaceRecord, GitWorktreeStore, WorktreeState
+from runtime.git import (
+    CheckpointRestoreScope,
+    CheckpointRestoreState,
+    GitWorkspaceRecord,
+    GitWorktreeStore,
+    WorktreeState,
+)
 from runtime.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from runtime.policy import ApprovalOutcome, ToolCall
 from runtime.sessions import SessionRecord, TurnCheckpoint, TurnStatus
@@ -179,7 +185,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
         assert conversations.execute("PRAGMA user_version").fetchone()[0] == 3
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_production_startup_restores_latest_good_backups(tmp_path):
@@ -1280,8 +1286,16 @@ def test_production_git_session_mutates_only_isolated_worktree(
     platform.system() != "Darwin",
     reason="production worktree creation uses macOS Seatbelt",
 )
-def test_turn_checkpoint_restores_code_and_conversation_after_restart(
+@pytest.mark.parametrize(
+    "crash_window",
+    [
+        "after_code_apply",
+        "after_conversation_save",
+    ],
+)
+def test_turn_checkpoint_reconciles_ambiguous_restore_after_restart(
     tmp_path,
+    crash_window,
 ):
     class WriteThenAnswerProvider(ProviderClient):
         def __init__(self):
@@ -1405,6 +1419,28 @@ def test_turn_checkpoint_restores_code_and_conversation_after_restart(
         "manual after checkpoint\n",
         encoding="utf-8",
     )
+    interrupted = build_services(
+        config,
+        provider=WriteThenAnswerProvider(),
+        approver=approve_once,
+    )
+    operation = interrupted.git.begin_restore(
+        "checkpoint-e2e",
+        checkpoint_id,
+        CheckpointRestoreScope.BOTH,
+    )
+    interrupted.git.resume_restore_code(operation.operation_id)
+    if crash_window == "after_conversation_save":
+        interrupted.git.advance_restore(
+            operation.operation_id,
+            CheckpointRestoreState.CODE_RESTORED,
+        )
+        assert interrupted.sessions.restore_conversation(
+            "checkpoint-e2e",
+            message_count=operation.message_count,
+        )
+    interrupted.git.close()
+
     restarted = build_services(
         config,
         provider=WriteThenAnswerProvider(),
@@ -1420,14 +1456,6 @@ def test_turn_checkpoint_restores_code_and_conversation_after_restart(
             "/v1/sessions/checkpoint-e2e/checkpoints",
             headers=AUTH,
         )
-        restored = client.post(
-            (
-                "/v1/sessions/checkpoint-e2e/checkpoints/"
-                f"{checkpoint_id}/restore"
-            ),
-            headers=AUTH,
-            json={"scope": "both"},
-        )
         restored_messages = restarted.sessions.messages(
             "checkpoint-e2e"
         )
@@ -1435,9 +1463,7 @@ def test_turn_checkpoint_restores_code_and_conversation_after_restart(
     assert accepted.status_code == 202
     assert checkpoints.status_code == 200
     assert len(checkpoints.json()) == 1
-    assert restarted_checkpoints.json() == checkpoints.json()
-    assert restored.status_code == 200
-    assert restored.json()["scope"] == "both"
+    assert restarted_checkpoints.json() == []
     assert not (git_record.worktree_path / ".agent-cache").exists()
     assert (git_record.worktree_path / "manual.txt").read_text(
         encoding="utf-8"

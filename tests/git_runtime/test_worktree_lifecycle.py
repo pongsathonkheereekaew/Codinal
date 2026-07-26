@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from runtime.git import (
+    CheckpointRestoreScope,
+    CheckpointRestoreState,
     CheckpointState,
     DetachedHeadError,
     GitWorkspaceError,
@@ -413,6 +415,163 @@ def test_attributed_checkpoint_leaves_extra_root_unmanaged(
     assert service.store.list_checkpoint_files(
         checkpoint.checkpoint_id
     ) == []
+
+
+@requires_seatbelt
+def test_restore_journal_resumes_code_idempotently_after_restart(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    data_dir = tmp_path / "data"
+    service = GitWorktreeService(data_dir)
+    record = service.prepare("restore-journal", repo)
+    checkpoint = service.begin_checkpoint(
+        "restore-journal",
+        message_count=0,
+    )
+    assert checkpoint is not None
+    tracked = record.worktree_path / "tracked.txt"
+    tracked.write_text("agent edit\n", encoding="utf-8")
+    service.complete_checkpoint(
+        "restore-journal",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+    restore = service.begin_restore(
+        "restore-journal",
+        checkpoint.checkpoint_id,
+        CheckpointRestoreScope.BOTH,
+    )
+    service.close()
+
+    restarted = GitWorktreeService(data_dir)
+    assert restarted.pending_restores() == [restore]
+    restarted.resume_restore_code(restore.operation_id)
+    restarted.resume_restore_code(restore.operation_id)
+    advanced = restarted.advance_restore(
+        restore.operation_id,
+        CheckpointRestoreState.CODE_RESTORED,
+    )
+
+    assert tracked.read_text(encoding="utf-8") == "base\n"
+    assert advanced.state is CheckpointRestoreState.CODE_RESTORED
+    assert restarted.finish_restore(restore.operation_id) is True
+    assert restarted.pending_restores() == []
+    checkpoint_repository = next(
+        (data_dir / "checkpoints").iterdir()
+    )
+    retained_refs = subprocess.run(
+        [
+            "git",
+            f"--git-dir={checkpoint_repository}",
+            "for-each-ref",
+            "--format=%(refname)",
+            (
+                "refs/codinal/checkpoints/restore-journal/"
+                f"{restore.operation_id}/"
+            ),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).stdout
+    assert retained_refs == ""
+
+
+@requires_seatbelt
+def test_restore_journal_refuses_diverged_worktree(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("restore-diverged", repo)
+    checkpoint = service.begin_checkpoint(
+        "restore-diverged",
+        message_count=0,
+    )
+    assert checkpoint is not None
+    tracked = record.worktree_path / "tracked.txt"
+    tracked.write_text("agent edit\n", encoding="utf-8")
+    service.complete_checkpoint(
+        "restore-diverged",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+    restore = service.begin_restore(
+        "restore-diverged",
+        checkpoint.checkpoint_id,
+        CheckpointRestoreScope.CODE,
+    )
+    tracked.write_text("manual divergence\n", encoding="utf-8")
+
+    with pytest.raises(
+        GitWorkspaceError,
+        match="restore state diverged",
+    ):
+        service.resume_restore_code(restore.operation_id)
+
+    assert tracked.read_text(encoding="utf-8") == (
+        "manual divergence\n"
+    )
+
+
+@requires_seatbelt
+def test_restore_journal_cleans_refs_after_history_rows_are_gone(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    data_dir = tmp_path / "data"
+    service = GitWorktreeService(data_dir)
+    record = service.prepare("restore-ref-cleanup", repo)
+    checkpoint = service.begin_checkpoint(
+        "restore-ref-cleanup",
+        message_count=0,
+    )
+    assert checkpoint is not None
+    (record.worktree_path / "tracked.txt").write_text(
+        "agent edit\n",
+        encoding="utf-8",
+    )
+    service.complete_checkpoint(
+        "restore-ref-cleanup",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+    restore = service.begin_restore(
+        "restore-ref-cleanup",
+        checkpoint.checkpoint_id,
+        CheckpointRestoreScope.BOTH,
+    )
+    assert service.store.delete_checkpoints(
+        "restore-ref-cleanup",
+        restore.discard_checkpoint_ids,
+    ) == 1
+
+    assert service.discard_restore_history(
+        restore.operation_id
+    ) == 0
+
+    checkpoint_repository = next(
+        (data_dir / "checkpoints").iterdir()
+    )
+    refs = subprocess.run(
+        [
+            "git",
+            f"--git-dir={checkpoint_repository}",
+            "for-each-ref",
+            "--format=%(refname)",
+            (
+                "refs/codinal/checkpoints/restore-ref-cleanup/"
+                f"{checkpoint.checkpoint_id}/"
+            ),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).stdout
+    assert refs == ""
 
 
 @requires_seatbelt

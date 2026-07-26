@@ -1,8 +1,16 @@
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
+from runtime.git import (
+    CheckpointRestoreRecord,
+    CheckpointRestoreScope,
+    CheckpointRestoreState,
+    GitWorkspaceRecord,
+    WorktreeState,
+)
 from runtime.git.store import GitWorktreeStore
 from runtime.storage import UnsupportedSchemaVersionError
 
@@ -41,7 +49,7 @@ def test_legacy_git_state_is_versioned_and_backed_up(tmp_path):
 
     assert store.load("legacy-session").source_branch == "main"
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
         assert {
             row[1]
             for row in migrated.execute(
@@ -70,9 +78,34 @@ def test_legacy_git_state_is_versioned_and_backed_up(tmp_path):
             "before_mode",
             "after_mode",
         }
+        assert {
+            row[1]
+            for row in migrated.execute(
+                "PRAGMA table_info(checkpoint_restores)"
+            )
+        } >= {
+            "operation_id",
+            "checkpoint_id",
+            "session_id",
+            "scope",
+            "state",
+            "message_count",
+            "code_before_tree",
+            "code_after_tree",
+        }
+        assert {
+            row[1]
+            for row in migrated.execute(
+                "PRAGMA table_info(checkpoint_restore_history)"
+            )
+        } >= {
+            "operation_id",
+            "checkpoint_id",
+            "position",
+        }
     backups = list(
         (tmp_path / "backups").glob(
-            "git-worktrees.db.pre-v0-to-v3-*.bak"
+            "git-worktrees.db.pre-v0-to-v4-*.bak"
         )
     )
     assert len(backups) == 1
@@ -153,11 +186,11 @@ def test_v1_git_state_adds_durable_code_checkpoints(tmp_path):
     assert store.load("retained-v1").base_commit == "a" * 40
     assert store.list_checkpoints("retained-v1") == []
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "git-worktrees.db.pre-v1-to-v3-*.bak"
+                "git-worktrees.db.pre-v1-to-v4-*.bak"
             )
         )
     ) == 1
@@ -217,11 +250,77 @@ def test_v2_git_state_retains_checkpoints_as_whole_tree(tmp_path):
     assert checkpoint.capture_mode.value == "whole_tree"
     assert store.list_checkpoint_files(checkpoint_id) == []
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "git-worktrees.db.pre-v2-to-v3-*.bak"
+                "git-worktrees.db.pre-v2-to-v4-*.bak"
             )
         )
     ) == 1
+
+
+def test_v3_git_state_adds_restore_journal(tmp_path):
+    database = tmp_path / "git-worktrees.db"
+    store = GitWorktreeStore(tmp_path)
+    store.close()
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE checkpoint_restores")
+        connection.execute("PRAGMA user_version = 3")
+
+    migrated = GitWorktreeStore(tmp_path)
+
+    assert migrated.pending_restores() == []
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert len(
+        list(
+            (tmp_path / "backups").glob(
+                "git-worktrees.db.pre-v3-to-v4-*.bak"
+            )
+        )
+    ) == 1
+
+
+def test_restore_journal_round_trips_and_is_session_unique(tmp_path):
+    store = GitWorktreeStore(tmp_path)
+    store.save(
+        GitWorkspaceRecord(
+            session_id="restore-session",
+            source_root=Path("/source"),
+            git_common_dir=Path("/source/.git"),
+            source_branch="main",
+            base_commit="a" * 40,
+            worktree_path=Path("/worktree"),
+            session_branch="codinal/restore",
+            source_dirty=False,
+            state=WorktreeState.ACTIVE,
+        )
+    )
+    operation = CheckpointRestoreRecord(
+        operation_id="b" * 32,
+        checkpoint_id="c" * 32,
+        session_id="restore-session",
+        scope=CheckpointRestoreScope.BOTH,
+        state=CheckpointRestoreState.PREPARED,
+        message_count=2,
+        code_before_tree="d" * 40,
+        code_after_tree="e" * 40,
+        discard_checkpoint_ids=("c" * 32,),
+    )
+
+    saved = store.save_restore(operation)
+    advanced = store.save_restore(
+        CheckpointRestoreRecord(
+            **{
+                **saved.__dict__,
+                "state": CheckpointRestoreState.CODE_RESTORED,
+            }
+        )
+    )
+
+    assert advanced.state is CheckpointRestoreState.CODE_RESTORED
+    assert store.pending_restore("restore-session") == advanced
+    assert store.pending_restores() == [advanced]
+    assert store.delete_restore(operation.operation_id) is True
+    assert store.pending_restores() == []

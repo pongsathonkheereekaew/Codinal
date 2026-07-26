@@ -20,7 +20,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from runtime.events import EventHub
-from runtime.git import CheckpointState, GitWorkspaceError
+from runtime.git import (
+    CheckpointRestoreScope,
+    GitWorkspaceError,
+)
 from runtime.mcp import MCPServerDef
 from runtime.control_plane.input_validation import (
     MAX_TURN_BODY_BYTES,
@@ -108,6 +111,12 @@ class TurnControl(Protocol):
         self,
         restore: Any,
     ) -> dict[str, Any]: ...
+
+    async def mutate_when_idle(
+        self,
+        session_id: str,
+        mutation: Any,
+    ) -> Any: ...
 
 
 class SessionControl(Protocol):
@@ -215,6 +224,17 @@ class ApprovalControl(Protocol):
     def close(self) -> None: ...
 
 
+class RestoreControl(Protocol):
+    def restore(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+        scope: CheckpointRestoreScope,
+    ) -> dict[str, object]: ...
+
+    def reconcile(self) -> int: ...
+
+
 class ControlPlaneServices(Protocol):
     events: EventHub
     settings: SettingsView
@@ -224,6 +244,7 @@ class ControlPlaneServices(Protocol):
     sessions: SessionControl
     mcp: MCPControl | None
     git: GitControl | None
+    restores: RestoreControl | None
     approvals: ApprovalControl | None
 
 
@@ -238,6 +259,9 @@ def create_control_plane_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
+            restores = getattr(services, "restores", None)
+            if restores is not None:
+                await asyncio.to_thread(restores.reconcile)
             await services.turns.recover()
             yield
         finally:
@@ -330,42 +354,59 @@ def create_control_plane_app(
     ) -> dict[str, Any]:
         _validate_public_session_id(session_id)
         update = await _read_session_update(request)
-        if "model" in update and services.turns.is_active(session_id):
+
+        def mutate() -> dict[str, Any]:
+            result: dict[str, Any] = {
+                "ok": True,
+                "session_id": session_id,
+            }
+            if "title" in update:
+                result = services.sessions.rename(
+                    session_id,
+                    update["title"],
+                )
+            if result.get("ok") and (
+                "pinned" in update or "archived" in update
+            ):
+                result = services.sessions.set_flags(
+                    session_id,
+                    pinned=update.get("pinned"),
+                    archived=update.get("archived"),
+                )
+            if result.get("ok") and "model" in update:
+                result = services.sessions.set_model(
+                    session_id,
+                    update["model"],
+                )
+            return result
+
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                mutate,
+            )
+        except SessionBusyError as error:
             raise HTTPException(
                 status_code=409,
-                detail="session already has an active turn",
-            )
-        result: dict[str, Any] = {"ok": True, "session_id": session_id}
-        if "title" in update:
-            result = services.sessions.rename(session_id, update["title"])
-            if not result.get("ok"):
-                raise HTTPException(status_code=404, detail="session not found")
-        if "pinned" in update or "archived" in update:
-            result = services.sessions.set_flags(
-                session_id,
-                pinned=update.get("pinned"),
-                archived=update.get("archived"),
-            )
-            if not result.get("ok"):
-                raise HTTPException(status_code=404, detail="session not found")
-        if "model" in update:
-            result = services.sessions.set_model(
-                session_id,
-                update["model"],
-            )
-            if not result.get("ok"):
-                raise HTTPException(status_code=404, detail="session not found")
+                detail=str(error),
+            ) from None
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail="session not found")
         return result
 
     @app.delete("/v1/sessions/{session_id}")
     async def delete_session(session_id: str) -> dict[str, Any]:
         _validate_public_session_id(session_id)
-        if services.turns.is_active(session_id):
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: services.sessions.delete(session_id),
+            )
+        except SessionBusyError as error:
             raise HTTPException(
                 status_code=409,
-                detail="session already has an active turn",
-            )
-        result = services.sessions.delete(session_id)
+                detail=str(error),
+            ) from None
         if result.get("cleanup_errors"):
             raise HTTPException(
                 status_code=409,
@@ -575,16 +616,16 @@ def create_control_plane_app(
         _validate_public_session_id(session_id)
         if services.git is None or services.git.load(session_id) is None:
             raise HTTPException(status_code=404, detail="Git session not found")
-        if services.turns.is_active(session_id):
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: services.git.apply_back(session_id),
+            )
+        except SessionBusyError as error:
             raise HTTPException(
                 status_code=409,
-                detail="session already has an active turn",
-            )
-        try:
-            result = await asyncio.to_thread(
-                services.git.apply_back,
-                session_id,
-            )
+                detail=str(error),
+            ) from None
         except GitWorkspaceError as error:
             raise HTTPException(
                 status_code=409,
@@ -640,78 +681,36 @@ def create_control_plane_app(
                 status_code=404,
                 detail="Git session not found",
             )
-        checkpoint = await asyncio.to_thread(
-            services.git.load_checkpoint,
-            checkpoint_id,
-        )
-        if (
-            checkpoint is None
-            or checkpoint.session_id != session_id
-            or checkpoint.state is not CheckpointState.COMPLETED
-        ):
+        restores = getattr(services, "restores", None)
+        if restores is None:
             raise HTTPException(
-                status_code=404,
-                detail="checkpoint not found",
+                status_code=409,
+                detail="checkpoint restore unavailable",
             )
-
-        def restore() -> dict[str, Any]:
-            code_restored = False
-            try:
-                if scope in {"code", "both"}:
-                    services.git.restore_checkpoint_code(
-                        session_id,
-                        checkpoint_id,
-                    )
-                    code_restored = True
-                if scope in {"conversation", "both"}:
-                    restored = services.sessions.restore_conversation(
-                        session_id,
-                        message_count=checkpoint.before_message_count,
-                    )
-                    if not restored:
-                        raise RuntimeError(
-                            "checkpoint conversation not found"
-                        )
-                    services.git.discard_checkpoint_history(
-                        session_id,
-                        checkpoint_id,
-                    )
-            except (GitWorkspaceError, ValueError, RuntimeError):
-                if code_restored and scope == "both":
-                    try:
-                        services.git.reapply_checkpoint_code(
-                            session_id,
-                            checkpoint_id,
-                        )
-                    except Exception:
-                        raise RuntimeError(
-                            "checkpoint rollback failed"
-                        ) from None
-                raise
-            return {
-                "ok": True,
-                "checkpoint_id": checkpoint_id,
-                "scope": scope,
-            }
-
         try:
-            result = await services.turns.restore_when_idle(restore)
+            result = await services.turns.restore_when_idle(
+                lambda: restores.restore(
+                    session_id,
+                    checkpoint_id,
+                    CheckpointRestoreScope(scope),
+                )
+            )
         except SessionBusyError:
             raise HTTPException(
                 status_code=409,
                 detail="session already has an active turn",
             ) from None
-        except RuntimeError as error:
-            if str(error) == "checkpoint rollback failed":
+        except (GitWorkspaceError, ValueError) as error:
+            if str(error) == "checkpoint not found":
                 raise HTTPException(
-                    status_code=500,
-                    detail="checkpoint rollback failed",
+                    status_code=404,
+                    detail="checkpoint not found",
                 ) from None
             raise HTTPException(
                 status_code=409,
                 detail=str(error),
             ) from None
-        except (GitWorkspaceError, ValueError) as error:
+        except RuntimeError as error:
             raise HTTPException(
                 status_code=409,
                 detail=str(error),

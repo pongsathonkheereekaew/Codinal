@@ -61,6 +61,8 @@ class CodeCheckpointControl(Protocol):
 
     def pending_checkpoints(self) -> list[Any]: ...
 
+    def has_pending_restore(self, session_id: str) -> bool: ...
+
 
 _SHUTDOWN_TIMEOUT_SECONDS = 2.0
 
@@ -123,6 +125,16 @@ class TurnCoordinator:
             and not active.done()
         ):
             raise SessionBusyError("session already has an active turn")
+        if (
+            self._code_checkpoints is not None
+            and await asyncio.to_thread(
+                self._code_checkpoints.has_pending_restore,
+                session_id,
+            )
+        ):
+            raise SessionBusyError(
+                "session has a pending checkpoint restore"
+            )
 
         self._starting.add(session_id)
         try:
@@ -196,6 +208,29 @@ class TurnCoordinator:
                     "session already has an active turn"
                 )
             return await asyncio.to_thread(restore)
+
+    async def mutate_when_idle(
+        self,
+        session_id: str,
+        mutation: Callable[[], Any],
+    ) -> Any:
+        """Run a session mutation outside turns and pending restores."""
+        async with self._snapshot_barrier:
+            if self.is_active(session_id):
+                raise SessionBusyError(
+                    "session already has an active turn"
+                )
+            if (
+                self._code_checkpoints is not None
+                and await asyncio.to_thread(
+                    self._code_checkpoints.has_pending_restore,
+                    session_id,
+                )
+            ):
+                raise SessionBusyError(
+                    "session has a pending checkpoint restore"
+                )
+            return await asyncio.to_thread(mutation)
 
     def has_active_turns(self) -> bool:
         return bool(self._starting) or any(

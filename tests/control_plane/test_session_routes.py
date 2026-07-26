@@ -7,7 +7,7 @@ from runtime.events import EventHub
 from runtime.oauth import OAuthCoordinator
 from runtime.secrets import ProviderSecretService
 from runtime.storage import ExportTooLargeError
-from runtime.turns import ExportBusyError
+from runtime.turns import ExportBusyError, SessionBusyError
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
@@ -22,6 +22,7 @@ class FakeSettings:
 class FakeTurns:
     def __init__(self):
         self.active = set()
+        self.restore_pending = set()
 
     async def recover(self):
         return 0
@@ -39,6 +40,15 @@ class FakeTurns:
         if self.active:
             raise ExportBusyError("active turn")
         return exporter()
+
+    async def mutate_when_idle(self, session_id, mutation):
+        if session_id in self.active:
+            raise SessionBusyError("session already has an active turn")
+        if session_id in self.restore_pending:
+            raise SessionBusyError(
+                "session has a pending checkpoint restore"
+            )
+        return mutation()
 
 
 class FakeSessions:
@@ -243,3 +253,20 @@ def test_session_delete_refuses_active_turn_then_deletes():
     assert busy.status_code == 409
     assert deleted.status_code == 200
     assert sessions.deleted == ["session-1"]
+
+
+def test_session_delete_refuses_pending_checkpoint_restore():
+    client, sessions, turns = make_client()
+    turns.restore_pending.add("session-1")
+
+    with client:
+        response = client.delete(
+            "/v1/sessions/session-1",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "session has a pending checkpoint restore"
+    )
+    assert sessions.deleted == []

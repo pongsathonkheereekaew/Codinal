@@ -41,7 +41,7 @@ acceptance evidence is recorded from the real product surface.
 | OS shell sandbox | Implemented on macOS | sandbox negative tests and notarization spike |
 | Isolated session worktrees | Implemented | Git lifecycle E2E and Apply conflict tests |
 | Sessions/history/model swap | Implemented baseline | SQLite/session route/UI tests |
-| Durable migrations/recovery/export | Implemented and verified | v0/v1/v2 matrix, restore-from-backup startup E2E, authenticated export v1 with 32 MiB stored-data safety bound |
+| Durable migrations/recovery/export | Implemented and verified | v0/v1/v2/v3 matrix, restore-from-backup startup E2E, authenticated export v1 with 32 MiB stored-data safety bound |
 | Interrupted turn recovery | Streaming, approval, and parallel-tool baseline verified; plan/shell/apply-back pending | real SIGKILL/restart E2Es, durable approval ledger, no-replay multi-call tests |
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
@@ -49,7 +49,7 @@ acceptance evidence is recorded from the real product surface.
 | Multi-root and artifacts | Service methods exist; complete API/UI workflows missing | `runtime/sessions/service.py` |
 | Plan/question/directory prompts | Engine primitives exist; production callbacks/UI missing | `runtime/turn_engine/engine.py` |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
-| Checkpoints | Git-worktree baseline and exact-path direct-file attribution (including ignored files) implemented with private object storage; non-Git coverage, transactionally isolated shell attribution, and a crash-consistent composite restore journal remain open | automatic lifecycle, restart restore, ignored-file restore, shell fallback, conflict-abort, and manual-edit preservation E2Es |
+| Checkpoints | Git-worktree baseline, exact-path direct-file attribution (including ignored files), and a crash-consistent composite restore journal are implemented with private object storage; non-Git coverage and transactionally isolated shell attribution remain open | automatic lifecycle, ambiguous-boundary restart reconciliation, ignored-file restore, shell fallback, conflict-abort, and manual-edit preservation E2Es |
 | Semantic index, parallel subagents, PR/CI, browser | Missing | no product evidence |
 
 ## Execution map
@@ -219,11 +219,11 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Extend automatic per-turn checkpoints to non-Git workspaces, isolate shell
-   mutations transactionally so unrelated active-turn edits are never stored
-   or reverted, then journal multi-scope restores so crash recovery completes
-   or rolls them back. Exact-path direct-file attribution, including ignored
-   Git-worktree files, is implemented.
+1. Extend automatic per-turn checkpoints to non-Git workspaces and isolate
+   shell mutations transactionally so unrelated active-turn edits are never
+   stored or reverted. Exact-path direct-file attribution (including ignored
+   Git-worktree files) and crash-consistent multi-scope restore journaling are
+   implemented.
 2. Complete plan/question/directory prompts, because their engine contracts
    already exist and they unblock safe plan-to-build.
 3. Build searchable/forkable sessions and explicit context/file-tree surfaces.

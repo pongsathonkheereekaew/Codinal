@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional, Protocol
 
+from .checkpoint_restore import CheckpointRestoreCoordinator
 from .events import EventHub
 from .mcp import MCPManager, MCPService
 from .oauth import OAuthCoordinator
@@ -58,6 +59,7 @@ class RuntimeServices:
     oauth: OAuthCoordinator
     mcp: MCPService | None = None
     git: Any | None = None
+    restores: CheckpointRestoreCoordinator | None = None
     approvals: ApprovalBroker | None = None
 
 
@@ -158,6 +160,14 @@ def compose_runtime(
         events=events,
         code_checkpoints=git_service,
     )
+    restores = (
+        CheckpointRestoreCoordinator(
+            git=git_service,
+            sessions=sessions,
+        )
+        if git_service is not None
+        else None
+    )
     mcp = (
         MCPService(
             manager=mcp_manager,
@@ -176,5 +186,6 @@ def compose_runtime(
         oauth=oauth_service,
         mcp=mcp,
         git=git_service,
+        restores=restores,
         approvals=approval_broker,
     )

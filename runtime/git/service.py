@@ -21,6 +21,9 @@ from runtime.sandbox import SandboxedShell
 from .models import (
     CheckpointCaptureMode,
     CheckpointFileRecord,
+    CheckpointRestoreRecord,
+    CheckpointRestoreScope,
+    CheckpointRestoreState,
     CheckpointState,
     CodeCheckpointRecord,
     GitWorkspaceRecord,
@@ -76,6 +79,13 @@ class _MutationRecorder:
 
     def record_shell_fallback(self) -> None:
         self.service.record_shell_fallback(self.session_id)
+
+
+@dataclass(frozen=True)
+class _ComposedCheckpointPatch:
+    path: Path
+    before_tree: str
+    after_tree: str
 
 
 class GitWorkspaceError(RuntimeError):
@@ -485,6 +495,235 @@ class GitWorktreeService:
     ) -> CodeCheckpointRecord | None:
         return self.store.load_checkpoint(checkpoint_id)
 
+    def begin_restore(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+        scope: CheckpointRestoreScope,
+    ) -> CheckpointRestoreRecord:
+        with self._lock:
+            existing = self.store.pending_restore(session_id)
+            if existing is not None:
+                if (
+                    existing.checkpoint_id == checkpoint_id
+                    and existing.scope is scope
+                ):
+                    return existing
+                raise GitWorkspaceError(
+                    "session already has a pending checkpoint restore"
+                )
+            record = self._usable_record(session_id)
+            checkpoint, history = self._restore_checkpoint_history(
+                session_id,
+                checkpoint_id,
+            )
+            operation_id = secrets.token_hex(16)
+            before_tree = ""
+            after_tree = ""
+            if scope in {
+                CheckpointRestoreScope.CODE,
+                CheckpointRestoreScope.BOTH,
+            }:
+                composed = self._composed_checkpoint_patch(
+                    record,
+                    history,
+                    reverse=False,
+                )
+                try:
+                    before_tree = composed.before_tree
+                    after_tree = composed.after_tree
+                finally:
+                    composed.path.unlink(missing_ok=True)
+            restore = CheckpointRestoreRecord(
+                operation_id=operation_id,
+                checkpoint_id=checkpoint_id,
+                session_id=session_id,
+                scope=scope,
+                state=CheckpointRestoreState.PREPARED,
+                message_count=checkpoint.before_message_count,
+                code_before_tree=before_tree,
+                code_after_tree=after_tree,
+                discard_checkpoint_ids=(
+                    tuple(
+                        item.checkpoint_id
+                        for item in history
+                    )
+                    if scope
+                    in {
+                        CheckpointRestoreScope.CONVERSATION,
+                        CheckpointRestoreScope.BOTH,
+                    }
+                    else ()
+                ),
+            )
+            saved = self.store.save_restore(restore)
+            if (
+                scope
+                in {
+                    CheckpointRestoreScope.CODE,
+                    CheckpointRestoreScope.BOTH,
+                }
+                and not self._ensure_restore_refs(record, saved)
+            ):
+                raise GitWorkspaceError(
+                    "unable to retain checkpoint restore"
+                )
+            return saved
+
+    def pending_restores(self) -> list[CheckpointRestoreRecord]:
+        return self.store.pending_restores()
+
+    def has_pending_restore(self, session_id: str) -> bool:
+        return self.store.pending_restore(session_id) is not None
+
+    def advance_restore(
+        self,
+        operation_id: str,
+        state: CheckpointRestoreState,
+    ) -> CheckpointRestoreRecord:
+        with self._lock:
+            restore = self.store.load_restore(operation_id)
+            if restore is None:
+                raise GitWorkspaceError(
+                    "checkpoint restore not found"
+                )
+            allowed = {
+                CheckpointRestoreScope.CODE: {
+                    CheckpointRestoreState.CODE_RESTORED,
+                },
+                CheckpointRestoreScope.CONVERSATION: {
+                    CheckpointRestoreState.CONVERSATION_RESTORED,
+                },
+                CheckpointRestoreScope.BOTH: {
+                    CheckpointRestoreState.CODE_RESTORED,
+                },
+            }
+            if state is restore.state:
+                return restore
+            valid = (
+                restore.state is CheckpointRestoreState.PREPARED
+                and state in allowed[restore.scope]
+            ) or (
+                restore.scope is CheckpointRestoreScope.BOTH
+                and restore.state
+                is CheckpointRestoreState.CODE_RESTORED
+                and state
+                is CheckpointRestoreState.CONVERSATION_RESTORED
+            )
+            if not valid:
+                raise GitWorkspaceError(
+                    "invalid checkpoint restore transition"
+                )
+            return self.store.save_restore(
+                replace(restore, state=state)
+            )
+
+    def resume_restore_code(
+        self,
+        operation_id: str,
+    ) -> dict[str, object]:
+        with self._lock:
+            restore = self.store.load_restore(operation_id)
+            if (
+                restore is None
+                or restore.scope
+                not in {
+                    CheckpointRestoreScope.CODE,
+                    CheckpointRestoreScope.BOTH,
+                }
+            ):
+                raise GitWorkspaceError(
+                    "checkpoint restore not found"
+                )
+            record = self._usable_record(restore.session_id)
+            if not self._ensure_restore_refs(record, restore):
+                raise GitWorkspaceError(
+                    "unable to retain checkpoint restore"
+                )
+            _checkpoint, history = self._restore_checkpoint_history(
+                restore.session_id,
+                restore.checkpoint_id,
+            )
+            current_tree = self._effective_current_tree(
+                record,
+                history,
+                f"resume-{operation_id}",
+            )
+            if current_tree == restore.code_after_tree:
+                return {
+                    "ok": True,
+                    "checkpoint_id": restore.checkpoint_id,
+                    "scope": "code",
+                }
+            if current_tree != restore.code_before_tree:
+                raise GitWorkspaceError(
+                    "checkpoint restore state diverged"
+                )
+            patch_path = self._tree_patch(
+                record,
+                restore.code_before_tree,
+                restore.code_after_tree,
+                f"journal-{operation_id}",
+            )
+            self._apply_restore_patch(record, patch_path)
+            verified_tree = self._effective_current_tree(
+                record,
+                history,
+                f"verify-{operation_id}",
+            )
+            if verified_tree != restore.code_after_tree:
+                raise GitWorkspaceError(
+                    "checkpoint restore verification failed"
+                )
+            return {
+                "ok": True,
+                "checkpoint_id": restore.checkpoint_id,
+                "scope": "code",
+            }
+
+    def discard_restore_history(self, operation_id: str) -> int:
+        with self._lock:
+            restore = self.store.load_restore(operation_id)
+            if restore is None:
+                raise GitWorkspaceError(
+                    "checkpoint restore not found"
+                )
+            record = self._usable_record(restore.session_id)
+            for checkpoint_id in restore.discard_checkpoint_ids:
+                before_deleted = self._delete_checkpoint_ref(
+                    record,
+                    checkpoint_id,
+                    "before",
+                )
+                after_deleted = self._delete_checkpoint_ref(
+                    record,
+                    checkpoint_id,
+                    "after",
+                )
+                if not before_deleted or not after_deleted:
+                    raise GitWorkspaceError(
+                        "unable to release checkpoint history"
+                    )
+            return self.store.delete_checkpoints(
+                restore.session_id,
+                restore.discard_checkpoint_ids,
+            )
+
+    def finish_restore(self, operation_id: str) -> bool:
+        with self._lock:
+            restore = self.store.load_restore(operation_id)
+            if restore is None:
+                return False
+            record = self._usable_record(restore.session_id)
+            if not self._delete_restore_refs(
+                record,
+                operation_id,
+            ):
+                raise GitWorkspaceError(
+                    "unable to release checkpoint restore"
+                )
+            return self.store.delete_restore(operation_id)
+
     def discard_checkpoint_history(
         self,
         session_id: str,
@@ -511,6 +750,29 @@ class GitWorktreeService:
                     "after",
                 )
             return len(discarded)
+
+    def _restore_checkpoint_history(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+    ) -> tuple[CodeCheckpointRecord, list[CodeCheckpointRecord]]:
+        checkpoint = self.store.load_checkpoint(checkpoint_id)
+        if (
+            checkpoint is None
+            or checkpoint.session_id != session_id
+            or checkpoint.state is not CheckpointState.COMPLETED
+        ):
+            raise GitWorkspaceError("checkpoint not found")
+        history = self.store.list_checkpoints(session_id)
+        try:
+            target_index = next(
+                index
+                for index, candidate in enumerate(history)
+                if candidate.checkpoint_id == checkpoint_id
+            )
+        except StopIteration:
+            raise GitWorkspaceError("checkpoint not found") from None
+        return checkpoint, history[: target_index + 1]
 
     def restore_checkpoint_code(
         self,
@@ -559,11 +821,12 @@ class GitWorktreeService:
                 )
             except StopIteration:
                 raise GitWorkspaceError("checkpoint not found") from None
-            patch_path = self._composed_checkpoint_patch(
+            composed = self._composed_checkpoint_patch(
                 record,
                 history[: target_index + 1],
                 reverse=reverse,
             )
+            patch_path = composed.path
             try:
                 if patch_path.stat().st_size == 0:
                     return {
@@ -1552,7 +1815,7 @@ class GitWorktreeService:
         checkpoints: list[CodeCheckpointRecord],
         *,
         reverse: bool,
-    ) -> Path:
+    ) -> _ComposedCheckpointPatch:
         target = checkpoints[-1]
         identity = hashlib.sha256(
             record.session_id.encode("utf-8")
@@ -1563,8 +1826,9 @@ class GitWorktreeService:
             / f"compose-{target.checkpoint_id}.index"
         )
         index_path.unlink(missing_ok=True)
-        current_tree = self._capture_tree(
+        effective_current_tree = self._effective_current_tree(
             record,
+            checkpoints,
             f"current-{target.checkpoint_id}",
         )
         ordered = (
@@ -1577,64 +1841,11 @@ class GitWorktreeService:
                 record,
                 index_path,
                 "read-tree",
-                current_tree,
+                effective_current_tree,
             )
             if initialized.exit_code != 0:
                 raise GitWorkspaceError(
                     "unable to initialize checkpoint restore"
-                )
-            attributed_paths = {
-                item.path
-                for checkpoint in checkpoints
-                for item in self.store.list_checkpoint_files(
-                    checkpoint.checkpoint_id
-                )
-            }
-            for path in sorted(attributed_paths):
-                blob, mode = self._capture_file_blob(
-                    record,
-                    record.worktree_path / path,
-                )
-                if blob:
-                    updated = self._index_git(
-                        record,
-                        index_path,
-                        "update-index",
-                        "--add",
-                        "--cacheinfo",
-                        format(mode, "o"),
-                        blob,
-                        path,
-                    )
-                else:
-                    updated = self._index_git(
-                        record,
-                        index_path,
-                        "update-index",
-                        "--force-remove",
-                        "--",
-                        path,
-                    )
-                if updated.exit_code != 0:
-                    raise GitWorkspaceError(
-                        "unable to capture attributed files"
-                    )
-            effective = self._index_git(
-                record,
-                index_path,
-                "write-tree",
-            )
-            effective_current_tree = effective.stdout.strip()
-            if (
-                effective.exit_code != 0
-                or re.fullmatch(
-                    r"[0-9a-f]{40,64}",
-                    effective_current_tree,
-                )
-                is None
-            ):
-                raise GitWorkspaceError(
-                    "unable to capture checkpoint restore state"
                 )
             for checkpoint in ordered:
                 patch_path = self._checkpoint_patch(
@@ -1684,12 +1895,96 @@ class GitWorktreeService:
                 raise GitWorkspaceError(
                     "unable to finalize checkpoint restore"
                 )
-            return self._tree_patch(
-                record,
-                effective_current_tree,
-                restored_tree,
-                f"composed-{target.checkpoint_id}",
+            return _ComposedCheckpointPatch(
+                path=self._tree_patch(
+                    record,
+                    effective_current_tree,
+                    restored_tree,
+                    f"composed-{target.checkpoint_id}",
+                ),
+                before_tree=effective_current_tree,
+                after_tree=restored_tree,
             )
+        finally:
+            index_path.unlink(missing_ok=True)
+
+    def _effective_current_tree(
+        self,
+        record: GitWorkspaceRecord,
+        checkpoints: list[CodeCheckpointRecord],
+        operation_id: str,
+    ) -> str:
+        current_tree = self._capture_tree(record, operation_id)
+        identity = hashlib.sha256(
+            record.session_id.encode("utf-8")
+        ).hexdigest()
+        index_path = (
+            self.sandbox_base
+            / identity
+            / f"effective-{operation_id}.index"
+        )
+        index_path.unlink(missing_ok=True)
+        try:
+            initialized = self._index_git(
+                record,
+                index_path,
+                "read-tree",
+                current_tree,
+            )
+            if initialized.exit_code != 0:
+                raise GitWorkspaceError(
+                    "unable to initialize checkpoint restore"
+                )
+            attributed_paths = {
+                item.path
+                for checkpoint in checkpoints
+                for item in self.store.list_checkpoint_files(
+                    checkpoint.checkpoint_id
+                )
+            }
+            for path in sorted(attributed_paths):
+                blob, mode = self._capture_file_blob(
+                    record,
+                    record.worktree_path / path,
+                )
+                if blob:
+                    updated = self._index_git(
+                        record,
+                        index_path,
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        format(mode, "o"),
+                        blob,
+                        path,
+                    )
+                else:
+                    updated = self._index_git(
+                        record,
+                        index_path,
+                        "update-index",
+                        "--force-remove",
+                        "--",
+                        path,
+                    )
+                if updated.exit_code != 0:
+                    raise GitWorkspaceError(
+                        "unable to capture attributed files"
+                    )
+            written = self._index_git(
+                record,
+                index_path,
+                "write-tree",
+            )
+            tree = written.stdout.strip()
+            if (
+                written.exit_code != 0
+                or re.fullmatch(r"[0-9a-f]{40,64}", tree) is None
+            ):
+                raise GitWorkspaceError(
+                    "unable to capture checkpoint restore state"
+                )
+            return tree
         finally:
             index_path.unlink(missing_ok=True)
 
@@ -1747,14 +2042,91 @@ class GitWorktreeService:
             ) from None
         return patch_path
 
+    def _apply_restore_patch(
+        self,
+        record: GitWorkspaceRecord,
+        patch_path: Path,
+    ) -> None:
+        try:
+            if patch_path.stat().st_size == 0:
+                return
+            if (
+                patch_path.stat().st_size
+                > _MAX_CHECKPOINT_PATCH_BYTES
+            ):
+                raise GitWorkspaceError(
+                    "checkpoint patch exceeds safety limit"
+                )
+            checked = self._execute_worktree(
+                record,
+                "apply",
+                "--check",
+                "--unidiff-zero",
+                "--whitespace=nowarn",
+                patch_path,
+            )
+            if checked.exit_code != 0:
+                raise GitWorkspaceError(
+                    "checkpoint conflicts with current edits"
+                )
+            applied = self._execute_worktree(
+                record,
+                "apply",
+                "--unidiff-zero",
+                "--whitespace=nowarn",
+                patch_path,
+            )
+            if applied.exit_code != 0:
+                raise GitWorkspaceError(
+                    "checkpoint restore failed"
+                )
+        finally:
+            patch_path.unlink(missing_ok=True)
+
+    def _delete_restore_refs(
+        self,
+        record: GitWorkspaceRecord,
+        operation_id: str,
+    ) -> bool:
+        before_deleted = self._delete_checkpoint_ref(
+            record,
+            operation_id,
+            "restore-before",
+        )
+        after_deleted = self._delete_checkpoint_ref(
+            record,
+            operation_id,
+            "restore-after",
+        )
+        return before_deleted and after_deleted
+
+    def _ensure_restore_refs(
+        self,
+        record: GitWorkspaceRecord,
+        restore: CheckpointRestoreRecord,
+    ) -> bool:
+        if restore.scope is CheckpointRestoreScope.CONVERSATION:
+            return True
+        return self._set_checkpoint_ref(
+            record,
+            restore.operation_id,
+            "restore-before",
+            restore.code_before_tree,
+        ) and self._set_checkpoint_ref(
+            record,
+            restore.operation_id,
+            "restore-after",
+            restore.code_after_tree,
+        )
+
     def _delete_checkpoint_ref(
         self,
         record: GitWorkspaceRecord,
         checkpoint_id: str,
         phase: str,
-    ) -> None:
+    ) -> bool:
         try:
-            self._checkpoint_git(
+            result = self._checkpoint_git(
                 record,
                 "update-ref",
                 "-d",
@@ -1765,7 +2137,8 @@ class GitWorktreeService:
                 ),
             )
         except Exception:
-            pass
+            return False
+        return result.exit_code == 0
 
     def _set_checkpoint_ref(
         self,

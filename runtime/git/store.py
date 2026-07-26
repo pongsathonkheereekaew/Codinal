@@ -20,6 +20,9 @@ from runtime.storage.migrations import (
 from .models import (
     CheckpointCaptureMode,
     CheckpointFileRecord,
+    CheckpointRestoreRecord,
+    CheckpointRestoreScope,
+    CheckpointRestoreState,
     CheckpointState,
     CodeCheckpointRecord,
     GitWorkspaceRecord,
@@ -28,7 +31,7 @@ from .models import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 
 def _migrate_to_v1(connection: sqlite3.Connection) -> None:
@@ -111,10 +114,47 @@ def _migrate_to_v3(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v4(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS checkpoint_restores (
+            operation_id TEXT PRIMARY KEY,
+            checkpoint_id TEXT NOT NULL,
+            session_id TEXT NOT NULL UNIQUE,
+            scope TEXT NOT NULL,
+            state TEXT NOT NULL,
+            message_count INTEGER NOT NULL,
+            code_before_tree TEXT NOT NULL DEFAULT '',
+            code_after_tree TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT ({_NOW}),
+            updated_at TEXT NOT NULL DEFAULT ({_NOW}),
+            FOREIGN KEY (session_id)
+                REFERENCES git_worktrees(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS checkpoint_restore_history (
+            operation_id TEXT NOT NULL,
+            checkpoint_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (operation_id, checkpoint_id),
+            UNIQUE (operation_id, position),
+            FOREIGN KEY (operation_id)
+                REFERENCES checkpoint_restores(operation_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
+    4: _migrate_to_v4,
 }
 
 
@@ -313,6 +353,127 @@ class GitWorktreeStore:
             ).fetchall()
         return [_checkpoint_file_from_row(row) for row in rows]
 
+    def save_restore(
+        self,
+        record: CheckpointRestoreRecord,
+    ) -> CheckpointRestoreRecord:
+        _validate_restore(record)
+        with self._lock, self._connection:
+            self._connection.execute(
+                f"""
+                INSERT INTO checkpoint_restores (
+                    operation_id, checkpoint_id, session_id, scope,
+                    state, message_count, code_before_tree,
+                    code_after_tree, created_at, updated_at
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    COALESCE(NULLIF(?, ''), {_NOW}), {_NOW}
+                )
+                ON CONFLICT(operation_id) DO UPDATE SET
+                    state = excluded.state,
+                    code_before_tree = excluded.code_before_tree,
+                    code_after_tree = excluded.code_after_tree,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.operation_id,
+                    record.checkpoint_id,
+                    record.session_id,
+                    record.scope.value,
+                    record.state.value,
+                    record.message_count,
+                    record.code_before_tree,
+                    record.code_after_tree,
+                    record.created_at,
+                ),
+            )
+            for position, checkpoint_id in enumerate(
+                record.discard_checkpoint_ids
+            ):
+                self._connection.execute(
+                    """
+                    INSERT OR IGNORE INTO checkpoint_restore_history (
+                        operation_id, checkpoint_id, position
+                    )
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        record.operation_id,
+                        checkpoint_id,
+                        position,
+                    ),
+                )
+            stored = self._load_restore(record.operation_id)
+        assert stored is not None
+        return stored
+
+    def load_restore(
+        self,
+        operation_id: str,
+    ) -> Optional[CheckpointRestoreRecord]:
+        _validate_checkpoint_id(operation_id)
+        with self._lock:
+            return self._load_restore(operation_id)
+
+    def pending_restore(
+        self,
+        session_id: str,
+    ) -> Optional[CheckpointRestoreRecord]:
+        _validate_session_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT * FROM checkpoint_restores
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        return self._restore_record(row) if row is not None else None
+
+    def pending_restores(self) -> list[CheckpointRestoreRecord]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM checkpoint_restores
+                ORDER BY created_at, rowid
+                """
+            ).fetchall()
+        return [self._restore_record(row) for row in rows]
+
+    def delete_restore(self, operation_id: str) -> bool:
+        _validate_checkpoint_id(operation_id)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """
+                DELETE FROM checkpoint_restores
+                WHERE operation_id = ?
+                """,
+                (operation_id,),
+            )
+            return cursor.rowcount == 1
+
+    def delete_checkpoints(
+        self,
+        session_id: str,
+        checkpoint_ids: tuple[str, ...],
+    ) -> int:
+        _validate_session_id(session_id)
+        for checkpoint_id in checkpoint_ids:
+            _validate_checkpoint_id(checkpoint_id)
+        with self._lock, self._connection:
+            deleted = 0
+            for checkpoint_id in checkpoint_ids:
+                cursor = self._connection.execute(
+                    """
+                    DELETE FROM code_checkpoints
+                    WHERE checkpoint_id = ? AND session_id = ?
+                    """,
+                    (checkpoint_id, session_id),
+                )
+                deleted += cursor.rowcount
+            return deleted
+
     def pending_checkpoint(
         self,
         session_id: str,
@@ -420,6 +581,37 @@ class GitWorktreeStore:
             (checkpoint_id,),
         ).fetchone()
         return _checkpoint_from_row(row) if row is not None else None
+
+    def _load_restore(
+        self,
+        operation_id: str,
+    ) -> Optional[CheckpointRestoreRecord]:
+        row = self._connection.execute(
+            """
+            SELECT * FROM checkpoint_restores
+            WHERE operation_id = ?
+            """,
+            (operation_id,),
+        ).fetchone()
+        return self._restore_record(row) if row is not None else None
+
+    def _restore_record(
+        self,
+        row: sqlite3.Row,
+    ) -> CheckpointRestoreRecord:
+        history = self._connection.execute(
+            """
+            SELECT checkpoint_id
+            FROM checkpoint_restore_history
+            WHERE operation_id = ?
+            ORDER BY position
+            """,
+            (row["operation_id"],),
+        ).fetchall()
+        return _restore_from_row(
+            row,
+            tuple(item["checkpoint_id"] for item in history),
+        )
 
 
 def _validate_session_id(session_id: str) -> None:
@@ -571,4 +763,73 @@ def _checkpoint_file_from_row(
         after_blob=row["after_blob"],
         before_mode=int(row["before_mode"]),
         after_mode=int(row["after_mode"]),
+    )
+
+
+def _validate_restore(record: CheckpointRestoreRecord) -> None:
+    _validate_checkpoint_id(record.operation_id)
+    _validate_checkpoint_id(record.checkpoint_id)
+    _validate_session_id(record.session_id)
+    if (
+        not isinstance(record.scope, CheckpointRestoreScope)
+        or not isinstance(record.state, CheckpointRestoreState)
+    ):
+        raise ValueError("invalid checkpoint restore")
+    allowed_states = {
+        CheckpointRestoreScope.CODE: {
+            CheckpointRestoreState.PREPARED,
+            CheckpointRestoreState.CODE_RESTORED,
+        },
+        CheckpointRestoreScope.CONVERSATION: {
+            CheckpointRestoreState.PREPARED,
+            CheckpointRestoreState.CONVERSATION_RESTORED,
+        },
+        CheckpointRestoreScope.BOTH: set(CheckpointRestoreState),
+    }
+    requires_code = (
+        record.scope is not CheckpointRestoreScope.CONVERSATION
+    )
+    requires_history_discard = record.scope is not (
+        CheckpointRestoreScope.CODE
+    )
+    trees = (record.code_before_tree, record.code_after_tree)
+    if (
+        record.state not in allowed_states[record.scope]
+        or not isinstance(record.message_count, int)
+        or record.message_count < 0
+        or any(
+            tree
+            and re.fullmatch(r"[0-9a-f]{40,64}", tree) is None
+            for tree in trees
+        )
+        or (requires_code and not all(trees))
+        or (not requires_code and any(trees))
+        or (
+            requires_history_discard
+            != bool(record.discard_checkpoint_ids)
+        )
+        or len(set(record.discard_checkpoint_ids))
+        != len(record.discard_checkpoint_ids)
+    ):
+        raise ValueError("invalid checkpoint restore")
+    for checkpoint_id in record.discard_checkpoint_ids:
+        _validate_checkpoint_id(checkpoint_id)
+
+
+def _restore_from_row(
+    row: sqlite3.Row,
+    discard_checkpoint_ids: tuple[str, ...],
+) -> CheckpointRestoreRecord:
+    return CheckpointRestoreRecord(
+        operation_id=row["operation_id"],
+        checkpoint_id=row["checkpoint_id"],
+        session_id=row["session_id"],
+        scope=CheckpointRestoreScope(row["scope"]),
+        state=CheckpointRestoreState(row["state"]),
+        message_count=int(row["message_count"]),
+        code_before_tree=row["code_before_tree"],
+        code_after_tree=row["code_after_tree"],
+        discard_checkpoint_ids=discard_checkpoint_ids,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )

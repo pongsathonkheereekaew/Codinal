@@ -25,6 +25,18 @@ class CheckpointCaptureMode(str, Enum):
     WHOLE_TREE = "whole_tree"
 
 
+class CheckpointRestoreScope(str, Enum):
+    CODE = "code"
+    CONVERSATION = "conversation"
+    BOTH = "both"
+
+
+class CheckpointRestoreState(str, Enum):
+    PREPARED = "prepared"
+    CODE_RESTORED = "code_restored"
+    CONVERSATION_RESTORED = "conversation_restored"
+
+
 @dataclass(frozen=True)
 class GitWorkspaceRecord:
     session_id: str
@@ -62,3 +74,18 @@ class CheckpointFileRecord:
     after_blob: str = ""
     before_mode: int = 0
     after_mode: int = 0
+
+
+@dataclass(frozen=True)
+class CheckpointRestoreRecord:
+    operation_id: str
+    checkpoint_id: str
+    session_id: str
+    scope: CheckpointRestoreScope
+    state: CheckpointRestoreState
+    message_count: int
+    code_before_tree: str = ""
+    code_after_tree: str = ""
+    discard_checkpoint_ids: tuple[str, ...] = ()
+    created_at: str = ""
+    updated_at: str = ""

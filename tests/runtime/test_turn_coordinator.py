@@ -96,6 +96,10 @@ class FakeCodeCheckpoints:
         self.finalized = []
         self.pending = pending
         self.actions = actions
+        self.restore_pending = False
+
+    def has_pending_restore(self, _session_id):
+        return self.restore_pending
 
     def begin_checkpoint(
         self,
@@ -268,6 +272,39 @@ def test_turn_never_starts_when_automatic_checkpoint_fails():
 
     assert engine.messages == []
     assert turns.has_active_turns() is False
+
+
+def test_turn_never_starts_while_checkpoint_restore_is_pending():
+    async def scenario():
+        engine = ScriptedEngine()
+        checkpoints = FakeCodeCheckpoints()
+        checkpoints.restore_pending = True
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+            code_checkpoints=checkpoints,
+        )
+        with pytest.raises(
+            SessionBusyError,
+            match="pending checkpoint restore",
+        ):
+            await turns.start("session-1", user_input="must wait")
+        mutated = []
+        with pytest.raises(
+            SessionBusyError,
+            match="pending checkpoint restore",
+        ):
+            await turns.mutate_when_idle(
+                "session-1",
+                lambda: mutated.append(True),
+            )
+        return engine, checkpoints, mutated
+
+    engine, checkpoints, mutated = asyncio.run(scenario())
+
+    assert engine.messages == []
+    assert checkpoints.begun == []
+    assert mutated == []
 
 
 def test_tool_execution_is_write_ahead_checkpointed():
