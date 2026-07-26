@@ -66,6 +66,9 @@ const state = {
   planBuildGeneration: 0,
   managedPlan: null,
   candidateDiffs: new Map(),
+  goals: [],
+  goalGeneration: 0,
+  managedGoal: null,
 };
 
 const el = Object.fromEntries(
@@ -95,6 +98,12 @@ const el = Object.fromEntries(
     "plan-build-panel", "plan-build-summary", "plan-build-list",
     "plan-build-dialog", "plan-build-tasks", "plan-build-models",
     "create-plan-build",
+    "goal-panel", "goal-summary", "goal-list", "new-goal",
+    "goal-dialog", "goal-objective", "goal-requirements",
+    "goal-continuation", "goal-token-budget", "goal-time-budget",
+    "create-goal", "goal-evidence-dialog", "goal-evidence-requirement",
+    "goal-evidence-kind", "goal-evidence-summary",
+    "goal-evidence-result", "save-goal-evidence",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -632,6 +641,352 @@ async function adoptPlanBuild(build) {
   toast("Selected plan results adopted");
 }
 
+async function loadGoals() {
+  if (!state.sessionId) {
+    state.goals = [];
+    renderGoals();
+    return;
+  }
+  const sessionId = state.sessionId;
+  const generation = ++state.goalGeneration;
+  const goals = await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/goals`
+  );
+  if (
+    state.sessionId !== sessionId
+    || state.goalGeneration !== generation
+  ) return;
+  state.goals = Array.isArray(goals) ? goals : [];
+  renderGoals();
+}
+
+function updateGoal(goal) {
+  if (!goal || goal.session_id !== state.sessionId) return;
+  const index = state.goals.findIndex(
+    (candidate) => candidate.goal_id === goal.goal_id
+  );
+  if (index < 0) state.goals.push(goal);
+  else state.goals[index] = goal;
+  renderGoals();
+}
+
+function renderGoals() {
+  el["goal-list"].replaceChildren();
+  el["goal-panel"].classList.toggle("is-hidden", !state.sessionId);
+  const active = state.goals.filter(
+    (goal) => goal.state === "active"
+  ).length;
+  el["goal-summary"].textContent = state.goals.length
+    ? `${active} active · ${state.goals.length} total`
+    : "No persistent goals";
+  for (const goal of state.goals) {
+    const card = node("article", "goal-card");
+    const header = node("div", "goal-card-header");
+    header.append(
+      node("strong", "", goal.objective),
+      node(
+        "span",
+        "saved-plan-status",
+        goal.continuation_running ? "running" : goal.state
+      )
+    );
+    const budget = [
+      goal.token_budget
+        ? `${goal.tokens_used}/${goal.token_budget} est. tokens`
+        : `${goal.tokens_used} est. tokens`,
+      goal.time_budget_seconds
+        ? `${Math.ceil(goal.elapsed_seconds / 60)}/${
+          Math.ceil(goal.time_budget_seconds / 60)
+        } min`
+        : `${Math.ceil(goal.elapsed_seconds / 60)} min`,
+      `${goal.continuation_count} continuations`,
+    ].join(" · ");
+    card.append(header, node("small", "", budget));
+    const requirements = node("div", "goal-requirements");
+    for (const requirement of goal.requirements || []) {
+      const passing = (goal.evidence || []).some(
+        (item) => item.requirement_id === requirement.requirement_id
+          && item.kind === "verification"
+          && item.passed
+      );
+      requirements.append(
+        node(
+          "div",
+          "goal-requirement",
+          `${passing ? "✓" : "○"} ${requirement.text}`
+        )
+      );
+    }
+    card.append(requirements);
+    const ledger = node("div", "goal-evidence-ledger");
+    const visibleEvidence = ["completed", "blocked"].includes(goal.state)
+      ? (goal.evidence || [])
+      : (goal.evidence || []).slice(-5);
+    for (const evidence of visibleEvidence) {
+      ledger.append(
+        node(
+          "div",
+          "goal-evidence-item",
+          `#${evidence.turn_index} ${evidence.kind} · ${
+            evidence.summary
+          } · ${evidence.result || "recorded"}`
+        )
+      );
+    }
+    if (ledger.childNodes.length) card.append(ledger);
+    if (
+      goal.state === "completed"
+      && Object.keys(goal.requirement_evidence || {}).length
+    ) {
+      const auditDetails = node("div", "goal-evidence-ledger");
+      for (const requirement of goal.requirements || []) {
+        const mapped = (
+          goal.requirement_evidence?.[requirement.requirement_id] || []
+        ).map((evidenceId) => (
+          (goal.evidence || []).find(
+            (item) => item.evidence_id === evidenceId
+          )
+        )).filter(Boolean);
+        auditDetails.append(
+          node(
+            "div",
+            "goal-evidence-item",
+            `Audit evidence · ${requirement.text}: ${
+              mapped.map((item) => `${item.summary} — ${item.result}`).join("; ")
+            }`
+          )
+        );
+      }
+      card.append(auditDetails);
+    }
+    if (goal.audit_summary) {
+      card.append(node("small", "", `Audit: ${goal.audit_summary}`));
+    }
+    if (!["completed", "blocked"].includes(goal.state)) {
+      const actions = node("div", "goal-actions");
+      const continuation = node(
+        "button",
+        "primary-button",
+        goal.continuation_running ? "Continuing…" : "Continue goal"
+      );
+      continuation.type = "button";
+      continuation.disabled = (
+        goal.continuation_running || goal.state !== "active"
+      );
+      continuation.addEventListener("click", () => {
+        continueGoal(goal).catch((error) => toast(error.message, "error"));
+      });
+      const evidence = node(
+        "button",
+        "secondary-button",
+        "Add evidence"
+      );
+      evidence.type = "button";
+      evidence.disabled = goal.continuation_running;
+      evidence.addEventListener("click", () => openGoalEvidence(goal));
+      const complete = node("button", "secondary-button", "Audit complete");
+      complete.type = "button";
+      complete.disabled = (
+        goal.continuation_running || !goalCompletionMapping(goal)
+      );
+      complete.addEventListener("click", () => {
+        auditGoalComplete(goal).catch((error) => toast(error.message, "error"));
+      });
+      const blocked = node("button", "secondary-button", "Audit blocked");
+      blocked.type = "button";
+      blocked.disabled = (
+        goal.continuation_running || !goalBlockerSummary(goal)
+      );
+      blocked.addEventListener("click", () => {
+        auditGoalBlocked(goal).catch((error) => toast(error.message, "error"));
+      });
+      actions.append(continuation, evidence, complete, blocked);
+      card.append(actions);
+    }
+    el["goal-list"].append(card);
+  }
+}
+
+function openGoalDialog() {
+  el["goal-objective"].value = "";
+  el["goal-requirements"].value = "";
+  el["goal-continuation"].value = (
+    "Continue this goal, verify remaining requirements, and report evidence."
+  );
+  el["goal-token-budget"].value = "";
+  el["goal-time-budget"].value = "";
+  el["goal-dialog"].showModal();
+  el["goal-objective"].focus();
+}
+
+async function createGoal() {
+  const objective = el["goal-objective"].value.trim();
+  const continuation_prompt = el["goal-continuation"].value.trim();
+  const requirements = el["goal-requirements"].value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const separator = line.indexOf(":");
+      return {
+        requirement_id: separator > 0
+          ? line.slice(0, separator).trim()
+          : "",
+        text: separator > 0 ? line.slice(separator + 1).trim() : "",
+      };
+    });
+  const tokenValue = el["goal-token-budget"].value.trim();
+  const minuteValue = el["goal-time-budget"].value.trim();
+  const token_budget = tokenValue ? Number(tokenValue) : null;
+  const minutes = minuteValue ? Number(minuteValue) : null;
+  if (
+    !state.sessionId || !objective || !continuation_prompt
+    || !requirements.length
+    || requirements.some((item) => !item.requirement_id || !item.text)
+    || token_budget !== null
+      && (!Number.isInteger(token_budget) || token_budget < 1)
+    || minutes !== null && (!Number.isInteger(minutes) || minutes < 1)
+  ) {
+    toast("Enter an objective and requirements as id: description", "error");
+    return;
+  }
+  const goal = await api(
+    `/v1/sessions/${encodeURIComponent(state.sessionId)}/goals`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        objective,
+        requirements,
+        continuation_prompt,
+        token_budget,
+        time_budget_seconds: minutes === null ? null : minutes * 60,
+      }),
+    }
+  );
+  updateGoal(goal);
+  el["goal-dialog"].close();
+  toast("Persistent goal created");
+}
+
+async function continueGoal(goal) {
+  const updated = await api(
+    `/v1/goals/${encodeURIComponent(goal.goal_id)}/continue`,
+    { method: "POST" }
+  );
+  updateGoal(updated);
+  toast("Goal continuation started");
+}
+
+function openGoalEvidence(goal) {
+  state.managedGoal = goal;
+  el["goal-evidence-requirement"].replaceChildren();
+  for (const requirement of goal.requirements || []) {
+    const option = node("option", "", requirement.text);
+    option.value = requirement.requirement_id;
+    el["goal-evidence-requirement"].append(option);
+  }
+  el["goal-evidence-kind"].value = "verification";
+  el["goal-evidence-summary"].value = "";
+  el["goal-evidence-result"].value = "";
+  el["goal-evidence-dialog"].showModal();
+  el["goal-evidence-summary"].focus();
+}
+
+async function saveGoalEvidence() {
+  const goal = state.managedGoal;
+  const kind = el["goal-evidence-kind"].value;
+  const summary = el["goal-evidence-summary"].value.trim();
+  const result = el["goal-evidence-result"].value.trim();
+  if (!goal || !summary || !result) {
+    toast("Enter an evidence summary and observed result", "error");
+    return;
+  }
+  await api(
+    `/v1/goals/${encodeURIComponent(goal.goal_id)}/evidence`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requirement_id: el["goal-evidence-requirement"].value,
+        kind,
+        summary,
+        result,
+        passed: kind === "verification",
+      }),
+    }
+  );
+  state.managedGoal = null;
+  el["goal-evidence-dialog"].close();
+  await loadGoals();
+  toast("Goal evidence saved");
+}
+
+function goalCompletionMapping(goal) {
+  const mapping = {};
+  for (const requirement of goal.requirements || []) {
+    const evidence = (goal.evidence || [])
+      .filter((item) => (
+        item.requirement_id === requirement.requirement_id
+        && item.kind === "verification"
+        && item.passed
+      ))
+      .map((item) => item.evidence_id);
+    if (!evidence.length) return null;
+    mapping[requirement.requirement_id] = evidence;
+  }
+  return mapping;
+}
+
+function goalBlockerSummary(goal) {
+  if ((goal.continuation_count || 0) < 3) return "";
+  const recent = [goal.continuation_count - 2, goal.continuation_count - 1,
+    goal.continuation_count];
+  const summaries = recent.map((turn) => (
+    (goal.evidence || []).find(
+      (item) => item.kind === "blocker" && item.turn_index === turn
+    )?.summary || ""
+  ));
+  return summaries.every(
+    (summary) => summary
+      && summary.toLocaleLowerCase() === summaries[0].toLocaleLowerCase()
+  ) ? summaries[0] : "";
+}
+
+async function auditGoalComplete(goal) {
+  const requirement_evidence = goalCompletionMapping(goal);
+  if (!requirement_evidence) return;
+  const updated = await api(
+    `/v1/goals/${encodeURIComponent(goal.goal_id)}/audit`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        status: "complete",
+        summary: "All goal requirements have passing evidence.",
+        requirement_evidence,
+      }),
+    }
+  );
+  updateGoal(updated);
+  toast("Goal completion audit passed");
+}
+
+async function auditGoalBlocked(goal) {
+  const summary = goalBlockerSummary(goal);
+  if (!summary) return;
+  const updated = await api(
+    `/v1/goals/${encodeURIComponent(goal.goal_id)}/audit`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        status: "blocked",
+        summary,
+        requirement_evidence: {},
+      }),
+    }
+  );
+  updateGoal(updated);
+  toast("Goal blocked audit passed");
+}
+
 function scheduleSessionSearch() {
   window.clearTimeout(state.sessionSearchTimer);
   state.sessionSearchGeneration += 1;
@@ -697,6 +1052,8 @@ async function selectSession(session) {
   state.planBuilds = [];
   state.planBuildGeneration += 1;
   state.candidateDiffs.clear();
+  state.goals = [];
+  state.goalGeneration += 1;
   state.roots = [];
   state.treeGeneration += 1;
   invalidateAttachments();
@@ -715,6 +1072,7 @@ async function selectSession(session) {
   renderWorkers();
   renderPlans();
   renderPlanBuilds();
+  renderGoals();
   updateThreadSearchControls();
   try {
     const messages = await api(
@@ -735,6 +1093,7 @@ async function selectSession(session) {
       loadWorkers(),
       loadPlans(),
       loadPlanBuilds(),
+      loadGoals(),
     ]);
     if (
       state.sessionId !== sessionId
@@ -801,6 +1160,8 @@ function switchWorkspace(workspace) {
   state.planBuilds = [];
   state.planBuildGeneration += 1;
   state.candidateDiffs.clear();
+  state.goals = [];
+  state.goalGeneration += 1;
   el["task-title"].textContent = "New task";
   updateWorkspaceLabel();
   renderSessions();
@@ -812,6 +1173,7 @@ function switchWorkspace(workspace) {
   renderWorkers();
   renderPlans();
   renderPlanBuilds();
+  renderGoals();
   updateThreadSearchControls();
   connectSocket();
   return true;
@@ -951,6 +1313,9 @@ function handleEvent(event) {
     case "plan_build_status":
       updatePlanBuild(event.build);
       break;
+    case "goal_status":
+      updateGoal(event.goal);
+      break;
     default:
       break;
   }
@@ -970,6 +1335,7 @@ async function finishTurn() {
       loadWorkers(),
       loadPlans(),
       loadPlanBuilds(),
+      loadGoals(),
     ]);
   } catch (error) {
     toast(error.message, "error");
@@ -2504,6 +2870,13 @@ function wireEvents() {
   el["create-plan-build"].addEventListener("click", () => {
     createPlanBuild().catch((error) => toast(error.message, "error"));
   });
+  el["new-goal"].addEventListener("click", openGoalDialog);
+  el["create-goal"].addEventListener("click", () => {
+    createGoal().catch((error) => toast(error.message, "error"));
+  });
+  el["save-goal-evidence"].addEventListener("click", () => {
+    saveGoalEvidence().catch((error) => toast(error.message, "error"));
+  });
   el["session-search"].addEventListener("input", scheduleSessionSearch);
   el["thread-search"].addEventListener("input", () => findThreadMatches());
   el["thread-search-previous"].addEventListener(
@@ -2559,6 +2932,8 @@ function wireEvents() {
         state.sessionId = null;
         state.workspace = null;
         state.messages = [];
+        state.goals = [];
+        state.goalGeneration += 1;
         state.roots = [];
         state.treeGeneration += 1;
         invalidateAttachments();
@@ -2566,6 +2941,7 @@ function wireEvents() {
         el["task-title"].textContent = "New task";
         updateWorkspaceLabel();
         renderConversation();
+        renderGoals();
         renderContextRoots();
         renderProjectTree();
       }

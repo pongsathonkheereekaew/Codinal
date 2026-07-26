@@ -140,6 +140,20 @@
             aria-live="polite"></div>
         </section>
 
+        <section id="goal-panel" class="goal-panel is-hidden"
+          aria-label="Persistent goals">
+          <header>
+            <div>
+              <strong>Goals</strong>
+              <span id="goal-summary">No persistent goals</span>
+            </div>
+            <button id="new-goal" class="secondary-button" type="button">
+              ＋ New goal
+            </button>
+          </header>
+          <div id="goal-list" class="goal-list" aria-live="polite"></div>
+        </section>
+
         <section id="conversation" class="conversation"
           aria-label="Conversation" aria-live="polite">
           <div id="empty-state" class="empty-state">
@@ -347,6 +361,77 @@
         </label>
         <button id="create-plan-build" class="primary-button"
           type="button">Start parallel comparison</button>
+      </form>
+    </dialog>
+
+    <dialog id="goal-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Create persistent goal</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close goal dialog">×</button>
+        </header>
+        <label>
+          Objective
+          <textarea id="goal-objective" rows="3" maxlength="65536"
+            placeholder="Ship the release with verified requirements"></textarea>
+        </label>
+        <label>
+          Requirements (one per line: id: description)
+          <textarea id="goal-requirements" rows="4" maxlength="65536"
+            placeholder="tests: Full suite passes&#10;package: Signed app smoke passes"></textarea>
+        </label>
+        <label>
+          Continuation instruction
+          <textarea id="goal-continuation" rows="3" maxlength="32768"
+            placeholder="Continue this goal, verify remaining requirements, and report evidence."></textarea>
+        </label>
+        <label>
+          Estimated-token budget (optional)
+          <input id="goal-token-budget" inputmode="numeric"
+            placeholder="100000" />
+        </label>
+        <label>
+          Time budget in minutes (optional)
+          <input id="goal-time-budget" inputmode="numeric"
+            placeholder="120" />
+        </label>
+        <p class="dialog-note">Continuation stops at the first exhausted budget. Completion and blocking require audited evidence.</p>
+        <button id="create-goal" class="primary-button"
+          type="button">Create goal</button>
+      </form>
+    </dialog>
+
+    <dialog id="goal-evidence-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Add goal evidence</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close goal evidence dialog">×</button>
+        </header>
+        <label>
+          Requirement
+          <select id="goal-evidence-requirement"></select>
+        </label>
+        <label>
+          Evidence kind
+          <select id="goal-evidence-kind">
+            <option value="verification">Passing verification</option>
+            <option value="blocker">Blocker observation</option>
+          </select>
+        </label>
+        <label>
+          Summary
+          <input id="goal-evidence-summary" maxlength="8192"
+            placeholder="Full release suite" />
+        </label>
+        <label>
+          Observed result
+          <textarea id="goal-evidence-result" rows="4" maxlength="32768"
+            placeholder="594 passed; signed app smoke PASS"></textarea>
+        </label>
+        <button id="save-goal-evidence" class="primary-button"
+          type="button">Save evidence</button>
       </form>
     </dialog>
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
+from uuid import uuid4
 
 from runtime.events import Event, EventHub, EventType
 from runtime.sessions import (
@@ -86,6 +87,9 @@ class TurnCoordinator:
         self._waiting: set[str] = set()
         self._durability_tasks: set[asyncio.Task[Any]] = set()
         self._outcomes: dict[str, dict[str, Any]] = {}
+        self._turn_ids: dict[str, str] = {}
+        self._turn_tasks: dict[str, asyncio.Task[None]] = {}
+        self._turn_receipts: dict[str, dict[str, Any]] = {}
         self._snapshot_barrier = asyncio.Lock()
         self._shutting_down = False
 
@@ -190,9 +194,11 @@ class TurnCoordinator:
                     "automatic code checkpoint unavailable"
                 ) from None
 
+            turn_id = f"turn-{uuid4()}"
             task = asyncio.create_task(
                 self._run(
                     session_id,
+                    turn_id,
                     engine,
                     user_input,
                     source=source,
@@ -201,6 +207,8 @@ class TurnCoordinator:
             )
             self._outcomes.pop(session_id, None)
             self._active[session_id] = task
+            self._turn_ids[session_id] = turn_id
+            self._turn_tasks[turn_id] = task
             self._engines[session_id] = engine
         finally:
             self._starting.discard(session_id)
@@ -429,9 +437,11 @@ class TurnCoordinator:
                         )
                     )
                 _prepare_engine_turn(engine)
+                turn_id = f"turn-{uuid4()}"
                 task = asyncio.create_task(
                     self._resume(
                         session_id,
+                        turn_id,
                         engine,
                         active_tool_call_ids=active_tool_call_ids,
                         code_checkpoint_id=(
@@ -444,6 +454,8 @@ class TurnCoordinator:
                     )
                 )
                 self._active[session_id] = task
+                self._turn_ids[session_id] = turn_id
+                self._turn_tasks[turn_id] = task
                 self._engines[session_id] = engine
                 recovered += 1
         return recovered
@@ -493,6 +505,7 @@ class TurnCoordinator:
     async def _run(
         self,
         session_id: str,
+        turn_id: str,
         engine: Any,
         user_input: str | list[dict[str, Any]],
         *,
@@ -501,6 +514,7 @@ class TurnCoordinator:
     ) -> None:
         await self._drive(
             session_id,
+            turn_id,
             engine,
             engine.run(user_input, source=source),
             code_checkpoint_id=code_checkpoint_id,
@@ -509,6 +523,7 @@ class TurnCoordinator:
     async def _resume(
         self,
         session_id: str,
+        turn_id: str,
         engine: Any,
         *,
         active_tool_call_ids: list[str],
@@ -516,6 +531,7 @@ class TurnCoordinator:
     ) -> None:
         await self._drive(
             session_id,
+            turn_id,
             engine,
             engine.resume_after_crash(
                 active_tool_call_ids=active_tool_call_ids
@@ -526,12 +542,14 @@ class TurnCoordinator:
     async def _drive(
         self,
         session_id: str,
+        turn_id: str,
         engine: Any,
         events: AsyncIterator[Event],
         *,
         code_checkpoint_id: str | None,
     ) -> None:
         terminal: dict[str, Any] | None = None
+        terminal_persisted = False
         cancelled = False
         durability_failed = False
         try:
@@ -639,11 +657,25 @@ class TurnCoordinator:
                     persisted = False
                 else:
                     try:
-                        persisted = await asyncio.to_thread(
-                            self._sessions.persist_checkpoint,
-                            session_id,
-                            checkpoint=TurnCheckpoint(),
+                        terminal_persist = getattr(
+                            self._sessions,
+                            "persist_terminal_checkpoint",
+                            None,
                         )
+                        if terminal is not None and terminal_persist is not None:
+                            persisted = await asyncio.to_thread(
+                                terminal_persist,
+                                session_id,
+                                checkpoint=TurnCheckpoint(),
+                                turn_id=turn_id,
+                                outcome=terminal,
+                            )
+                        else:
+                            persisted = await asyncio.to_thread(
+                                self._sessions.persist_checkpoint,
+                                session_id,
+                                checkpoint=TurnCheckpoint(),
+                            )
                     except Exception:
                         persisted = False
                 if (
@@ -675,14 +707,29 @@ class TurnCoordinator:
                             "error": "conversation persistence failed",
                         },
                     )
+                terminal_persisted = terminal is not None and persisted
             current = asyncio.current_task()
+            if terminal is not None and terminal_persisted:
+                if len(self._turn_receipts) >= 2048:
+                    self._turn_receipts.pop(
+                        next(iter(self._turn_receipts))
+                    )
+                self._turn_receipts[turn_id] = {
+                    "turn_id": turn_id,
+                    "session_id": session_id,
+                    "outcome": dict(terminal),
+                    "message_count": len(engine.messages),
+                }
             if self._active.get(session_id) is current:
                 self._active.pop(session_id, None)
+                if self._turn_ids.get(session_id) == turn_id:
+                    self._turn_ids.pop(session_id, None)
                 self._engines.pop(session_id, None)
                 self._executing.pop(session_id, None)
                 self._waiting.discard(session_id)
                 if not _engine_is_quiescent(engine):
                     self._retired_engines.append(engine)
+            self._turn_tasks.pop(turn_id, None)
             if terminal is not None:
                 if (
                     session_id not in self._outcomes
@@ -779,6 +826,48 @@ class TurnCoordinator:
     def outcome(self, session_id: str) -> dict[str, Any] | None:
         outcome = self._outcomes.get(session_id)
         return dict(outcome) if outcome is not None else None
+
+    def turn_id(self, session_id: str) -> str | None:
+        return self._turn_ids.get(session_id)
+
+    def receipt(self, turn_id: str) -> dict[str, Any] | None:
+        receipt = self._turn_receipts.get(turn_id)
+        if receipt is None:
+            durable = getattr(self._sessions, "turn_receipt", None)
+            receipt = durable(turn_id) if durable is not None else None
+        if receipt is None:
+            return None
+        return {
+            **receipt,
+            "outcome": dict(receipt["outcome"]),
+        }
+
+    def latest_receipt(
+        self,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        for turn_id in reversed(self._turn_receipts):
+            receipt = self._turn_receipts[turn_id]
+            if receipt["session_id"] == session_id:
+                return {
+                    **receipt,
+                    "outcome": dict(receipt["outcome"]),
+                }
+        durable = getattr(
+            self._sessions,
+            "latest_turn_receipt",
+            None,
+        )
+        return durable(session_id) if durable is not None else None
+
+    async def wait_turn(self, turn_id: str) -> bool:
+        if turn_id in self._turn_receipts:
+            return True
+        task = self._turn_tasks.get(turn_id)
+        if task is None:
+            return False
+        await asyncio.shield(task)
+        return turn_id in self._turn_receipts
 
     async def wait(self, session_id: str) -> bool:
         task = self._active.get(session_id)

@@ -44,6 +44,7 @@ from runtime.turn_engine import TurnEngine
 from runtime.path_scope import owns_path
 from runtime.workers import WorkerStore
 from runtime.builds import PlanBuildStore
+from runtime.goals import GoalStore
 
 from .app import create_control_plane_app
 from .auth import validate_session_token
@@ -108,6 +109,7 @@ def build_services(
     interaction_broker = InteractionBroker(store)
     worker_store = WorkerStore(config.data_dir)
     plan_build_store = PlanBuildStore(config.data_dir)
+    goal_store = GoalStore(config.data_dir)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -432,6 +434,7 @@ def build_services(
         plan_store=store,
         worker_store=worker_store,
         plan_build_store=plan_build_store,
+        goal_store=goal_store,
     )
 
 

@@ -156,10 +156,21 @@ def test_turn_streams_wire_events_and_persists_session(tmp_path):
             user_input="hello",
             workspace=tmp_path,
         )
-        await turns.wait("session-1")
-        return result, sessions, received, turns.outcome("session-1")
+        turn_id = turns.turn_id("session-1")
+        assert turn_id is not None
+        assert await turns.wait_turn(turn_id)
+        return (
+            result,
+            sessions,
+            received,
+            turns.outcome("session-1"),
+            turns.receipt(turn_id),
+            turns.latest_receipt("session-1"),
+        )
 
-    result, sessions, received, outcome = asyncio.run(scenario())
+    result, sessions, received, outcome, receipt, latest = asyncio.run(
+        scenario()
+    )
 
     assert result == {"ok": True, "session_id": "session-1"}
     assert sessions.requests == [("session-1", tmp_path, "code")]
@@ -182,6 +193,13 @@ def test_turn_streams_wire_events_and_persists_session(tmp_path):
         "status": "completed",
         "iterations": 1,
     }
+    assert receipt == {
+        "turn_id": receipt["turn_id"],
+        "session_id": "session-1",
+        "outcome": outcome,
+        "message_count": 1,
+    }
+    assert latest == receipt
 
 
 def test_turn_automatically_captures_code_and_conversation_checkpoint():
@@ -237,15 +255,18 @@ def test_turn_does_not_finalize_code_checkpoint_when_idle_save_fails():
             code_checkpoints=checkpoints,
         )
         await turns.start("session-1", user_input="hello")
+        turn_id = turns.turn_id("session-1")
+        assert turn_id is not None
         await turns.wait("session-1")
-        return checkpoints
+        return checkpoints, turns.receipt(turn_id)
 
-    checkpoints = asyncio.run(scenario())
+    checkpoints, receipt = asyncio.run(scenario())
 
     assert checkpoints.captured == [
         ("session-1", "a" * 32, 1)
     ]
     assert checkpoints.finalized == []
+    assert receipt is None
 
 
 def test_turn_never_starts_when_automatic_checkpoint_fails():

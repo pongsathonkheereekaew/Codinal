@@ -33,7 +33,7 @@ from .migrations import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
 MAX_PLAN_RESPONSE_BYTES = 128 * 1024
 MAX_LISTED_PLAN_ARTIFACTS = 100
@@ -200,6 +200,28 @@ def _migrate_to_v7(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v8(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS turn_receipts (
+            turn_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            message_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT ({_NOW}),
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS turn_receipts_session_created
+        ON turn_receipts(session_id, created_at, turn_id)
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
@@ -208,6 +230,7 @@ _MIGRATIONS = {
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
+    8: _migrate_to_v8,
 }
 
 
@@ -261,6 +284,7 @@ class ConversationStore:
         record: SessionRecord,
         *,
         completed_tool_call_id: str | None = None,
+        terminal_receipt: dict[str, Any] | None = None,
     ) -> None:
         _validate_session_id(record.session_id)
         _validate_record(record)
@@ -269,6 +293,15 @@ class ConversationStore:
         grants = _encode_json(record.grants or {})
         active_tool_call_ids = _encode_json(
             record.turn_checkpoint.active_tool_call_ids
+        )
+        encoded_receipt = (
+            _validate_turn_receipt(
+                terminal_receipt,
+                session_id=record.session_id,
+                message_count=len(messages),
+            )
+            if terminal_receipt is not None
+            else None
         )
         title = record.title or _title_from(record.messages)
 
@@ -385,6 +418,40 @@ class ConversationStore:
                     """,
                     (record.session_id, completed_tool_call_id),
                 )
+            if encoded_receipt is not None:
+                self._connection.execute(
+                    f"""
+                    INSERT INTO turn_receipts (
+                        turn_id, session_id, outcome, message_count,
+                        created_at
+                    )
+                    VALUES (?, ?, ?, ?, {_NOW})
+                    ON CONFLICT(turn_id) DO UPDATE SET
+                        session_id = excluded.session_id,
+                        outcome = excluded.outcome,
+                        message_count = excluded.message_count,
+                        created_at = excluded.created_at
+                    """,
+                    (
+                        terminal_receipt["turn_id"],
+                        record.session_id,
+                        encoded_receipt,
+                        len(messages),
+                    ),
+                )
+                self._connection.execute(
+                    """
+                    DELETE FROM turn_receipts
+                    WHERE session_id = ?
+                      AND turn_id NOT IN (
+                        SELECT turn_id FROM turn_receipts
+                        WHERE session_id = ?
+                        ORDER BY created_at DESC, turn_id DESC
+                        LIMIT 32
+                      )
+                    """,
+                    (record.session_id, record.session_id),
+                )
 
     def save_checkpoint(
         self,
@@ -396,6 +463,40 @@ class ConversationStore:
             record,
             completed_tool_call_id=completed_tool_call_id,
         )
+
+    def load_turn_receipt(
+        self,
+        turn_id: str,
+    ) -> dict[str, Any] | None:
+        _validate_turn_id(turn_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT turn_id, session_id, outcome, message_count
+                FROM turn_receipts
+                WHERE turn_id = ?
+                """,
+                (turn_id,),
+            ).fetchone()
+        return _turn_receipt_from_row(row) if row is not None else None
+
+    def latest_turn_receipt(
+        self,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        _validate_session_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT turn_id, session_id, outcome, message_count
+                FROM turn_receipts
+                WHERE session_id = ?
+                ORDER BY created_at DESC, turn_id DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return _turn_receipt_from_row(row) if row is not None else None
 
     def load(self, session_id: str) -> Optional[SessionRecord]:
         _validate_session_id(session_id)
@@ -1089,6 +1190,39 @@ def _validate_tool_call_id(tool_call_id: str) -> None:
         raise ValueError("invalid tool call id")
 
 
+def _validate_turn_id(turn_id: str) -> None:
+    if (
+        not isinstance(turn_id, str)
+        or _SESSION_ID.fullmatch(turn_id) is None
+        or not turn_id.startswith("turn-")
+    ):
+        raise ValueError("invalid turn id")
+
+
+def _validate_turn_receipt(
+    receipt: dict[str, Any],
+    *,
+    session_id: str,
+    message_count: int,
+) -> str:
+    if not isinstance(receipt, dict):
+        raise ValueError("invalid turn receipt")
+    turn_id = receipt.get("turn_id")
+    _validate_turn_id(turn_id)
+    outcome = receipt.get("outcome")
+    if (
+        receipt.get("session_id") != session_id
+        or receipt.get("message_count") != message_count
+        or not isinstance(outcome, dict)
+        or not outcome
+    ):
+        raise ValueError("invalid turn receipt")
+    encoded = _encode_json(outcome)
+    if len(encoded.encode("utf-8")) > 32 * 1024:
+        raise ValueError("invalid turn receipt")
+    return encoded
+
+
 def _validate_plan_id(plan_id: str) -> None:
     if (
         not isinstance(plan_id, str)
@@ -1237,6 +1371,19 @@ def _record_from_row(
             ),
         ),
     )
+
+
+def _turn_receipt_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    outcome = _decode_json(row["outcome"], expected=dict)
+    message_count = int(row["message_count"])
+    if message_count < 0 or not outcome:
+        raise ValueError("corrupt conversation store")
+    return {
+        "turn_id": str(row["turn_id"]),
+        "session_id": str(row["session_id"]),
+        "outcome": outcome,
+        "message_count": message_count,
+    }
 
 
 def _title_from(messages: list[dict[str, Any]]) -> str:

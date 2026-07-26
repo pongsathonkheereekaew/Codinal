@@ -134,6 +134,17 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "/candidates/" in script
     assert "Review diff" in script
     assert "candidateDiffs" in script
+    assert "/goals" in script
+    assert "goal_status" in script
+    assert "Continue goal" in script
+    assert "Add evidence" in script
+    assert "Audit complete" in script
+    assert "Audit blocked" in script
+    assert "goalCompletionMapping" in script
+    assert "goalBlockerSummary" in script
+    assert '["completed", "blocked"].includes(goal.state)' in script
+    assert "goal.requirement_evidence" in script
+    assert "Audit evidence ·" in script
     load_sessions = script.split(
         "async function loadSessions() {",
         1,

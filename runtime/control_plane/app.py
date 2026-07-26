@@ -365,6 +365,30 @@ class PlanBuildControl(Protocol):
     async def adopt(self, build_id: str) -> dict[str, object]: ...
 
 
+class GoalControl(Protocol):
+    async def create(
+        self,
+        session_id: str,
+        **options: Any,
+    ) -> dict[str, Any]: ...
+
+    def list(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    async def continue_goal(self, goal_id: str) -> dict[str, Any]: ...
+
+    async def add_evidence(
+        self,
+        goal_id: str,
+        **options: Any,
+    ) -> dict[str, Any]: ...
+
+    async def audit(
+        self,
+        goal_id: str,
+        **options: Any,
+    ) -> dict[str, Any]: ...
+
+
 class RestoreControl(Protocol):
     def restore(
         self,
@@ -391,6 +415,7 @@ class ControlPlaneServices(Protocol):
     plans: PlanControl | None
     workers: Any | None
     builds: PlanBuildControl | None
+    goals: GoalControl | None
 
 
 def create_control_plane_app(
@@ -408,6 +433,9 @@ def create_control_plane_app(
             if restores is not None:
                 await asyncio.to_thread(restores.reconcile)
             await services.turns.recover()
+            goals = getattr(services, "goals", None)
+            if goals is not None:
+                await goals.recover()
             workers = getattr(services, "workers", None)
             if workers is not None:
                 await workers.recover()
@@ -416,6 +444,9 @@ def create_control_plane_app(
                 await builds.recover()
             yield
         finally:
+            goals = getattr(services, "goals", None)
+            if goals is not None:
+                await goals.shutdown()
             builds = getattr(services, "builds", None)
             if builds is not None:
                 await builds.shutdown()
@@ -440,6 +471,9 @@ def create_control_plane_app(
                     workers.store.close()
                 if builds is not None:
                     builds.store.close()
+                goal_store = getattr(goals, "store", None)
+                if goal_store is not None:
+                    goal_store.close()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -1131,6 +1165,110 @@ def create_control_plane_app(
         except (GitWorkspaceError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from None
 
+    @app.get("/v1/sessions/{session_id}/goals")
+    async def list_goals(session_id: str) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        goals = getattr(services, "goals", None)
+        if goals is None:
+            return []
+        return await asyncio.to_thread(goals.list, session_id)
+
+    @app.post("/v1/sessions/{session_id}/goals")
+    async def create_goal(
+        session_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _validate_public_session_id(session_id)
+        goals = getattr(services, "goals", None)
+        if goals is None:
+            raise HTTPException(
+                status_code=503,
+                detail="goals are unavailable",
+            )
+        body = await _read_goal_create(request)
+        try:
+            record = await goals.create(
+                session_id,
+                objective=body["objective"],
+                requirements=tuple(body["requirements"]),
+                continuation_prompt=body["continuation_prompt"],
+                token_budget=body.get("token_budget"),
+                time_budget_seconds=body.get("time_budget_seconds"),
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="session not found") from None
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        return JSONResponse(record, status_code=201)
+
+    @app.post("/v1/goals/{goal_id}/continue")
+    async def continue_goal(goal_id: str) -> JSONResponse:
+        _validate_public_session_id(goal_id)
+        goals = getattr(services, "goals", None)
+        if goals is None:
+            raise HTTPException(
+                status_code=503,
+                detail="goals are unavailable",
+            )
+        try:
+            record = await goals.continue_goal(goal_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="goal not found") from None
+        except (SessionBusyError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        return JSONResponse(record, status_code=202)
+
+    @app.post("/v1/goals/{goal_id}/evidence")
+    async def add_goal_evidence(
+        goal_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _validate_public_session_id(goal_id)
+        goals = getattr(services, "goals", None)
+        if goals is None:
+            raise HTTPException(
+                status_code=503,
+                detail="goals are unavailable",
+            )
+        body = await _read_goal_evidence(request)
+        try:
+            evidence = await goals.add_evidence(goal_id, **body)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="goal not found") from None
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        return JSONResponse(evidence, status_code=201)
+
+    @app.post("/v1/goals/{goal_id}/audit")
+    async def audit_goal(
+        goal_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(goal_id)
+        goals = getattr(services, "goals", None)
+        if goals is None:
+            raise HTTPException(
+                status_code=503,
+                detail="goals are unavailable",
+            )
+        body = await _read_goal_audit(request)
+        try:
+            return await goals.audit(
+                goal_id,
+                status=body["status"],
+                summary=body["summary"],
+                requirement_evidence={
+                    requirement_id: tuple(evidence_ids)
+                    for requirement_id, evidence_ids in body[
+                        "requirement_evidence"
+                    ].items()
+                },
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="goal not found") from None
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+
     @app.post("/v1/sessions/{session_id}/interrupt")
     async def interrupt_turn(session_id: str) -> dict[str, Any]:
         _validate_public_session_id(session_id)
@@ -1646,6 +1784,168 @@ async def _read_plan_build_selection(request: Request) -> str:
             detail="invalid plan build selection",
         )
     return worker_id
+
+
+async def _read_goal_create(request: Request) -> dict[str, Any]:
+    body = await _read_bounded_object(
+        request,
+        limit=128 * 1024,
+        detail="invalid goal payload",
+    )
+    allowed = {
+        "objective",
+        "requirements",
+        "continuation_prompt",
+        "token_budget",
+        "time_budget_seconds",
+    }
+    requirements = body.get("requirements")
+    if (
+        not {"objective", "requirements", "continuation_prompt"}
+        <= set(body)
+        <= allowed
+        or not _valid_utf8_text(
+            body.get("objective"),
+            minimum=1,
+            maximum=64 * 1024,
+        )
+        or not _valid_utf8_text(
+            body.get("continuation_prompt"),
+            minimum=1,
+            maximum=32 * 1024,
+        )
+        or not isinstance(requirements, list)
+        or not 1 <= len(requirements) <= 20
+        or not _valid_optional_integer(
+            body.get("token_budget"),
+            maximum=100_000_000,
+        )
+        or not _valid_optional_integer(
+            body.get("time_budget_seconds"),
+            maximum=31 * 24 * 60 * 60,
+        )
+    ):
+        raise HTTPException(status_code=400, detail="invalid goal payload")
+    requirement_ids: list[str] = []
+    for requirement in requirements:
+        if (
+            not isinstance(requirement, dict)
+            or set(requirement) != {"requirement_id", "text"}
+            or not isinstance(requirement.get("requirement_id"), str)
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}",
+                requirement["requirement_id"],
+            )
+            is None
+            or not _valid_utf8_text(
+                requirement.get("text"),
+                minimum=1,
+                maximum=8192,
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid goal payload",
+            )
+        requirement_ids.append(requirement["requirement_id"])
+    if len(requirement_ids) != len(set(requirement_ids)):
+        raise HTTPException(status_code=400, detail="invalid goal payload")
+    return body
+
+
+async def _read_goal_evidence(request: Request) -> dict[str, Any]:
+    body = await _read_bounded_object(
+        request,
+        limit=64 * 1024,
+        detail="invalid goal evidence",
+    )
+    if (
+        set(body)
+        != {"requirement_id", "kind", "summary", "result", "passed"}
+        or not isinstance(body.get("requirement_id"), str)
+        or (
+            body["requirement_id"]
+            and re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}",
+                body["requirement_id"],
+            )
+            is None
+        )
+        or body.get("kind") not in {"verification", "blocker"}
+        or body.get("kind") == "verification"
+        and body.get("passed") is not True
+        or body.get("kind") == "blocker"
+        and body.get("passed") is not False
+        or not _valid_utf8_text(
+            body.get("summary"),
+            minimum=1,
+            maximum=8192,
+        )
+        or not _valid_utf8_text(
+            body.get("result"),
+            minimum=0,
+            maximum=32 * 1024,
+        )
+        or not isinstance(body.get("passed"), bool)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid goal evidence",
+        )
+    return body
+
+
+async def _read_goal_audit(request: Request) -> dict[str, Any]:
+    body = await _read_bounded_object(
+        request,
+        limit=128 * 1024,
+        detail="invalid goal audit",
+    )
+    mapping = body.get("requirement_evidence")
+    if (
+        set(body) != {"status", "summary", "requirement_evidence"}
+        or body.get("status") not in {"complete", "blocked"}
+        or not _valid_utf8_text(
+            body.get("summary"),
+            minimum=1,
+            maximum=32 * 1024,
+        )
+        or not isinstance(mapping, dict)
+        or len(mapping) > 20
+    ):
+        raise HTTPException(status_code=400, detail="invalid goal audit")
+    for requirement_id, evidence_ids in mapping.items():
+        if (
+            not isinstance(requirement_id, str)
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}",
+                requirement_id,
+            )
+            is None
+            or not isinstance(evidence_ids, list)
+            or not 1 <= len(evidence_ids) <= 100
+            or len(evidence_ids) != len(set(evidence_ids))
+            or any(
+                not isinstance(evidence_id, str)
+                or not evidence_id.startswith("evidence-")
+                or _SESSION_ID.fullmatch(evidence_id) is None
+                for evidence_id in evidence_ids
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid goal audit",
+            )
+    return body
+
+
+def _valid_optional_integer(value: object, *, maximum: int) -> bool:
+    return (
+        value is None
+        or not isinstance(value, bool)
+        and isinstance(value, int)
+        and 1 <= value <= maximum
+    )
 
 
 async def _read_bounded_object(

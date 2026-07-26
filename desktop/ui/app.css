@@ -956,6 +956,88 @@ select:focus-visible,
   gap: 4px;
 }
 
+.goal-panel {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+  padding: 7px 16px 8px;
+}
+
+.goal-panel > header,
+.goal-panel > header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.goal-panel > header {
+  justify-content: space-between;
+}
+
+.goal-panel > header strong {
+  font-size: 11px;
+}
+
+.goal-panel > header span,
+.goal-card small,
+.goal-evidence-item {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.goal-list {
+  display: grid;
+  gap: 7px;
+}
+
+.goal-list:not(:empty) {
+  margin-top: 7px;
+}
+
+.goal-card {
+  display: grid;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.goal-card-header,
+.goal-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.goal-card-header {
+  justify-content: space-between;
+}
+
+.goal-card-header strong {
+  font-size: 11px;
+}
+
+.goal-requirements,
+.goal-evidence-ledger {
+  display: grid;
+  gap: 3px;
+}
+
+.goal-requirement,
+.goal-evidence-item {
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+}
+
+.goal-actions {
+  flex-wrap: wrap;
+}
+
+.goal-actions button {
+  min-height: 26px;
+  font-size: 10px;
+}
+
 .conversation {
   min-height: 0;
   overflow-y: auto;

@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Iterable, Optional, Protocol
 
 from .checkpoint_restore import CheckpointRestoreCoordinator
 from .events import EventHub
+from .goals import GoalCoordinator, GoalStore
 from .mcp import MCPManager, MCPService
 from .oauth import OAuthCoordinator
 from .policy import ApprovalBroker, Approver, Mode, PermissionEngine, deny_all
@@ -67,6 +68,7 @@ class RuntimeServices:
     plans: Any | None = None
     workers: WorkerCoordinator | None = None
     builds: PlanBuildCoordinator | None = None
+    goals: GoalCoordinator | None = None
 
 
 def compose_runtime(
@@ -91,6 +93,7 @@ def compose_runtime(
     plan_store: Any | None = None,
     worker_store: WorkerStore | None = None,
     plan_build_store: PlanBuildStore | None = None,
+    goal_store: GoalStore | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -222,6 +225,16 @@ def compose_runtime(
     )
     if workers is not None and builds is not None:
         workers.bind_plan_builds(builds)
+    goals = (
+        GoalCoordinator(
+            store=goal_store,
+            sessions=sessions,
+            turns=turns,
+            events=events,
+        )
+        if goal_store is not None
+        else None
+    )
     return RuntimeServices(
         sessions=sessions,
         turns=turns,
@@ -237,4 +250,5 @@ def compose_runtime(
         plans=plan_store,
         workers=workers,
         builds=builds,
+        goals=goals,
     )

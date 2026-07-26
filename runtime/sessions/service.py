@@ -323,6 +323,41 @@ class SessionService:
             )
         return True
 
+    def persist_terminal_checkpoint(
+        self,
+        session_id: str,
+        *,
+        checkpoint: TurnCheckpoint,
+        turn_id: str,
+        outcome: dict[str, Any],
+    ) -> bool:
+        record = self._snapshot(session_id)
+        if record is None:
+            return False
+        updated = replace(record, turn_checkpoint=checkpoint)
+        self._store.save(
+            updated,
+            terminal_receipt={
+                "turn_id": turn_id,
+                "session_id": session_id,
+                "outcome": dict(outcome),
+                "message_count": len(updated.messages),
+            },
+        )
+        return True
+
+    def turn_receipt(
+        self,
+        turn_id: str,
+    ) -> dict[str, Any] | None:
+        return self._store.load_turn_receipt(turn_id)
+
+    def latest_turn_receipt(
+        self,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        return self._store.latest_turn_receipt(session_id)
+
     def recoverable_sessions(self) -> list[SessionRecord]:
         return [
             record

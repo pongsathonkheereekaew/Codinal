@@ -236,7 +236,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
     assert all(event["action"] == "preserved_corrupt_state" for event in events)
     with sqlite3.connect(data_dir / "codinal.db") as conversations:
         assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 8
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -1867,7 +1867,7 @@ def test_v6_legacy_plan_wait_recovers_with_required_verification(
     assert plans[0]["selected_task_ids"] == ["legacy-plan"]
     assert plans[0]["tasks"][0]["verification"] == "Migration E2E passes"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
 
 
 def test_production_question_and_directory_cards_apply_selected_root(

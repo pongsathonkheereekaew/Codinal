@@ -153,7 +153,7 @@ Acceptance evidence:
   status/notifications, steering, cancellation, and isolated worktrees.
 - [x] Add plan-to-parallel-build and best-of-N comparison with explicit human
   selection before branch adoption.
-- [ ] Add persistent goals with time/token budgets, continuation, evidence
+- [x] Add persistent goals with time/token budgets, continuation, evidence
   ledger, and strict complete/blocked audits.
 
 Acceptance evidence:
