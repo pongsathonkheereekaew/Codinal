@@ -157,9 +157,9 @@ def test_turn_streams_wire_events_and_persists_session(tmp_path):
             workspace=tmp_path,
         )
         await turns.wait("session-1")
-        return result, sessions, received
+        return result, sessions, received, turns.outcome("session-1")
 
-    result, sessions, received = asyncio.run(scenario())
+    result, sessions, received, outcome = asyncio.run(scenario())
 
     assert result == {"ok": True, "session_id": "session-1"}
     assert sessions.requests == [("session-1", tmp_path, "code")]
@@ -177,6 +177,11 @@ def test_turn_streams_wire_events_and_persists_session(tmp_path):
             "iterations": 1,
         },
     ]
+    assert outcome == {
+        "type": "turn_end",
+        "status": "completed",
+        "iterations": 1,
+    }
 
 
 def test_turn_automatically_captures_code_and_conversation_checkpoint():

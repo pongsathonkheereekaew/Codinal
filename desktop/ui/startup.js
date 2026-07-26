@@ -59,6 +59,8 @@ const state = {
   contextItems: [],
   contextGeneration: 0,
   contextPending: false,
+  workers: [],
+  workerGeneration: 0,
 };
 
 const el = Object.fromEntries(
@@ -81,6 +83,9 @@ const el = Object.fromEntries(
     "thread-search", "thread-search-previous", "thread-search-next",
     "export-thread", "return-to-parent",
     "context-items",
+    "worker-panel", "worker-summary", "worker-list", "new-worker",
+    "worker-dialog", "worker-task", "worker-ownership", "create-worker",
+    "worker-dependencies",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -186,6 +191,7 @@ async function loadSessions() {
   );
   if (active) syncAgentMode(active);
   renderSessions();
+  renderWorkers();
 }
 
 function syncAgentMode(session) {
@@ -235,6 +241,149 @@ function renderSessions() {
     item.append(button, menu);
     el["session-list"].append(item);
   }
+}
+
+async function loadWorkers() {
+  if (!state.sessionId) {
+    state.workers = [];
+    renderWorkers();
+    return;
+  }
+  const sessionId = state.sessionId;
+  const generation = ++state.workerGeneration;
+  const workers = await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/workers`
+  );
+  if (
+    state.sessionId !== sessionId
+    || state.workerGeneration !== generation
+  ) return;
+  state.workers = workers;
+  renderWorkers();
+}
+
+function updateWorker(worker) {
+  if (!worker || worker.parent_session_id !== state.sessionId) return;
+  const index = state.workers.findIndex(
+    (candidate) => candidate.worker_id === worker.worker_id
+  );
+  if (index < 0) state.workers.push(worker);
+  else state.workers[index] = worker;
+  renderWorkers();
+}
+
+function renderWorkers() {
+  const visible = state.sessions.some(
+    (session) => session.session_id === state.sessionId
+  );
+  el["worker-panel"].classList.toggle("is-hidden", !visible);
+  el["worker-list"].replaceChildren();
+  const active = state.workers.filter(
+    (worker) => !["succeeded", "adopted", "failed", "cancelled"]
+      .includes(worker.state)
+  ).length;
+  el["worker-summary"].textContent = state.workers.length
+    ? `${active} active · ${state.workers.length} total`
+    : "No background work";
+  for (const worker of state.workers) {
+    const card = node("article", "worker-card");
+    const identity = node("div", "worker-identity");
+    identity.append(
+      node("strong", "", worker.task),
+      node(
+        "small",
+        "",
+        `${worker.state} · ${worker.worker_id} · ${
+          (worker.ownership || []).join(", ")
+        }${worker.dependencies?.length
+          ? ` · after ${worker.dependencies.join(", ")}`
+          : ""}`
+      )
+    );
+    const actions = node("div", "worker-actions");
+    if (worker.state === "running") {
+      const steer = node("button", "secondary-button", "Steer");
+      steer.type = "button";
+      steer.addEventListener("click", () => {
+        steerWorker(worker).catch((error) => toast(error.message, "error"));
+      });
+      const cancel = node("button", "secondary-button", "Cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", () => {
+        cancelWorker(worker).catch((error) => toast(error.message, "error"));
+      });
+      actions.append(steer, cancel);
+    }
+    if (worker.state === "succeeded" && worker.commit) {
+      const adopt = node("button", "primary-button", "Adopt");
+      adopt.type = "button";
+      adopt.addEventListener("click", () => {
+        adoptWorker(worker).catch((error) => toast(error.message, "error"));
+      });
+      actions.append(adopt);
+    }
+    card.append(identity, actions);
+    el["worker-list"].append(card);
+  }
+}
+
+async function createWorker() {
+  const task = el["worker-task"].value.trim();
+  const ownership = el["worker-ownership"].value
+    .split(",")
+    .map((path) => path.trim())
+    .filter(Boolean);
+  const dependencies = el["worker-dependencies"].value
+    .split(",")
+    .map((workerId) => workerId.trim())
+    .filter(Boolean);
+  if (!state.sessionId || !task || !ownership.length) {
+    toast("Enter a task and at least one owned path", "error");
+    return;
+  }
+  const worker = await api(
+    `/v1/sessions/${encodeURIComponent(state.sessionId)}/workers`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        task,
+        ownership,
+        dependencies,
+        model: el["model-select"].value,
+      }),
+    }
+  );
+  updateWorker(worker);
+  el["worker-dialog"].close();
+  el["worker-task"].value = "";
+  el["worker-ownership"].value = "";
+  el["worker-dependencies"].value = "";
+  toast("Background worker started");
+}
+
+async function steerWorker(worker) {
+  const text = window.prompt("Steer this worker");
+  if (!text?.trim()) return;
+  await api(`/v1/workers/${encodeURIComponent(worker.worker_id)}/steer`, {
+    method: "POST",
+    body: JSON.stringify({ text: text.trim() }),
+  });
+  toast("Steering queued");
+}
+
+async function cancelWorker(worker) {
+  await api(`/v1/workers/${encodeURIComponent(worker.worker_id)}/cancel`, {
+    method: "POST",
+  });
+  await loadWorkers();
+}
+
+async function adoptWorker(worker) {
+  await api(`/v1/workers/${encodeURIComponent(worker.worker_id)}/adopt`, {
+    method: "POST",
+  });
+  await Promise.all([loadWorkers(), loadDiff(false)]);
+  toast("Worker changes adopted");
 }
 
 function scheduleSessionSearch() {
@@ -296,6 +445,8 @@ async function selectSession(session) {
   state.workspace = session.workspace;
   state.messages = [];
   state.checkpoints = [];
+  state.workers = [];
+  state.workerGeneration += 1;
   state.roots = [];
   state.treeGeneration += 1;
   invalidateAttachments();
@@ -311,6 +462,7 @@ async function selectSession(session) {
   renderCheckpoints();
   renderContextRoots();
   renderProjectTree();
+  renderWorkers();
   updateThreadSearchControls();
   try {
     const messages = await api(
@@ -328,6 +480,7 @@ async function selectSession(session) {
       loadPendingInteractions(),
       loadDiff(false),
       loadRootsAndTree(),
+      loadWorkers(),
     ]);
     if (
       state.sessionId !== sessionId
@@ -388,6 +541,8 @@ function switchWorkspace(workspace) {
   state.activities.clear();
   state.diff = "";
   state.checkpoints = [];
+  state.workers = [];
+  state.workerGeneration += 1;
   el["task-title"].textContent = "New task";
   updateWorkspaceLabel();
   renderSessions();
@@ -396,6 +551,7 @@ function switchWorkspace(workspace) {
   renderCheckpoints();
   renderContextRoots();
   renderProjectTree();
+  renderWorkers();
   updateThreadSearchControls();
   connectSocket();
   return true;
@@ -523,6 +679,9 @@ function handleEvent(event) {
     case "turn_end":
       finishTurn();
       break;
+    case "worker_status":
+      updateWorker(event.worker);
+      break;
     default:
       break;
   }
@@ -539,6 +698,7 @@ async function finishTurn() {
       loadSessions(),
       loadDiff(false),
       loadRootsAndTree(),
+      loadWorkers(),
     ]);
   } catch (error) {
     toast(error.message, "error");
@@ -1923,6 +2083,13 @@ function wireEvents() {
     addContextRoot().catch((error) => toast(error.message, "error"));
   });
   el["refresh-sessions"].addEventListener("click", loadSessions);
+  el["new-worker"].addEventListener("click", () => {
+    el["worker-dialog"].showModal();
+    el["worker-task"].focus();
+  });
+  el["create-worker"].addEventListener("click", () => {
+    createWorker().catch((error) => toast(error.message, "error"));
+  });
   el["session-search"].addEventListener("input", scheduleSessionSearch);
   el["thread-search"].addEventListener("input", () => findThreadMatches());
   el["thread-search-previous"].addEventListener(

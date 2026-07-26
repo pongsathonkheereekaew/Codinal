@@ -41,6 +41,8 @@ from runtime.tools import (
     register_mutation_tools,
 )
 from runtime.turn_engine import TurnEngine
+from runtime.path_scope import owns_path
+from runtime.workers import WorkerStore
 
 from .app import create_control_plane_app
 from .auth import validate_session_token
@@ -103,6 +105,7 @@ def build_services(
     git_service = GitWorktreeService(config.data_dir)
     approval_broker = ApprovalBroker(decisions=store)
     interaction_broker = InteractionBroker(store)
+    worker_store = WorkerStore(config.data_dir)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -126,10 +129,16 @@ def build_services(
             raise SessionCleanupError(str(error)) from None
 
     def build_engine(context):
+        worker = worker_store.load_by_child_session(
+            context.request.session_id
+        )
+        write_scope = worker.ownership if worker is not None else ()
         git_record = git_service.load(context.request.session_id)
         checkpoint_enabled = git_service.has_checkpoint_session(
             context.request.session_id
         )
+        if worker is not None and not checkpoint_enabled:
+            raise RuntimeError("worker Git worktree is unavailable")
         shell = (
             TransactionalShell(
                 workspace=context.roots[0].path,
@@ -144,7 +153,17 @@ def build_services(
                     else None
                 ),
                 apply_attributed_delta=lambda paths, apply_delta: (
-                    git_service.apply_file_delta(
+                    False
+                    if write_scope
+                    and any(
+                        not owns_path(
+                            context.roots[0].path,
+                            write_scope,
+                            path,
+                        )
+                        for path in paths
+                    )
+                    else git_service.apply_file_delta(
                         context.request.session_id,
                         paths,
                         apply_delta,
@@ -160,7 +179,8 @@ def build_services(
             )
         )
         registry = build_core_registry(context.roots)
-        register_interaction_tools(registry)
+        if worker is None:
+            register_interaction_tools(registry)
         register_mutation_tools(
             registry,
             roots=context.roots,
@@ -172,8 +192,9 @@ def build_services(
                 if checkpoint_enabled
                 else None
             ),
+            write_scope=write_scope,
         )
-        if git_record is not None:
+        if git_record is not None and worker is None:
             register_git_tools(
                 registry,
                 service=git_service,
@@ -277,14 +298,24 @@ def build_services(
                 context.request.session_id,
                 call.id,
             ),
-            directory_requester=request_directory,
-            plan_approver=interaction_broker.requester(
-                context.request.session_id,
-                "plan",
+            directory_requester=(
+                request_directory if worker is None else None
             ),
-            question_asker=interaction_broker.requester(
-                context.request.session_id,
-                "question",
+            plan_approver=(
+                interaction_broker.requester(
+                    context.request.session_id,
+                    "plan",
+                )
+                if worker is None
+                else None
+            ),
+            question_asker=(
+                interaction_broker.requester(
+                    context.request.session_id,
+                    "question",
+                )
+                if worker is None
+                else None
             ),
             interaction_id_factory=lambda call, kind: (
                 interaction_broker.interaction_id(
@@ -396,6 +427,7 @@ def build_services(
         git_service=git_service,
         approval_broker=approval_broker,
         interaction_broker=interaction_broker,
+        worker_store=worker_store,
     )
 
 

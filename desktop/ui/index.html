@@ -106,6 +106,21 @@
           </div>
         </header>
 
+        <section id="worker-panel" class="worker-panel is-hidden"
+          aria-label="Background workers">
+          <header>
+            <div>
+              <strong>Parallel workers</strong>
+              <span id="worker-summary">No background work</span>
+            </div>
+            <button id="new-worker" class="secondary-button" type="button">
+              ＋ Delegate
+            </button>
+          </header>
+          <div id="worker-list" class="worker-list"
+            aria-live="polite"></div>
+        </section>
+
         <section id="conversation" class="conversation"
           aria-label="Conversation" aria-live="polite">
           <div id="empty-state" class="empty-state">
@@ -266,6 +281,34 @@
         <button id="archive-session" type="button">Archive task</button>
         <button id="delete-session" class="danger-button"
           type="button">Delete task…</button>
+      </form>
+    </dialog>
+
+    <dialog id="worker-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Delegate parallel work</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close worker dialog">×</button>
+        </header>
+        <label>
+          Task
+          <textarea id="worker-task" rows="4" maxlength="32768"
+            placeholder="Implement and test the parser"></textarea>
+        </label>
+        <label>
+          Owned paths
+          <input id="worker-ownership"
+            placeholder="runtime/parser, tests/parser" />
+        </label>
+        <label>
+          Depends on worker IDs (optional)
+          <input id="worker-dependencies"
+            placeholder="worker-…" />
+        </label>
+        <p class="dialog-note">The worker can only change these paths in its own Git worktree.</p>
+        <button id="create-worker" class="primary-button"
+          type="button">Start worker</button>
       </form>
     </dialog>
 

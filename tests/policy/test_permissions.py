@@ -172,6 +172,22 @@ def test_auto_mode_still_scopes_writes(workspace, tmp_path_factory):
     assert not d.allowed  # path scope holds even in AUTO
 
 
+def test_auto_mode_still_enforces_worker_ownership(workspace):
+    eng = PermissionEngine(
+        workspace_root=workspace,
+        mode=Mode.AUTO,
+        write_scope=("src",),
+    )
+
+    owned = eng.evaluate("write_file", {"path": "src/owned.py"})
+    sibling = eng.evaluate("write_file", {"path": "README.md"})
+
+    assert owned.allowed
+    assert not sibling.allowed
+    assert not sibling.needs_user
+    assert "ownership" in sibling.reason
+
+
 def test_auto_mode_rejects_retargeted_workspace(workspace):
     bound = workspace / "bound"
     bound.mkdir()

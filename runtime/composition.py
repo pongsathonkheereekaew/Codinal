@@ -27,6 +27,7 @@ from .sessions.service import (
 )
 from .settings import JsonPreferenceStore, SettingsService
 from .turns import TurnCoordinator
+from .workers import WorkerCoordinator, WorkerStore
 
 EventEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -62,6 +63,7 @@ class RuntimeServices:
     restores: CheckpointRestoreCoordinator | None = None
     approvals: ApprovalBroker | None = None
     interactions: Any | None = None
+    workers: WorkerCoordinator | None = None
 
 
 def compose_runtime(
@@ -83,6 +85,7 @@ def compose_runtime(
     git_service: Any | None = None,
     approval_broker: ApprovalBroker | None = None,
     interaction_broker: Any | None = None,
+    worker_store: WorkerStore | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -121,10 +124,16 @@ def compose_runtime(
                 for root in request.extra_roots
             ],
         ]
+        worker = (
+            worker_store.load_by_child_session(request.session_id)
+            if worker_store is not None
+            else None
+        )
         permissions = PermissionEngine(
             workspace_root=primary_workspace,
             mode=Mode(request.mode),
             roots=roots,
+            write_scope=worker.ownership if worker is not None else (),
         )
         for tool in request.grants.get("tools") or []:
             permissions.allow_tool_for_session(str(tool))
@@ -181,6 +190,17 @@ def compose_runtime(
         if mcp_manager is not None
         else None
     )
+    workers = (
+        WorkerCoordinator(
+            store=worker_store,
+            sessions=sessions,
+            turns=turns,
+            git=git_service,
+            events=events,
+        )
+        if worker_store is not None and git_service is not None
+        else None
+    )
     return RuntimeServices(
         sessions=sessions,
         turns=turns,
@@ -193,4 +213,5 @@ def compose_runtime(
         restores=restores,
         approvals=approval_broker,
         interactions=interaction_broker,
+        workers=workers,
     )

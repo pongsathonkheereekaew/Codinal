@@ -22,6 +22,13 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="thread-search-previous"' in html
     assert 'id="export-thread"' in html
     assert 'id="return-to-parent"' in html
+    assert 'id="worker-panel"' in html
+    assert 'id="worker-list"' in html
+    assert 'id="new-worker"' in html
+    assert 'id="worker-dialog"' in html
+    assert 'id="worker-task"' in html
+    assert 'id="worker-ownership"' in html
+    assert 'id="worker-dependencies"' in html
     assert 'id="new-task"' in html
     assert 'id="send-turn"' in html
     assert 'id="attach-files"' in html
@@ -100,6 +107,12 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "_codinal_context" in script
     assert "requestInput" in script
     assert "displayTurnInput" in script
+    assert "/workers" in script
+    assert "/steer" in script
+    assert "/cancel" in script
+    assert "/adopt" in script
+    assert "worker_status" in script
+    assert "renderWorkers" in script
     load_sessions = script.split(
         "async function loadSessions() {",
         1,

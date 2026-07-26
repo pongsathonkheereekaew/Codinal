@@ -563,7 +563,7 @@ select:focus-visible,
 .workspace {
   display: grid;
   min-width: 0;
-  grid-template-rows: 58px minmax(0, 1fr) auto;
+  grid-template-rows: 58px auto minmax(0, 1fr) auto;
   background: var(--bg);
 }
 
@@ -710,6 +710,89 @@ select:focus-visible,
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 9px;
+}
+
+.worker-panel {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+  padding: 7px 16px 8px;
+}
+
+.worker-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.worker-panel > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.worker-panel > header strong {
+  font-size: 11px;
+}
+
+.worker-panel > header span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.worker-list {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+}
+
+.worker-list:not(:empty) {
+  margin-top: 7px;
+}
+
+.worker-card {
+  display: flex;
+  min-width: min(360px, 80vw);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.worker-identity {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.worker-identity strong,
+.worker-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worker-identity strong {
+  font-size: 11px;
+}
+
+.worker-identity small {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.worker-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.worker-actions button {
+  min-height: 25px;
+  padding-inline: 8px;
+  font-size: 10px;
 }
 
 .conversation {

@@ -538,6 +538,57 @@ def test_side_conversation_preserves_safe_history_and_resets_authority(tmp_path)
     assert side.origin_session_id == "s1"
 
 
+def test_worker_session_starts_empty_and_inherits_no_authority(tmp_path):
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    original = SessionRecord(
+        session_id="s1",
+        workspace=str(prepared),
+        source_workspace=str(tmp_path),
+        model="parent-model",
+        mode="interactive",
+        messages=[{"role": "user", "content": "private context"}],
+        title="Parent",
+        extra_roots=[{"path": "/private", "writable": True}],
+        grants={"tools": ["write_file"], "commands": ["pytest"]},
+    )
+    store = MemorySessionStore(original)
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    result = service.create_worker_session(
+        "s1",
+        worker_id="worker-a",
+        child_session_id="session-worker-a",
+        model="worker-model",
+    )
+    worker = store.load("session-worker-a")
+
+    assert result["ok"] is True
+    assert worker is not None
+    assert worker.workspace == str(prepared)
+    assert worker.source_workspace == str(prepared)
+    assert worker.model == "worker-model"
+    assert worker.mode == "auto"
+    assert worker.agent == "worker"
+    assert worker.messages == []
+    assert worker.extra_roots == []
+    assert worker.grants == {}
+    assert worker.origin == "worker"
+    assert worker.origin_label == "worker-a"
+    assert worker.origin_session_id == "s1"
+    assert all(
+        item["session_id"] != "session-worker-a"
+        for item in service.list_sessions()
+    )
+    store.save(
+        replace(
+            worker,
+            messages=[{"role": "assistant", "content": "worker-only secret"}],
+        )
+    )
+    assert service.search_sessions("worker-only secret") == []
+
+
 def test_markdown_export_contains_only_visible_conversation_content(tmp_path):
     trusted_context = make_project_context_item(
         kind="file",

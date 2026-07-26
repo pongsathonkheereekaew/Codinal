@@ -85,6 +85,7 @@ class TurnCoordinator:
         self._executing: dict[str, set[str]] = {}
         self._waiting: set[str] = set()
         self._durability_tasks: set[asyncio.Task[Any]] = set()
+        self._outcomes: dict[str, dict[str, Any]] = {}
         self._snapshot_barrier = asyncio.Lock()
         self._shutting_down = False
 
@@ -198,6 +199,7 @@ class TurnCoordinator:
                     code_checkpoint_id=code_checkpoint_id,
                 )
             )
+            self._outcomes.pop(session_id, None)
             self._active[session_id] = task
             self._engines[session_id] = engine
         finally:
@@ -682,6 +684,12 @@ class TurnCoordinator:
                 if not _engine_is_quiescent(engine):
                     self._retired_engines.append(engine)
             if terminal is not None:
+                if (
+                    session_id not in self._outcomes
+                    and len(self._outcomes) >= 1024
+                ):
+                    self._outcomes.pop(next(iter(self._outcomes)))
+                self._outcomes[session_id] = dict(terminal)
                 await self._events.publish_session(session_id, terminal)
 
     async def _begin_code_checkpoint(
@@ -747,6 +755,19 @@ class TurnCoordinator:
         engine.request_interrupt()
         return True
 
+    def steer(self, session_id: str, text: str) -> bool:
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or len(text.encode("utf-8")) > 32 * 1024
+        ):
+            return False
+        engine = self._engines.get(session_id)
+        if not self.is_active(session_id) or engine is None:
+            return False
+        engine.queue_steering(text.strip(), source={"kind": "worker_steer"})
+        return True
+
     def is_active(self, session_id: str) -> bool:
         task = self._active.get(session_id)
         return (
@@ -754,6 +775,10 @@ class TurnCoordinator:
             or task is not None
             and not task.done()
         )
+
+    def outcome(self, session_id: str) -> dict[str, Any] | None:
+        outcome = self._outcomes.get(session_id)
+        return dict(outcome) if outcome is not None else None
 
     async def wait(self, session_id: str) -> bool:
         task = self._active.get(session_id)

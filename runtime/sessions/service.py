@@ -435,7 +435,10 @@ class SessionService:
                 "origin_session_id": record.origin_session_id,
             }
             for record in self._store.list(workspace=workspace)
-            if not record.session_id.startswith("__")
+            if (
+                not record.session_id.startswith("__")
+                and record.origin != "worker"
+            )
         ]
 
     def search_sessions(
@@ -447,7 +450,10 @@ class SessionService:
         results = []
         for hit in self._store.search(query, limit=limit):
             record = hit.record
-            if record.session_id.startswith("__"):
+            if (
+                record.session_id.startswith("__")
+                or record.origin == "worker"
+            ):
                 continue
             results.append(
                 {
@@ -486,6 +492,55 @@ class SessionService:
             origin="fork",
             title_prefix="Fork of ",
         )
+
+    def create_worker_session(
+        self,
+        session_id: str,
+        *,
+        worker_id: str,
+        child_session_id: str,
+        model: str,
+    ) -> dict[str, Any]:
+        """Create an authority-empty child session for one background worker."""
+        if (
+            session_id.startswith("__")
+            or child_session_id.startswith("__")
+            or self._store.load(child_session_id) is not None
+        ):
+            return {"ok": False, "error": "could not allocate session"}
+        parent = self._snapshot(session_id) or self._store.load(session_id)
+        if parent is None:
+            return {"ok": False, "error": "session not found"}
+        source_workspace = parent.workspace
+        try:
+            root = RootDir(source_workspace, writable=True)
+        except (OSError, ValueError):
+            return {"ok": False, "error": "workspace is unavailable"}
+        worker = SessionRecord(
+            session_id=child_session_id,
+            workspace=str(root.path),
+            workspace_device=root.device,
+            workspace_inode=root.inode,
+            source_workspace=str(root.path),
+            model=model,
+            mode=Mode.AUTO.value,
+            messages=[],
+            title=f"Worker · {worker_id}"[:120],
+            agent="worker",
+            message_count=0,
+            extra_roots=[],
+            grants={},
+            origin="worker",
+            origin_label=worker_id,
+            origin_session_id=parent.session_id,
+        )
+        self._store.save(worker)
+        return {
+            "ok": True,
+            "session_id": child_session_id,
+            "source_session_id": session_id,
+            "workspace": str(root.path),
+        }
 
     def side_conversation(
         self,

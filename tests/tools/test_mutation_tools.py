@@ -34,6 +34,7 @@ def build_registry(
     extra_roots: list[RootDir] | None = None,
     shell: object | None = None,
     mutation_recorder: object | None = None,
+    write_scope: tuple[str, ...] = (),
 ):
     roots = [
         RootDir(workspace, writable=True),
@@ -46,8 +47,32 @@ def build_registry(
         roots=roots,
         shell=fake_shell,
         mutation_recorder=mutation_recorder,
+        write_scope=write_scope,
     )
     return registry, fake_shell
+
+
+def test_worker_write_scope_rejects_unowned_direct_mutations(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    registry, _ = build_registry(tmp_path, write_scope=("src",))
+
+    owned = registry.execute(
+        "write_file",
+        {"path": "src/owned.py", "content": "safe\n"},
+    )
+    unowned = registry.execute(
+        "write_file",
+        {"path": "README.md", "content": "unsafe\n"},
+    )
+
+    assert owned["ok"] is True
+    assert unowned == {
+        "ok": False,
+        "error": "path is outside worker ownership",
+    }
+    assert not (tmp_path / "README.md").exists()
 
 
 def test_registers_strict_manifest_bound_mutation_tools(

@@ -214,6 +214,12 @@ class GitWorktreeService:
             "ok": True,
             "branch": record.session_branch,
             "base_commit": record.base_commit,
+            "head_commit": self._probe(
+                record.worktree_path,
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            ),
             "clean": not changes,
             "porcelain": result.stdout,
             "output_truncated": result.output_truncated,

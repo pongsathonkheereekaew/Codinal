@@ -23,6 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from runtime.path_scope import owns_path
+
 from .risk import (
     RiskClass,
     RiskOverrides,
@@ -130,10 +132,12 @@ class PermissionEngine:
     task_rules: dict[str, set[str]] = field(default_factory=dict)
     risk_overrides: Optional[RiskOverrides] = None
     roots: Optional[list] = None
+    write_scope: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         self.workspace_root = Path(self.workspace_root).expanduser().resolve()
         self.auto_allow_tools = set(self.auto_allow_tools)
+        self.write_scope = tuple(self.write_scope)
         if self.roots is None:
             metadata = os.stat(self.workspace_root, follow_symlinks=False)
             self.roots = [
@@ -207,6 +211,19 @@ class PermissionEngine:
 
         if is_write:
             path = arguments.get("path")
+            if (
+                path is not None
+                and self.write_scope
+                and not owns_path(
+                    self.workspace_root,
+                    self.write_scope,
+                    path,
+                )
+            ):
+                return Decision(
+                    False,
+                    f"path is outside worker ownership: {path}",
+                )
             if path is not None and not self._under_writable_root(path):
                 return Decision(False, f"path is not in a writable directory: {path}")
 

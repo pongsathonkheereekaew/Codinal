@@ -15,6 +15,7 @@ from runtime.sandbox import (
     SandboxUnavailableError,
 )
 from runtime.sessions import RootDir
+from runtime.path_scope import owns_path
 
 from .registry import ToolRegistry
 
@@ -69,9 +70,10 @@ def register_mutation_tools(
     roots: list[RootDir],
     shell: ShellExecutor,
     mutation_recorder: MutationRecorder | None = None,
+    write_scope: tuple[str, ...] = (),
 ) -> ToolRegistry:
     """Attach the built-in consequential tools to an existing registry."""
-    paths = _WritablePaths(roots)
+    paths = _WritablePaths(roots, write_scope=write_scope)
 
     def write_file(path: str, content: str) -> dict[str, Any]:
         if not isinstance(content, str):
@@ -261,10 +263,16 @@ def _record_file_preimage(
 
 
 class _WritablePaths:
-    def __init__(self, roots: list[RootDir]) -> None:
+    def __init__(
+        self,
+        roots: list[RootDir],
+        *,
+        write_scope: tuple[str, ...] = (),
+    ) -> None:
         if not roots:
             raise ValueError("at least one workspace root is required")
         self._roots = roots
+        self._write_scope = tuple(write_scope)
 
     def target(self, value: Any) -> tuple[Optional[_Target], str]:
         if not isinstance(value, str) or not 1 <= len(value) <= 4096:
@@ -328,6 +336,12 @@ class _WritablePaths:
             if not stat.S_ISDIR(metadata.st_mode):
                 return None, "parent is not a directory"
         target_path = parent / parts[-1]
+        if self._write_scope and not owns_path(
+            primary,
+            self._write_scope,
+            target_path,
+        ):
+            return None, "path is outside worker ownership"
         try:
             target_metadata = os.stat(
                 target_path,

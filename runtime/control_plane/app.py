@@ -40,6 +40,12 @@ from runtime.turns import (
     SessionNotFoundError,
     SessionWorkspaceError,
 )
+from runtime.workers import (
+    WorkerHello,
+    WorkerProtocolError,
+    negotiate,
+    worker_to_dict,
+)
 
 from .auth import (
     WEBSOCKET_PROTOCOL,
@@ -58,6 +64,7 @@ MAX_CHECKPOINT_RESTORE_BODY_BYTES = 1024
 MAX_INTERACTION_BODY_BYTES = 32 * 1024
 MAX_SESSION_FORK_BODY_BYTES = 1024
 MAX_ROOT_BODY_BYTES = 8 * 1024
+MAX_WORKER_BODY_BYTES = 64 * 1024
 
 
 class SettingsView(Protocol):
@@ -345,6 +352,7 @@ class ControlPlaneServices(Protocol):
     restores: RestoreControl | None
     approvals: ApprovalControl | None
     interactions: InteractionControl | None
+    workers: Any | None
 
 
 def create_control_plane_app(
@@ -362,8 +370,14 @@ def create_control_plane_app(
             if restores is not None:
                 await asyncio.to_thread(restores.reconcile)
             await services.turns.recover()
+            workers = getattr(services, "workers", None)
+            if workers is not None:
+                await workers.recover()
             yield
         finally:
+            workers = getattr(services, "workers", None)
+            if workers is not None:
+                await workers.shutdown()
             quiesced = await services.turns.shutdown()
             if quiesced is not False:
                 mcp = getattr(services, "mcp", None)
@@ -378,6 +392,8 @@ def create_control_plane_app(
                 interactions = getattr(services, "interactions", None)
                 if interactions is not None:
                     interactions.close()
+                if workers is not None:
+                    workers.store.close()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -855,6 +871,127 @@ def create_control_plane_app(
             ) from None
         return JSONResponse(result, status_code=202)
 
+    @app.get("/v1/sessions/{session_id}/workers")
+    async def list_workers(session_id: str) -> list[dict[str, object]]:
+        _validate_public_session_id(session_id)
+        workers = getattr(services, "workers", None)
+        if workers is None:
+            return []
+        records = await asyncio.to_thread(workers.list, session_id)
+        return [worker_to_dict(record) for record in records]
+
+    @app.post("/v1/workers/negotiate")
+    async def negotiate_worker(request: Request) -> dict[str, object]:
+        body = await _read_bounded_object(
+            request,
+            limit=16 * 1024,
+            detail="invalid worker handshake",
+        )
+        if (
+            set(body) != {"version", "worker_kind", "capabilities"}
+            or not isinstance(body.get("version"), str)
+            or not isinstance(body.get("worker_kind"), str)
+            or not isinstance(body.get("capabilities"), list)
+            or any(
+                not isinstance(capability, str)
+                for capability in body.get("capabilities", [])
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid worker handshake",
+            )
+        if body["worker_kind"] == "remote":
+            raise HTTPException(
+                status_code=501,
+                detail="remote worker transport is unavailable",
+            )
+        try:
+            capabilities = negotiate(
+                WorkerHello(
+                    version=body["version"],
+                    worker_kind=body["worker_kind"],
+                    capabilities=frozenset(body["capabilities"]),
+                )
+            )
+        except WorkerProtocolError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        return {
+            "version": body["version"],
+            "worker_kind": body["worker_kind"],
+            "capabilities": sorted(capabilities),
+        }
+
+    @app.post("/v1/sessions/{session_id}/workers")
+    async def create_worker(
+        session_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _validate_public_session_id(session_id)
+        workers = getattr(services, "workers", None)
+        if workers is None:
+            raise HTTPException(
+                status_code=503,
+                detail="workers are unavailable",
+            )
+        body = await _read_worker_create(request)
+        try:
+            record = await workers.create(
+                session_id,
+                task=body["task"],
+                ownership=tuple(body["ownership"]),
+                dependencies=tuple(body.get("dependencies", [])),
+                model=body["model"],
+                worker_kind=body.get("worker_kind", "local"),
+            )
+        except (KeyError, SessionBusyError, ValueError) as error:
+            raise HTTPException(
+                status_code=409,
+                detail=str(error),
+            ) from None
+        return JSONResponse(worker_to_dict(record), status_code=202)
+
+    @app.post("/v1/workers/{worker_id}/steer")
+    async def steer_worker(
+        worker_id: str,
+        request: Request,
+    ) -> dict[str, object]:
+        _validate_public_session_id(worker_id)
+        workers = getattr(services, "workers", None)
+        if workers is None:
+            raise HTTPException(status_code=503, detail="workers are unavailable")
+        text = await _read_worker_steer(request)
+        try:
+            ok = workers.steer(worker_id, text)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="worker not found") from None
+        return {"ok": ok, "worker_id": worker_id}
+
+    @app.post("/v1/workers/{worker_id}/cancel")
+    async def cancel_worker(worker_id: str) -> dict[str, object]:
+        _validate_public_session_id(worker_id)
+        workers = getattr(services, "workers", None)
+        if workers is None:
+            raise HTTPException(status_code=503, detail="workers are unavailable")
+        try:
+            ok = await workers.cancel(worker_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="worker not found") from None
+        return {"ok": ok, "worker_id": worker_id}
+
+    @app.post("/v1/workers/{worker_id}/adopt")
+    async def adopt_worker(worker_id: str) -> dict[str, object]:
+        _validate_public_session_id(worker_id)
+        workers = getattr(services, "workers", None)
+        if workers is None:
+            raise HTTPException(status_code=503, detail="workers are unavailable")
+        try:
+            return await workers.adopt(worker_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="worker not found") from None
+        except (GitWorkspaceError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+
     @app.post("/v1/sessions/{session_id}/interrupt")
     async def interrupt_turn(session_id: str) -> dict[str, Any]:
         _validate_public_session_id(session_id)
@@ -1188,6 +1325,120 @@ _CONTEXT_FINGERPRINT = re.compile(r"[a-f0-9]{64}")
 def _validate_public_session_id(session_id: str) -> None:
     if session_id.startswith("__") or _SESSION_ID.fullmatch(session_id) is None:
         raise HTTPException(status_code=400, detail="invalid session id")
+
+
+async def _read_worker_create(request: Request) -> dict[str, Any]:
+    body = await _read_bounded_object(
+        request,
+        limit=MAX_WORKER_BODY_BYTES,
+        detail="invalid worker payload",
+    )
+    expected = {
+        "task",
+        "ownership",
+        "dependencies",
+        "model",
+        "worker_kind",
+    }
+    ownership = body.get("ownership")
+    dependencies = body.get("dependencies", [])
+    if (
+        not {"task", "ownership", "model"} <= set(body) <= expected
+        or not _valid_utf8_text(
+            body.get("task"),
+            minimum=1,
+            maximum=32 * 1024,
+        )
+        or not isinstance(ownership, list)
+        or not 1 <= len(ownership) <= 32
+        or any(not isinstance(path, str) for path in ownership)
+        or len(set(ownership)) != len(ownership)
+        or any(not _valid_worker_path(path) for path in ownership)
+        or not isinstance(dependencies, list)
+        or len(dependencies) > 32
+        or any(not isinstance(item, str) for item in dependencies)
+        or len(set(dependencies)) != len(dependencies)
+        or any(
+            not isinstance(item, str)
+            or not item.startswith("worker-")
+            or _SESSION_ID.fullmatch(item) is None
+            for item in dependencies
+        )
+        or not _valid_utf8_text(
+            body.get("model"),
+            minimum=1,
+            maximum=256,
+        )
+        or body.get("worker_kind", "local") != "local"
+    ):
+        raise HTTPException(status_code=400, detail="invalid worker payload")
+    return body
+
+
+async def _read_worker_steer(request: Request) -> str:
+    body = await _read_bounded_object(
+        request,
+        limit=32 * 1024,
+        detail="invalid worker steering",
+    )
+    text = body.get("text")
+    if (
+        set(body) != {"text"}
+        or not isinstance(text, str)
+        or not text.strip()
+        or not _valid_utf8_text(text, minimum=1, maximum=32 * 1024)
+    ):
+        raise HTTPException(status_code=400, detail="invalid worker steering")
+    return text.strip()
+
+
+async def _read_bounded_object(
+    request: Request,
+    *,
+    limit: int,
+    detail: str,
+) -> dict[str, Any]:
+    try:
+        chunks = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                raise HTTPException(status_code=400, detail=detail)
+            chunks.append(chunk)
+        body = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail=detail) from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail=detail)
+    return body
+
+
+def _valid_worker_path(value: Any) -> bool:
+    if (
+        not isinstance(value, str)
+        or not _valid_utf8_text(value, minimum=1, maximum=4096)
+        or value.startswith("/")
+        or "\\" in value
+    ):
+        return False
+    parts = value.split("/")
+    return all(part not in {"", ".", ".."} for part in parts)
+
+
+def _valid_utf8_text(
+    value: Any,
+    *,
+    minimum: int,
+    maximum: int,
+) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    return minimum <= size <= maximum
 
 
 async def _read_turn(request: Request) -> dict[str, Any]:
