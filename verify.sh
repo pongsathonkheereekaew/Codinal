@@ -87,7 +87,9 @@ if ! "$PYTHON_BIN" -c "import fastapi, httpx, pytest, uvicorn, yaml, jsonschema"
   echo "FAIL: test dependencies missing; install requirements-dev.txt" >&2
   exit 1
 fi
-"$PYTHON_BIN" -m pytest -q --timeout=120 --timeout-method=thread -p no:cacheprovider
+"$PYTHON_BIN" -X faulthandler -m pytest -q \
+  --timeout=90 --timeout-method=thread \
+  -p no:cacheprovider
 echo "product tests: OK"
 
 echo "== desktop shell (macOS) =="
