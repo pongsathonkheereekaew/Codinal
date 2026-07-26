@@ -394,6 +394,90 @@ def test_production_attachments_survive_restart_and_model_switch(tmp_path):
     assert restarted.sessions.messages("attachment-session") == persisted
 
 
+def test_production_session_search_and_fork_survive_restart(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id="search-source",
+            workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            title="Retry investigation",
+            messages=[
+                {"role": "user", "content": "Find retry jitter"},
+                {"role": "assistant", "content": "Inspect backoff.py"},
+                {"role": "user", "content": "Now change it"},
+            ],
+            grants={"tools": ["shell"]},
+        )
+    )
+    store.close()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=AttachmentCaptureProvider(),
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        found = client.get(
+            "/v1/sessions/search",
+            headers=AUTH,
+            params={"q": "jitter"},
+        )
+        forked = client.post(
+            "/v1/sessions/search-source/fork",
+            headers=AUTH,
+            json={"message_index": 1},
+        )
+
+    assert found.status_code == 200
+    assert found.json()[0]["match_message_index"] == 0
+    assert found.json()[0]["match_excerpt"] == "Find retry jitter"
+    assert forked.status_code == 200
+    fork_id = forked.json()["session_id"]
+
+    restarted = build_services(
+        config,
+        provider=AttachmentCaptureProvider(),
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=restarted)
+    ) as client:
+        persisted_search = client.get(
+            "/v1/sessions/search",
+            headers=AUTH,
+            params={"q": "backoff.py"},
+        )
+        persisted_messages = client.get(
+            f"/v1/sessions/{fork_id}/messages",
+            headers=AUTH,
+        )
+
+    assert fork_id in {
+        result["session_id"] for result in persisted_search.json()
+    }
+    assert persisted_messages.json() == [
+        {"role": "user", "content": "Find retry jitter"},
+        {"role": "assistant", "content": "Inspect backoff.py"},
+    ]
+    reopened_store = ConversationStore(data_dir)
+    fork_record = reopened_store.load(fork_id)
+    reopened_store.close()
+    assert fork_record is not None
+    assert fork_record.grants == {}
+    assert fork_record.turn_checkpoint == TurnCheckpoint()
+
+
 def test_workspace_switch_uses_a_new_session_and_permission_root(tmp_path):
     workspace_a = tmp_path / "workspace-a"
     workspace_b = tmp_path / "workspace-b"

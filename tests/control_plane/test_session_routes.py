@@ -57,6 +57,7 @@ class FakeSessions:
         self.flags = []
         self.models = []
         self.deleted = []
+        self.forked = []
         self.export_too_large = False
 
     def list_sessions(self, *, workspace=None):
@@ -70,6 +71,17 @@ class FakeSessions:
 
     def messages(self, session_id):
         return [{"role": "user", "content": session_id}]
+
+    def search_sessions(self, query, *, limit):
+        return [
+            {
+                "session_id": "session-1",
+                "title": "Inspect runtime",
+                "workspace": "/tmp/project",
+                "match_excerpt": f"{query}:{limit}",
+                "match_message_index": 0,
+            }
+        ]
 
     def roots(self, _session_id):
         return [{"path": "/tmp/project", "writable": True, "primary": True}]
@@ -89,6 +101,15 @@ class FakeSessions:
     def delete(self, session_id):
         self.deleted.append(session_id)
         return {"ok": True, "session_id": session_id}
+
+    def fork(self, session_id, *, message_index):
+        self.forked.append((session_id, message_index))
+        return {
+            "ok": True,
+            "session_id": "session-fork",
+            "source_session_id": session_id,
+            "message_count": message_index + 1,
+        }
 
     def export(self):
         if self.export_too_large:
@@ -180,6 +201,98 @@ def test_session_routes_list_messages_and_roots():
         {"role": "user", "content": "session-1"}
     ]
     assert roots.json()[0]["primary"] is True
+
+
+def test_session_search_is_authenticated_and_bounded():
+    client, sessions, _ = make_client()
+    with client:
+        unauthorized = client.get(
+            "/v1/sessions/search",
+            params={"q": "runtime"},
+        )
+        found = client.get(
+            "/v1/sessions/search",
+            headers=AUTH,
+            params={"q": "runtime", "limit": 25},
+        )
+        empty = client.get(
+            "/v1/sessions/search",
+            headers=AUTH,
+            params={"q": ""},
+        )
+        too_long = client.get(
+            "/v1/sessions/search",
+            headers=AUTH,
+            params={"q": "x" * 257},
+        )
+        too_many = client.get(
+            "/v1/sessions/search",
+            headers=AUTH,
+            params={"q": "runtime", "limit": 101},
+        )
+
+    assert unauthorized.status_code == 401
+    assert found.status_code == 200
+    assert found.json()[0]["match_excerpt"] == "runtime:25"
+    assert empty.status_code == 400
+    assert too_long.status_code == 400
+    assert too_many.status_code == 400
+
+
+def test_session_search_offloads_synchronous_storage(monkeypatch):
+    client, _sessions, _ = make_client()
+    calls = []
+
+    async def offload(function, *args, **kwargs):
+        calls.append((function.__name__, args, kwargs))
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr("runtime.control_plane.app.asyncio.to_thread", offload)
+    with client:
+        response = client.get(
+            "/v1/sessions/search",
+            headers=AUTH,
+            params={"q": "runtime", "limit": 12},
+        )
+
+    assert response.status_code == 200
+    assert calls == [
+        ("search_sessions", ("runtime",), {"limit": 12})
+    ]
+
+
+def test_session_fork_refuses_active_turn_then_forks_selected_history():
+    client, sessions, turns = make_client()
+    turns.active.add("session-1")
+    with client:
+        busy = client.post(
+            "/v1/sessions/session-1/fork",
+            headers=AUTH,
+            json={"message_index": 3},
+        )
+        turns.active.clear()
+        forked = client.post(
+            "/v1/sessions/session-1/fork",
+            headers=AUTH,
+            json={"message_index": 3},
+        )
+        invalid = client.post(
+            "/v1/sessions/session-1/fork",
+            headers=AUTH,
+            json={"message_index": True},
+        )
+        oversized = client.post(
+            "/v1/sessions/session-1/fork",
+            headers=AUTH,
+            content=b"{" + (b"x" * 1024) + b"}",
+        )
+
+    assert busy.status_code == 409
+    assert forked.status_code == 200
+    assert forked.json()["session_id"] == "session-fork"
+    assert sessions.forked == [("session-1", 3)]
+    assert invalid.status_code == 400
+    assert oversized.status_code == 400
 
 
 def test_session_patch_is_strict_and_delegates_metadata_changes():

@@ -6,6 +6,7 @@ from runtime.sessions import (
     RootDir,
     SessionCleanupError,
     SessionRecord,
+    SessionSearchHit,
     SessionService,
     TurnCheckpoint,
 )
@@ -27,6 +28,24 @@ class MemorySessionStore:
         if workspace is not None:
             records = [record for record in records if record.workspace == workspace]
         return records
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> list[SessionSearchHit]:
+        lowered = query.casefold()
+        hits = []
+        for record in self.records.values():
+            for index, message in enumerate(record.messages):
+                content = str(message.get("content", ""))
+                if lowered in content.casefold():
+                    hits.append(
+                        SessionSearchHit(record, content, index)
+                    )
+                    break
+        return hits[:limit]
 
     def rename(self, session_id: str, title: str) -> bool:
         record = self.records.get(session_id)
@@ -338,6 +357,184 @@ def test_list_sessions_returns_public_metadata_and_hides_internal_records(tmp_pa
             "origin_label": None,
         }
     ]
+
+
+def test_search_sessions_returns_match_location_and_public_metadata(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="interactive",
+        title="Retry work",
+        messages=[
+            {"role": "user", "content": "Find the retry jitter"},
+            {"role": "assistant", "content": "Found it"},
+        ],
+        message_count=2,
+    )
+    service = SessionService(
+        MemorySessionStore(record),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    assert service.search_sessions("jitter", limit=20) == [
+        {
+            "session_id": "s1",
+            "title": "Retry work",
+            "workspace": str(tmp_path),
+            "agent": "code",
+            "model": "test-model",
+            "mode": "interactive",
+            "updated_at": None,
+            "messages": 2,
+            "pinned": False,
+            "archived": False,
+            "origin": None,
+            "origin_label": None,
+            "match_excerpt": "Find the retry jitter",
+            "match_message_index": 0,
+        }
+    ]
+
+
+def test_fork_copies_history_through_selected_message_without_authority(
+    tmp_path,
+):
+    original = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path / "sandbox"),
+        source_workspace=str(tmp_path),
+        model="test-model",
+        mode="plan",
+        title="Original",
+        agent="review",
+        messages=[
+            {"role": "user", "content": "one"},
+            {"role": "assistant", "content": "two"},
+            {"role": "user", "content": "three"},
+        ],
+        extra_roots=[
+            {"path": str(tmp_path / "docs"), "writable": False}
+        ],
+        grants={"tools": ["shell"]},
+        pinned=True,
+        archived=True,
+        turn_checkpoint=TurnCheckpoint.executing({"call-1"}),
+    )
+    store = MemorySessionStore(original)
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    result = service.fork(
+        "s1",
+        message_index=1,
+        new_session_id="session-fork",
+    )
+    forked = store.load("session-fork")
+
+    assert result == {
+        "ok": True,
+        "session_id": "session-fork",
+        "source_session_id": "s1",
+        "message_count": 2,
+        "session": {
+            "session_id": "session-fork",
+            "title": "Fork of Original",
+            "workspace": str(tmp_path),
+            "agent": "review",
+            "model": "test-model",
+            "mode": "plan",
+            "updated_at": None,
+            "messages": 2,
+            "pinned": False,
+            "archived": False,
+            "origin": "fork",
+            "origin_label": "Original",
+        },
+    }
+    assert forked is not None
+    assert forked.messages == original.messages[:2]
+    assert forked.messages is not original.messages
+    assert forked.workspace == str(tmp_path)
+    assert forked.source_workspace == str(tmp_path)
+    assert forked.extra_roots == []
+    assert forked.grants == {}
+    assert forked.pinned is False
+    assert forked.archived is False
+    assert forked.origin == "fork"
+    assert forked.origin_label == "Original"
+    assert forked.turn_checkpoint == TurnCheckpoint()
+
+
+def test_fork_rejects_missing_source_or_invalid_message_index(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="interactive",
+        messages=[{"role": "user", "content": "one"}],
+    )
+    service = SessionService(
+        MemorySessionStore(record),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    assert service.fork("missing", message_index=0)["ok"] is False
+    assert service.fork("s1", message_index=1)["ok"] is False
+
+
+def test_fork_rejects_incomplete_tool_transcript_and_preserves_source_scratch(
+    tmp_path,
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    scratch = tmp_path / "scratch"
+    source_scratch = scratch / "source-session"
+    source_scratch.mkdir(parents=True)
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(source_scratch),
+        source_workspace=str(source),
+        model="test-model",
+        mode="interactive",
+        messages=[
+            {"role": "user", "content": "inspect"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call-1"}],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "content": "done",
+            },
+            {"role": "assistant", "content": "complete"},
+        ],
+        extra_roots=[
+            {"path": str(tmp_path / "private"), "writable": True}
+        ],
+    )
+    store = MemorySessionStore(record)
+    service = SessionService(store, scratch_base=scratch)
+
+    assert service.fork("s1", message_index=1) == {
+        "ok": False,
+        "error": "invalid fork boundary",
+    }
+    result = service.fork(
+        "s1",
+        message_index=3,
+        new_session_id="forked",
+    )
+    assert result["ok"] is True
+    assert store.load("forked").extra_roots == []
+
+    assert service.delete("forked") == {
+        "ok": True,
+        "session_id": "forked",
+    }
+    assert source_scratch.is_dir()
+    assert store.load("s1") is not None
 
 
 def test_rename_normalizes_title_and_rejects_internal_session(tmp_path):

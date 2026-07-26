@@ -55,6 +55,7 @@ DEFAULT_ALLOWED_ORIGINS = (
 )
 MAX_CHECKPOINT_RESTORE_BODY_BYTES = 1024
 MAX_INTERACTION_BODY_BYTES = 32 * 1024
+MAX_SESSION_FORK_BODY_BYTES = 1024
 
 
 class SettingsView(Protocol):
@@ -129,6 +130,13 @@ class SessionControl(Protocol):
         workspace: str | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    def search_sessions(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
     def messages(self, session_id: str) -> list[dict[str, Any]]: ...
 
     def export(self) -> dict[str, Any]: ...
@@ -152,6 +160,13 @@ class SessionControl(Protocol):
     ) -> dict[str, Any]: ...
 
     def delete(self, session_id: str) -> dict[str, Any]: ...
+
+    def fork(
+        self,
+        session_id: str,
+        *,
+        message_index: int,
+    ) -> dict[str, Any]: ...
 
     def restore_conversation(
         self,
@@ -325,6 +340,26 @@ def create_control_plane_app(
             raise HTTPException(status_code=400, detail="invalid workspace")
         return services.sessions.list_sessions(workspace=workspace)
 
+    @app.get("/v1/sessions/search")
+    async def search_sessions(
+        q: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if (
+            not 1 <= len(q.strip()) <= 256
+            or isinstance(limit, bool)
+            or not 1 <= limit <= 100
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid session search",
+            )
+        return await asyncio.to_thread(
+            services.sessions.search_sessions,
+            q.strip(),
+            limit=limit,
+        )
+
     @app.get("/v1/data/export")
     async def export_data() -> JSONResponse:
         try:
@@ -434,6 +469,36 @@ def create_control_plane_app(
             )
         if not result.get("ok"):
             raise HTTPException(status_code=404, detail="session not found")
+        return result
+
+    @app.post("/v1/sessions/{session_id}/fork")
+    async def fork_session(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        message_index = await _read_session_fork(request)
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: services.sessions.fork(
+                    session_id,
+                    message_index=message_index,
+                ),
+            )
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        if not result.get("ok"):
+            status = (
+                400
+                if result.get("error")
+                in {"invalid message index", "invalid fork boundary"}
+                else 404
+            )
+            raise HTTPException(
+                status_code=status,
+                detail=result.get("error", "session not found"),
+            )
         return result
 
     @app.get("/v1/secrets/providers")
@@ -1049,6 +1114,38 @@ async def _read_session_update(request: Request) -> dict[str, Any]:
     ):
         raise HTTPException(status_code=400, detail="invalid session update")
     return body
+
+
+async def _read_session_fork(request: Request) -> int:
+    try:
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_SESSION_FORK_BODY_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="invalid session fork",
+                )
+            chunks.append(chunk)
+        body = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid session fork",
+        ) from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"message_index"}
+        or isinstance(body["message_index"], bool)
+        or not isinstance(body["message_index"], int)
+        or body["message_index"] < 0
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid session fork",
+        )
+    return body["message_index"]
 
 
 async def _read_mcp_server(request: Request) -> MCPServerDef:

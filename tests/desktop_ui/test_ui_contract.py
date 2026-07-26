@@ -59,6 +59,13 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "const sessionId = state.sessionId" in script
     assert "state.sessionId !== sessionId" in script
     assert "interactionSession" in script
+    assert "/v1/sessions/search" in script
+    assert "/fork" in script
+    assert "message_index" in script
+    assert "Fork task from here" in script
+    assert "isSafeForkBoundary(index)" in script
+    assert "state.highlightedMessageIndex = null" in script
+    assert "sessionSelectionGeneration" in script
     load_sessions = script.split(
         "async function loadSessions() {",
         1,

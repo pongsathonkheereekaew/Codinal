@@ -3,6 +3,7 @@
 from .models import (
     RootDir,
     SessionRecord,
+    SessionSearchHit,
     TurnCheckpoint,
     TurnStatus,
 )
@@ -13,6 +14,7 @@ __all__ = [
     "RootDir",
     "SessionCleanupError",
     "SessionRecord",
+    "SessionSearchHit",
     "SessionService",
     "TurnCheckpoint",
     "TurnStatus",

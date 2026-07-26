@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 from runtime.sessions import (
     SessionRecord,
+    SessionSearchHit,
     TurnCheckpoint,
     TurnStatus,
 )
@@ -174,6 +175,12 @@ class ConversationStore:
             check_same_thread=False,
         )
         self._connection.row_factory = sqlite3.Row
+        self._connection.create_function(
+            "codinal_message_text",
+            1,
+            _message_search_text,
+            deterministic=True,
+        )
         self._connection.execute("PRAGMA foreign_keys = ON")
         # One sidecar owns this database and serializes access with _lock.
         # DELETE journaling avoids leaving a persistent WAL with weaker
@@ -531,6 +538,105 @@ class ConversationStore:
             for row in rows
         ]
 
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+    ) -> list[SessionSearchHit]:
+        if (
+            not isinstance(query, str)
+            or not 1 <= len(query.strip()) <= 256
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 100
+        ):
+            raise ValueError("invalid session search")
+        normalized = query.strip()
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT sessions.*,
+                    COUNT(messages.sequence) AS message_count
+                FROM sessions
+                LEFT JOIN messages USING (session_id)
+                WHERE substr(sessions.session_id, 1, 2) != '__'
+                    AND (
+                        instr(
+                            lower(COALESCE(sessions.title, '')),
+                            lower(?)
+                        ) > 0
+                        OR instr(
+                            lower(COALESCE(
+                                sessions.source_workspace,
+                                sessions.workspace
+                            )),
+                            lower(?)
+                        ) > 0
+                        OR EXISTS (
+                            SELECT 1
+                            FROM messages AS matched
+                            WHERE matched.session_id = sessions.session_id
+                                AND json_extract(
+                                    matched.payload,
+                                    '$.role'
+                                ) IN ('user', 'assistant')
+                                AND instr(
+                                    lower(codinal_message_text(
+                                        matched.payload
+                                    )),
+                                    lower(?)
+                                ) > 0
+                        )
+                    )
+                GROUP BY sessions.session_id
+                ORDER BY sessions.pinned DESC, sessions.updated_at DESC
+                LIMIT ?
+                """,
+                (normalized, normalized, normalized, limit),
+            ).fetchall()
+            hits = []
+            for row in rows:
+                matched = self._connection.execute(
+                    """
+                    SELECT sequence, payload
+                    FROM messages
+                    WHERE session_id = ?
+                        AND json_extract(
+                            payload,
+                            '$.role'
+                        ) IN ('user', 'assistant')
+                        AND instr(
+                            lower(codinal_message_text(payload)),
+                            lower(?)
+                        ) > 0
+                    ORDER BY sequence
+                    LIMIT 1
+                    """,
+                    (row["session_id"], normalized),
+                ).fetchone()
+                excerpt = None
+                message_index = None
+                if matched is not None:
+                    message = _decode_json(
+                        matched["payload"],
+                        expected=dict,
+                    )
+                    excerpt = _message_excerpt(message)
+                    message_index = int(matched["sequence"])
+                hits.append(
+                    SessionSearchHit(
+                        record=_record_from_row(
+                            row,
+                            messages=[],
+                            message_count=int(row["message_count"]),
+                        ),
+                        excerpt=excerpt,
+                        message_index=message_index,
+                    )
+                )
+        return hits
+
     def export_records(self) -> list[SessionRecord]:
         """Read complete records under one lock for a consistent export."""
         with self._lock:
@@ -682,6 +788,44 @@ class ConversationStore:
             """,
             (path,),
         )
+
+
+def _message_visible_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        parts = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text" and isinstance(
+                part.get("text"), str
+            ):
+                parts.append(part["text"])
+            elif part.get("type") == "file":
+                file = part.get("file")
+                if isinstance(file, dict) and isinstance(
+                    file.get("filename"), str
+                ):
+                    parts.append(file["filename"])
+        text = " ".join(parts)
+    else:
+        text = ""
+    return " ".join(text.split())
+
+
+def _message_search_text(payload: str) -> str:
+    try:
+        message = json.loads(payload)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    return _message_visible_text(message) if isinstance(message, dict) else ""
+
+
+def _message_excerpt(message: dict[str, Any]) -> str | None:
+    normalized = _message_visible_text(message)
+    return normalized[:240] if normalized else None
 
 
 def _validate_session_id(session_id: str) -> None:

@@ -30,6 +30,10 @@ const state = {
   attachmentGeneration: 0,
   attachmentQueue: Promise.resolve(),
   attachmentReader: null,
+  sessionSearchGeneration: 0,
+  sessionSearchTimer: null,
+  highlightedMessageIndex: null,
+  sessionSelectionGeneration: 0,
 };
 
 const el = Object.fromEntries(
@@ -140,7 +144,14 @@ async function loadSettings() {
 }
 
 async function loadSessions() {
-  state.sessions = await api("/v1/sessions");
+  const query = el["session-search"].value.trim();
+  const generation = ++state.sessionSearchGeneration;
+  const path = query
+    ? `/v1/sessions/search?q=${encodeURIComponent(query)}&limit=50`
+    : "/v1/sessions";
+  const sessions = await api(path);
+  if (generation !== state.sessionSearchGeneration) return;
+  state.sessions = sessions;
   const active = state.sessions.find(
     (session) => session.session_id === state.sessionId
   );
@@ -160,11 +171,9 @@ function syncAgentMode(session) {
 
 function renderSessions() {
   const query = el["session-search"].value.trim().toLowerCase();
-  const sessions = state.sessions.filter((session) => {
-    if (session.archived) return false;
-    return !query || `${session.title} ${session.workspace}`
-      .toLowerCase().includes(query);
-  });
+  const sessions = state.sessions.filter(
+    (session) => query || !session.archived
+  );
   el["session-list"].replaceChildren();
   if (!sessions.length) {
     el["session-list"].append(
@@ -181,7 +190,13 @@ function renderSessions() {
     button.append(
       node("strong", "", session.title || "New task"),
       node("time", "", formatAge(session.updated_at)),
-      node("small", "", basename(session.workspace))
+      node(
+        "small",
+        "",
+        session.match_excerpt
+          ? `${basename(session.workspace)} · ${session.match_excerpt}`
+          : `${basename(session.workspace)}${session.archived ? " · Archived" : ""}`
+      )
     );
     button.addEventListener("click", () => selectSession(session));
     const menu = node("button", "icon-button session-menu-button", "•••");
@@ -191,6 +206,14 @@ function renderSessions() {
     item.append(button, menu);
     el["session-list"].append(item);
   }
+}
+
+function scheduleSessionSearch() {
+  window.clearTimeout(state.sessionSearchTimer);
+  state.sessionSearchGeneration += 1;
+  state.sessionSearchTimer = window.setTimeout(() => {
+    loadSessions().catch((error) => toast(error.message, "error"));
+  }, 180);
 }
 
 function openSessionOptions(session) {
@@ -220,9 +243,19 @@ async function patchManagedSession(update) {
 }
 
 async function selectSession(session) {
-  if (state.sessionId === session.session_id) return;
+  state.highlightedMessageIndex = Number.isInteger(
+    session.match_message_index
+  )
+    ? session.match_message_index
+    : null;
+  if (state.sessionId === session.session_id) {
+    renderConversation();
+    return;
+  }
+  const selectionGeneration = ++state.sessionSelectionGeneration;
+  const sessionId = session.session_id;
   disconnectSocket();
-  state.sessionId = session.session_id;
+  state.sessionId = sessionId;
   state.workspace = session.workspace;
   state.messages = [];
   state.checkpoints = [];
@@ -237,9 +270,14 @@ async function selectSession(session) {
   renderConversation();
   renderCheckpoints();
   try {
-    state.messages = await api(
-      `/v1/sessions/${encodeURIComponent(state.sessionId)}/messages`
+    const messages = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages`
     );
+    if (
+      state.sessionId !== sessionId
+      || state.sessionSelectionGeneration !== selectionGeneration
+    ) return;
+    state.messages = messages;
     renderConversation();
     connectSocket();
     await Promise.all([
@@ -247,8 +285,15 @@ async function selectSession(session) {
       loadPendingInteractions(),
       loadDiff(false),
     ]);
+    if (
+      state.sessionId !== sessionId
+      || state.sessionSelectionGeneration !== selectionGeneration
+    ) return;
   } catch (error) {
-    toast(error.message, "error");
+    if (
+      state.sessionId === sessionId
+      && state.sessionSelectionGeneration === selectionGeneration
+    ) toast(error.message, "error");
   }
 }
 
@@ -282,8 +327,10 @@ function switchWorkspace(workspace) {
   }
   disconnectSocket();
   state.sessionId = `session-${crypto.randomUUID()}`;
+  state.sessionSelectionGeneration += 1;
   state.workspace = workspace;
   state.messages = [];
+  state.highlightedMessageIndex = null;
   invalidateAttachments();
   state.liveAssistant = null;
   state.activities.clear();
@@ -430,16 +477,28 @@ async function finishTurn() {
 }
 
 function renderConversation() {
-  const visible = state.messages.filter(
-    (message) => message.role === "user" || message.role === "assistant"
-  );
+  const visible = state.messages
+    .map((message, index) => ({ message, index }))
+    .filter(
+      ({ message }) => (
+        message.role === "user" || message.role === "assistant"
+      )
+    );
   el["empty-state"].classList.toggle(
     "is-hidden",
     Boolean(visible.length || state.liveAssistant || state.activities.size)
   );
   el["message-list"].replaceChildren();
-  for (const message of visible) {
-    el["message-list"].append(renderMessage(message.role, contentText(message.content)));
+  for (const { message, index } of visible) {
+    el["message-list"].append(
+      renderMessage(
+        message.role,
+        contentText(message.content),
+        false,
+        index,
+        isSafeForkBoundary(index)
+      )
+    );
   }
   if (state.liveAssistant) {
     el["message-list"].append(renderMessage("assistant", state.liveAssistant, true));
@@ -447,7 +506,14 @@ function renderConversation() {
   for (const activity of state.activities.values()) {
     el["message-list"].append(renderActivity(activity));
   }
-  el.conversation.scrollTop = el.conversation.scrollHeight;
+  const highlighted = el["message-list"].querySelector(
+    ".message.is-search-match"
+  );
+  if (highlighted) {
+    highlighted.scrollIntoView({ block: "center" });
+  } else {
+    el.conversation.scrollTop = el.conversation.scrollHeight;
+  }
 }
 
 function contentText(content) {
@@ -466,8 +532,21 @@ function contentText(content) {
     .join("\n");
 }
 
-function renderMessage(role, content, streaming = false) {
+function renderMessage(
+  role,
+  content,
+  streaming = false,
+  messageIndex = null,
+  forkable = false
+) {
   const article = node("article", `message ${role}`);
+  if (Number.isInteger(messageIndex)) {
+    article.dataset.messageIndex = String(messageIndex);
+    article.classList.toggle(
+      "is-search-match",
+      messageIndex === state.highlightedMessageIndex
+    );
+  }
   const who = role === "assistant" ? "C" : "You";
   article.append(node("div", "message-avatar", role === "assistant" ? "C" : "Y"));
   const body = node("div", "message-body");
@@ -475,8 +554,76 @@ function renderMessage(role, content, streaming = false) {
     node("div", "message-meta", streaming ? "Codinal · Writing…" : who),
     node("p", "message-content", content)
   );
+  if (Number.isInteger(messageIndex) && forkable) {
+    const actions = node("div", "message-actions");
+    const fork = node("button", "message-action", "Fork task from here");
+    fork.type = "button";
+    fork.addEventListener("click", () => {
+      forkSessionAt(messageIndex).catch(
+        (error) => toast(error.message, "error")
+      );
+    });
+    actions.append(fork);
+    body.append(actions);
+  }
   article.append(body);
   return article;
+}
+
+function isSafeForkBoundary(messageIndex) {
+  const pending = new Set();
+  for (const message of state.messages.slice(0, messageIndex + 1)) {
+    if (!message || typeof message !== "object") return false;
+    if (pending.size) {
+      if (message.role !== "tool"
+        || typeof message.tool_call_id !== "string"
+        || !pending.has(message.tool_call_id)) return false;
+      pending.delete(message.tool_call_id);
+      continue;
+    }
+    if (message.role === "tool") return false;
+    if (message.role !== "assistant" || !message.tool_calls?.length) continue;
+    if (!Array.isArray(message.tool_calls)) return false;
+    for (const call of message.tool_calls) {
+      if (!call || typeof call.id !== "string" || !call.id
+        || pending.has(call.id)) return false;
+      pending.add(call.id);
+    }
+  }
+  return pending.size === 0;
+}
+
+async function forkSessionAt(messageIndex) {
+  if (!state.sessionId) return;
+  if (state.busy) {
+    toast("Stop the active turn before forking", "error");
+    return;
+  }
+  const sourceSessionId = state.sessionId;
+  const sourceSelectionGeneration = state.sessionSelectionGeneration;
+  const sourceSearchGeneration = state.sessionSearchGeneration;
+  const result = await api(
+    `/v1/sessions/${encodeURIComponent(sourceSessionId)}/fork`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message_index: messageIndex }),
+    }
+  );
+  if (
+    state.sessionId !== sourceSessionId
+    || state.sessionSelectionGeneration !== sourceSelectionGeneration
+  ) {
+    loadSessions().catch((error) => toast(error.message, "error"));
+    toast("Forked task created");
+    return;
+  }
+  if (!result.session) throw new Error("Forked task could not be loaded");
+  if (state.sessionSearchGeneration === sourceSearchGeneration) {
+    el["session-search"].value = "";
+  }
+  await selectSession(result.session);
+  await loadSessions();
+  toast("Forked task from selected message");
 }
 
 function addActivity(name, status, running = false) {
@@ -503,10 +650,12 @@ function renderActivity(activity) {
 }
 
 async function loadPendingApprovals() {
-  if (!state.sessionId) return;
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
   const pending = await api(
-    `/v1/sessions/${encodeURIComponent(state.sessionId)}/approvals`
+    `/v1/sessions/${encodeURIComponent(sessionId)}/approvals`
   );
+  if (state.sessionId !== sessionId) return;
   for (const approval of pending) renderApproval(approval);
 }
 
@@ -730,6 +879,7 @@ async function sendTurn() {
     }
   }
   const turnInput = attachments.length ? parts : input;
+  state.highlightedMessageIndex = null;
   state.messages.push({ role: "user", content: turnInput });
   el.prompt.value = "";
   state.attachments = [];
@@ -879,34 +1029,40 @@ function resizePrompt() {
 }
 
 async function loadDiff(showPanel = true) {
-  if (!state.sessionId) return;
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
   try {
     const result = await api(
-      `/v1/sessions/${encodeURIComponent(state.sessionId)}/git/diff?against_base=true`
+      `/v1/sessions/${encodeURIComponent(sessionId)}/git/diff?against_base=true`
     );
+    if (state.sessionId !== sessionId) return;
     state.diff = typeof result.diff === "string" ? result.diff : "";
   } catch (error) {
+    if (state.sessionId !== sessionId) return;
     if (!error.message.includes("not found")) {
       toast(error.message, "error");
     }
     state.diff = "";
   }
   renderDiff();
-  await loadCheckpoints();
-  if (showPanel) openReview();
+  await loadCheckpoints(sessionId);
+  if (showPanel && state.sessionId === sessionId) openReview();
 }
 
-async function loadCheckpoints() {
-  if (!state.sessionId) {
+async function loadCheckpoints(sessionId = state.sessionId) {
+  if (!sessionId) {
     state.checkpoints = [];
     renderCheckpoints();
     return;
   }
   try {
-    state.checkpoints = await api(
-      `/v1/sessions/${encodeURIComponent(state.sessionId)}/checkpoints`
+    const checkpoints = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/checkpoints`
     );
+    if (state.sessionId !== sessionId) return;
+    state.checkpoints = checkpoints;
   } catch (error) {
+    if (state.sessionId !== sessionId) return;
     if (!error.message.includes("not found")) {
       toast(error.message, "error");
     }
@@ -1161,7 +1317,7 @@ async function renderProviders() {
 function wireEvents() {
   el["new-task"].addEventListener("click", newTask);
   el["refresh-sessions"].addEventListener("click", loadSessions);
-  el["session-search"].addEventListener("input", renderSessions);
+  el["session-search"].addEventListener("input", scheduleSessionSearch);
   el["theme-toggle"].addEventListener("click", toggleTheme);
   el["open-settings"].addEventListener("click", openSettings);
   el["check-update"].addEventListener("click", checkForUpdate);

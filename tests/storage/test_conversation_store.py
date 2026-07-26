@@ -315,6 +315,75 @@ def test_rename_flags_roots_list_and_delete(tmp_path):
     assert store.load("session-1") is None
 
 
+def test_search_finds_title_workspace_and_message_with_bounded_excerpt(
+    tmp_path,
+):
+    store = ConversationStore(tmp_path)
+    store.save(
+        record(
+            "session-title",
+            title="Release checklist",
+            messages=[{"role": "user", "content": "ordinary"}],
+        )
+    )
+    store.save(
+        record(
+            "session-message",
+            workspace="/tmp/search-project",
+            messages=[
+                {"role": "user", "content": "Investigate retry jitter"},
+                {"role": "assistant", "content": "Use bounded backoff"},
+                {"role": "tool", "content": "private tool-only marker"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Visible attachment note"},
+                        {
+                            "type": "file",
+                            "file": {
+                                "filename": "design.pdf",
+                                "file_data": "hidden-base64-marker",
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
+    )
+
+    title_hit = store.search("release", limit=10)
+    workspace_hit = store.search("search-project", limit=10)
+    message_hit = store.search("RETRY JITTER", limit=10)
+
+    assert [hit.record.session_id for hit in title_hit] == [
+        "session-title"
+    ]
+    assert title_hit[0].message_index is None
+    assert [hit.record.session_id for hit in workspace_hit] == [
+        "session-message"
+    ]
+    assert message_hit[0].record.session_id == "session-message"
+    assert message_hit[0].message_index == 0
+    assert message_hit[0].excerpt == "Investigate retry jitter"
+    assert store.search("%", limit=10) == []
+    assert store.search("role", limit=10) == []
+    assert store.search("tool-only", limit=10) == []
+    assert store.search("design.pdf", limit=10)[0].message_index == 3
+    assert store.search("attachment note", limit=10)[0].message_index == 3
+    assert store.search("hidden-base64", limit=10) == []
+
+
+@pytest.mark.parametrize(
+    ("query", "limit"),
+    [("", 10), ("x" * 257, 10), ("ok", 0), ("ok", 101)],
+)
+def test_search_rejects_unbounded_inputs(tmp_path, query, limit):
+    store = ConversationStore(tmp_path)
+
+    with pytest.raises(ValueError, match="invalid session search"):
+        store.search(query, limit=limit)
+
+
 @pytest.mark.parametrize(
     "session_id",
     ["../escape", "__system", "contains/slash", "", "x" * 129],

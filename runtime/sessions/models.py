@@ -79,6 +79,13 @@ class SessionRecord:
     )
 
 
+@dataclass(frozen=True)
+class SessionSearchHit:
+    record: SessionRecord
+    excerpt: Optional[str] = None
+    message_index: Optional[int] = None
+
+
 @dataclass
 class RootDir:
     path: Path

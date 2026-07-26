@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import base64
+import copy
 import shutil
 import time
+from uuid import uuid4
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import (
@@ -24,7 +26,13 @@ from typing import (
 from runtime.events import Event
 from runtime.policy import Mode
 
-from .models import RootDir, SessionRecord, TurnCheckpoint, TurnStatus
+from .models import (
+    RootDir,
+    SessionRecord,
+    SessionSearchHit,
+    TurnCheckpoint,
+    TurnStatus,
+)
 
 _ARTIFACT_SUFFIXES = {
     ".md",
@@ -71,6 +79,13 @@ class SessionStore(Protocol):
     ) -> None: ...
 
     def list(self, *, workspace: Optional[str] = None) -> list[SessionRecord]: ...
+
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+    ) -> list[SessionSearchHit]: ...
 
     def export_records(self) -> list[SessionRecord]: ...
 
@@ -382,6 +397,111 @@ class SessionService:
             for record in self._store.list(workspace=workspace)
             if not record.session_id.startswith("__")
         ]
+
+    def search_sessions(
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for hit in self._store.search(query, limit=limit):
+            record = hit.record
+            if record.session_id.startswith("__"):
+                continue
+            results.append(
+                {
+                    "session_id": record.session_id,
+                    "title": record.title or "New session",
+                    "workspace": (
+                        record.source_workspace or record.workspace
+                    ),
+                    "agent": record.agent,
+                    "model": record.model,
+                    "mode": record.mode,
+                    "updated_at": record.updated_at,
+                    "messages": record.message_count,
+                    "pinned": record.pinned,
+                    "archived": record.archived,
+                    "origin": record.origin,
+                    "origin_label": record.origin_label,
+                    "match_excerpt": hit.excerpt,
+                    "match_message_index": hit.message_index,
+                }
+            )
+        return results
+
+    def fork(
+        self,
+        session_id: str,
+        *,
+        message_index: int,
+        new_session_id: str | None = None,
+    ) -> dict[str, Any]:
+        if session_id.startswith("__"):
+            return {"ok": False, "error": "session not found"}
+        if (
+            isinstance(message_index, bool)
+            or not isinstance(message_index, int)
+            or message_index < 0
+        ):
+            return {"ok": False, "error": "invalid message index"}
+        record = self._snapshot(session_id) or self._store.load(session_id)
+        if record is None:
+            return {"ok": False, "error": "session not found"}
+        if message_index >= len(record.messages):
+            return {"ok": False, "error": "invalid message index"}
+        if not _is_safe_fork_boundary(record.messages, message_index):
+            return {"ok": False, "error": "invalid fork boundary"}
+        target_id = new_session_id
+        if target_id is None:
+            for _attempt in range(4):
+                candidate = f"session-{uuid4()}"
+                if self._store.load(candidate) is None:
+                    target_id = candidate
+                    break
+        if target_id is None or self._store.load(target_id) is not None:
+            return {"ok": False, "error": "could not allocate session"}
+        source_workspace = record.source_workspace or record.workspace
+        forked = SessionRecord(
+            session_id=target_id,
+            workspace=source_workspace,
+            source_workspace=source_workspace,
+            model=record.model,
+            mode=record.mode,
+            messages=copy.deepcopy(
+                record.messages[: message_index + 1]
+            ),
+            title=f"Fork of {record.title or 'New session'}"[:120],
+            agent=record.agent,
+            message_count=message_index + 1,
+            extra_roots=[],
+            grants={},
+            origin="fork",
+            origin_label=record.title or record.session_id,
+        )
+        self._store.save(forked)
+        public_session = {
+            "session_id": target_id,
+            "title": forked.title,
+            "workspace": source_workspace,
+            "agent": forked.agent,
+            "model": forked.model,
+            "mode": forked.mode,
+            "updated_at": forked.updated_at,
+            "messages": len(forked.messages),
+            "pinned": False,
+            "archived": False,
+            "origin": forked.origin,
+            "origin_label": forked.origin_label,
+        }
+        return {
+            "ok": True,
+            "session_id": target_id,
+            "source_session_id": session_id,
+            "message_count": message_index + 1,
+            "session": public_session,
+        }
 
     def export(self) -> dict[str, Any]:
         """Return the stable v1 conversation export."""
@@ -764,6 +884,45 @@ class SessionService:
             }
             for root in roots[1:]
         ]
+
+
+def _is_safe_fork_boundary(
+    messages: list[dict[str, Any]],
+    message_index: int,
+) -> bool:
+    pending: set[str] = set()
+    for message in messages[: message_index + 1]:
+        if not isinstance(message, dict):
+            return False
+        role = message.get("role")
+        if pending:
+            if role != "tool":
+                return False
+            tool_call_id = message.get("tool_call_id")
+            if (
+                not isinstance(tool_call_id, str)
+                or tool_call_id not in pending
+            ):
+                return False
+            pending.remove(tool_call_id)
+            continue
+        if role == "tool":
+            return False
+        tool_calls = message.get("tool_calls")
+        if role != "assistant" or not tool_calls:
+            continue
+        if not isinstance(tool_calls, list):
+            return False
+        call_ids = []
+        for call in tool_calls:
+            call_id = call.get("id") if isinstance(call, dict) else None
+            if not isinstance(call_id, str) or not call_id:
+                return False
+            call_ids.append(call_id)
+        if len(set(call_ids)) != len(call_ids):
+            return False
+        pending.update(call_ids)
+    return not pending
 
 
 def _artifact_kind(path: Path) -> str:
