@@ -24,6 +24,7 @@ from runtime.git import (
     CheckpointRestoreScope,
     GitWorkspaceError,
 )
+from runtime.interactions import InteractionPersistenceError
 from runtime.mcp import MCPServerDef
 from runtime.control_plane.input_validation import (
     MAX_TURN_BODY_BYTES,
@@ -53,6 +54,7 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:1420",
 )
 MAX_CHECKPOINT_RESTORE_BODY_BYTES = 1024
+MAX_INTERACTION_BODY_BYTES = 32 * 1024
 
 
 class SettingsView(Protocol):
@@ -92,6 +94,7 @@ class TurnControl(Protocol):
         user_input: str | list[dict[str, Any]],
         workspace: str | None = None,
         agent: str = "code",
+        mode: str | None = None,
         model: str | None = None,
         source: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
@@ -224,6 +227,19 @@ class ApprovalControl(Protocol):
     def close(self) -> None: ...
 
 
+class InteractionControl(Protocol):
+    def pending(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def resolve(
+        self,
+        session_id: str,
+        interaction_id: str,
+        response: dict[str, Any],
+    ) -> bool: ...
+
+    def close(self) -> None: ...
+
+
 class RestoreControl(Protocol):
     def restore(
         self,
@@ -246,6 +262,7 @@ class ControlPlaneServices(Protocol):
     git: GitControl | None
     restores: RestoreControl | None
     approvals: ApprovalControl | None
+    interactions: InteractionControl | None
 
 
 def create_control_plane_app(
@@ -276,6 +293,9 @@ def create_control_plane_app(
                 approvals = getattr(services, "approvals", None)
                 if approvals is not None:
                     approvals.close()
+                interactions = getattr(services, "interactions", None)
+                if interactions is not None:
+                    interactions.close()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -459,14 +479,16 @@ def create_control_plane_app(
         _validate_public_session_id(session_id)
         turn = await _read_turn(request)
         try:
-            result = await services.turns.start(
-                session_id,
-                user_input=turn["input"],
-                workspace=turn.get("workspace"),
-                agent=turn.get("agent", "code"),
-                model=turn.get("model"),
-                source=turn.get("source"),
-            )
+            options: dict[str, Any] = {
+                "user_input": turn["input"],
+                "workspace": turn.get("workspace"),
+                "agent": turn.get("agent", "code"),
+                "model": turn.get("model"),
+                "source": turn.get("source"),
+            }
+            if "mode" in turn:
+                options["mode"] = turn["mode"]
+            result = await services.turns.start(session_id, **options)
         except SessionNotFoundError:
             raise HTTPException(status_code=404, detail="session not found") from None
         except SessionBusyError:
@@ -530,6 +552,60 @@ def create_control_plane_app(
             raise HTTPException(
                 status_code=409,
                 detail="approval is not pending or outcome is not applicable",
+            )
+        return {"ok": True}
+
+    @app.get("/v1/sessions/{session_id}/interactions")
+    async def list_interactions(
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        interactions = getattr(services, "interactions", None)
+        if interactions is None:
+            return []
+        return interactions.pending(session_id)
+
+    @app.post(
+        "/v1/sessions/{session_id}/interactions/{interaction_id}"
+    )
+    async def resolve_interaction(
+        session_id: str,
+        interaction_id: str,
+        request: Request,
+    ) -> dict[str, bool]:
+        _validate_public_session_id(session_id)
+        if re.fullmatch(r"[a-f0-9]{32}", interaction_id) is None:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid interaction id",
+            )
+        interactions = getattr(services, "interactions", None)
+        if interactions is None:
+            raise HTTPException(
+                status_code=503,
+                detail="interactions unavailable",
+            )
+        response = await _read_interaction_response(request)
+        try:
+            resolved = interactions.resolve(
+                session_id,
+                interaction_id,
+                response,
+            )
+        except InteractionPersistenceError:
+            raise HTTPException(
+                status_code=503,
+                detail="interaction response could not be saved",
+            ) from None
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid interaction response",
+            ) from None
+        if not resolved:
+            raise HTTPException(
+                status_code=409,
+                detail="interaction is not pending",
             )
         return {"ok": True}
 
@@ -788,6 +864,7 @@ async def _read_turn(request: Request) -> dict[str, Any]:
             "input",
             "workspace",
             "agent",
+            "mode",
             "model",
             "source",
         }
@@ -805,6 +882,20 @@ async def _read_turn(request: Request) -> dict[str, Any]:
             and (
                 not isinstance(body["agent"], str)
                 or _AGENT.fullmatch(body["agent"]) is None
+            )
+        )
+        or (
+            "mode" in body
+            and (
+                not isinstance(body["mode"], str)
+                or body["mode"]
+                not in {
+                    "auto",
+                    "custom",
+                    "discuss",
+                    "interactive",
+                    "plan",
+                }
             )
         )
         or (
@@ -849,6 +940,34 @@ async def _read_approval(request: Request) -> ApprovalOutcome:
             status_code=400,
             detail="invalid approval payload",
         ) from None
+
+
+async def _read_interaction_response(
+    request: Request,
+) -> dict[str, Any]:
+    try:
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_INTERACTION_BODY_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="invalid interaction response",
+                )
+            chunks.append(chunk)
+        body = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid interaction response",
+        ) from None
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid interaction response",
+        )
+    return body
 
 
 def _has_checkpoint_session(git: Any, session_id: str) -> bool:

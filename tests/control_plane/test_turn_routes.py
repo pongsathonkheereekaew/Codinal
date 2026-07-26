@@ -44,11 +44,20 @@ class FakeTurns:
         user_input,
         workspace=None,
         agent="code",
+        mode=None,
         model=None,
         source=None,
     ):
         self.started.append(
-            (session_id, user_input, workspace, agent, model, source)
+            (
+                session_id,
+                user_input,
+                workspace,
+                agent,
+                mode,
+                model,
+                source,
+            )
         )
         return {"ok": True, "session_id": session_id}
 
@@ -77,7 +86,8 @@ def test_turn_route_requires_auth_and_starts_bounded_request(tmp_path):
     body = {
         "input": "inspect the project",
         "workspace": str(tmp_path),
-        "agent": "code",
+        "agent": "plan",
+        "mode": "plan",
     }
 
     unauthorized = client.post("/v1/sessions/session-1/turns", json=body)
@@ -95,7 +105,8 @@ def test_turn_route_requires_auth_and_starts_bounded_request(tmp_path):
             "session-1",
             "inspect the project",
             str(tmp_path),
-            "code",
+            "plan",
+            "plan",
             None,
             None,
         )
@@ -120,11 +131,23 @@ def test_turn_route_rejects_unknown_fields_and_internal_session():
         headers=AUTH,
         json={"input": "hello", "workspace": "../other"},
     )
+    invalid_mode = client.post(
+        "/v1/sessions/session-1/turns",
+        headers=AUTH,
+        json={"input": "hello", "mode": "unsafe"},
+    )
+    unhashable_mode = client.post(
+        "/v1/sessions/session-1/turns",
+        headers=AUTH,
+        json={"input": "hello", "mode": []},
+    )
 
     assert unknown.status_code == 400
     assert unknown.json() == {"detail": "invalid turn payload"}
     assert internal.status_code == 400
     assert relative_workspace.status_code == 400
+    assert invalid_mode.status_code == 400
+    assert unhashable_mode.status_code == 400
     assert turns.started == []
 
 

@@ -22,6 +22,7 @@ from typing import (
 )
 
 from runtime.events import Event
+from runtime.policy import Mode
 
 from .models import RootDir, SessionRecord, TurnCheckpoint, TurnStatus
 
@@ -181,10 +182,14 @@ class SessionService:
         *,
         workspace: Optional[str | Path] = None,
         agent: str = "code",
+        mode: str | None = None,
         model: str | None = None,
     ) -> Optional[SessionEngine]:
         engine = self._engines.get(session_id)
         if engine is not None:
+            if mode is not None:
+                engine.permissions.mode = Mode(mode)
+                self.persist(session_id)
             return engine
         if self._engine_factory is None:
             raise RuntimeError("no engine factory configured")
@@ -211,13 +216,18 @@ class SessionService:
             if record is None and (model or "").strip()
             else record.model if record else default_model
         )
+        selected_mode = (
+            mode or record.mode
+            if record
+            else mode or self._default_mode
+        )
         engine = self._engine_factory(
             EngineRequest(
                 session_id=session_id,
                 workspace=resolved_workspace,
                 record=record,
                 model=selected_model,
-                mode=record.mode if record else self._default_mode,
+                mode=selected_mode,
                 agent=record.agent if record else agent,
                 messages=list(record.messages) if record else [],
                 extra_roots=list(record.extra_roots) if record else [],
@@ -225,6 +235,8 @@ class SessionService:
             )
         )
         self._engines[session_id] = engine
+        if record is not None and mode is not None:
+            self.persist(session_id)
         return engine
 
     def persist(self, session_id: str) -> bool:

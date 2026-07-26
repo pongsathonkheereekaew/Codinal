@@ -30,7 +30,7 @@ from .migrations import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
 
 
@@ -129,10 +129,29 @@ def _migrate_to_v3(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v4(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS interaction_decisions (
+            session_id TEXT NOT NULL,
+            tool_call_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            request_fingerprint TEXT NOT NULL,
+            response TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT ({_NOW}),
+            PRIMARY KEY (session_id, tool_call_id),
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
+    4: _migrate_to_v4,
 }
 
 
@@ -289,6 +308,13 @@ class ConversationStore:
                     """,
                     (record.session_id, completed_tool_call_id),
                 )
+                self._connection.execute(
+                    """
+                    DELETE FROM interaction_decisions
+                    WHERE session_id = ? AND tool_call_id = ?
+                    """,
+                    (record.session_id, completed_tool_call_id),
+                )
 
     def save_checkpoint(
         self,
@@ -395,6 +421,75 @@ class ConversationStore:
                 WHERE session_id = ? AND tool_call_id = ?
                 """,
                 (session_id, tool_call_id),
+            )
+
+    def load_interaction_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        kind: str,
+        request_fingerprint: str,
+    ) -> dict[str, Any] | None:
+        _validate_session_id(session_id)
+        _validate_tool_call_id(tool_call_id)
+        _validate_interaction_kind(kind)
+        _validate_request_fingerprint(request_fingerprint)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT response FROM interaction_decisions
+                WHERE session_id = ? AND tool_call_id = ?
+                    AND kind = ? AND request_fingerprint = ?
+                """,
+                (
+                    session_id,
+                    tool_call_id,
+                    kind,
+                    request_fingerprint,
+                ),
+            ).fetchone()
+        return (
+            _decode_json(row["response"], expected=dict)
+            if row is not None
+            else None
+        )
+
+    def save_interaction_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        kind: str,
+        request_fingerprint: str,
+        response: dict[str, Any],
+    ) -> None:
+        _validate_session_id(session_id)
+        _validate_tool_call_id(tool_call_id)
+        _validate_interaction_kind(kind)
+        _validate_request_fingerprint(request_fingerprint)
+        encoded = _encode_json(response)
+        if len(encoded.encode("utf-8")) > 32 * 1024:
+            raise ValueError("interaction response exceeds limit")
+        with self._lock, self._connection:
+            self._connection.execute(
+                f"""
+                INSERT INTO interaction_decisions (
+                    session_id, tool_call_id, kind,
+                    request_fingerprint, response, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, {_NOW})
+                ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
+                    kind = excluded.kind,
+                    request_fingerprint = excluded.request_fingerprint,
+                    response = excluded.response,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    session_id,
+                    tool_call_id,
+                    kind,
+                    request_fingerprint,
+                    encoded,
+                ),
             )
 
     def list(
@@ -613,6 +708,11 @@ def _validate_request_fingerprint(request_fingerprint: str) -> None:
         or re.fullmatch(r"[0-9a-f]{64}", request_fingerprint) is None
     ):
         raise ValueError("invalid approval request fingerprint")
+
+
+def _validate_interaction_kind(kind: str) -> None:
+    if kind not in {"directory", "plan", "question"}:
+        raise ValueError("invalid interaction kind")
 
 
 def _validate_record(record: SessionRecord) -> None:

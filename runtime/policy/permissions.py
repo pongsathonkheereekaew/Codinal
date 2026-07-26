@@ -81,6 +81,9 @@ class Mode(str, Enum):
 
 
 READ_ONLY_MODES = frozenset({Mode.DISCUSS, Mode.PLAN})
+INTERACTIVE_CONSENT_TOOLS = frozenset(
+    {"propose_plan", "request_directory"}
+)
 
 
 @dataclass
@@ -150,10 +153,20 @@ class PermissionEngine:
     ) -> Decision:
         arguments = arguments or {}
         is_connector = getattr(metadata, "category", "") == "connector"
+        is_interactive = (
+            getattr(metadata, "category", "") == "interactive"
+            and tool_name in INTERACTIVE_CONSENT_TOOLS
+        )
         risk = classify(tool_name, metadata, self.risk_overrides)
         is_write = risk is RiskClass.WRITE_LOCAL
         is_shell = risk is RiskClass.EXEC
         consequential = is_consequential(risk)
+
+        if is_interactive and consequential:
+            return Decision(
+                True,
+                "final consent is handled by the interactive tool",
+            )
 
         if self.mode in READ_ONLY_MODES and consequential:
             return Decision(False, f"{self.mode.value} mode is read-only", needs_user=False)

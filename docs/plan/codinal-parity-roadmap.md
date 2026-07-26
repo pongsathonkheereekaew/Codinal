@@ -47,7 +47,7 @@ acceptance evidence is recorded from the real product surface.
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
 | MCP | Secure connect/runtime tools implemented; lifecycle UI/governance missing | MCP contract/service tests |
 | Multi-root and artifacts | Service methods exist; complete API/UI workflows missing | `runtime/sessions/service.py` |
-| Plan/question/directory prompts | Engine primitives exist; production callbacks/UI missing | `runtime/turn_engine/engine.py` |
+| Plan/question/directory prompts | Durable production callbacks, authenticated resolution routes, and resumable desktop cards implemented | restart-while-waiting E2Es for all three prompt kinds, schema v4 migration, native directory picker |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
 | Checkpoints | Automatic exact-path checkpoints cover Git and non-Git workspaces, including direct files, transactionally isolated shell changes, private content-minimized object storage, and crash-consistent composite restore journaling | Git ignored-file restore, non-Git restart reconciliation, same-path conflict-abort, uncaptured-secret exclusion, and active-turn manual-edit preservation E2Es |
 | Semantic index, parallel subagents, PR/CI, browser | Missing | no product evidence |
@@ -143,8 +143,8 @@ Acceptance evidence:
 
 ### P1 — Plans, goals, and parallel delivery
 
-- [ ] Wire `propose_plan`, `ask_user`, and `request_directory` into durable,
-  resumable UI cards and inbox state.
+- [x] Wire `propose_plan`, `ask_user`, and `request_directory` into durable,
+  resumable session UI cards.
 - [ ] Persist editable plans with verification criteria; approve selected tasks
   into execution without losing conversation context.
 - [ ] Add background subagents with bounded ownership, dependency graph,
@@ -219,10 +219,11 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Complete plan/question/directory prompts, because their engine contracts
-   already exist and they unblock safe plan-to-build.
-2. Build searchable/forkable sessions and explicit context/file-tree surfaces.
-3. Add parallel isolated subagents now that checkpoint recovery is proven.
+1. Build searchable/forkable sessions and explicit context/file-tree surfaces.
+2. Add parallel isolated subagents now that checkpoint and prompt recovery are
+   proven.
+3. Add editable persisted plan artifacts and selective task approval on top of
+   the durable plan decision card.
 
 ## Decisions so far
 

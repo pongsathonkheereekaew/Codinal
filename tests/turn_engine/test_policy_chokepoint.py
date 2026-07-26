@@ -5,9 +5,11 @@ from runtime.policy import (
     ApprovalOutcome,
     Mode,
     PermissionEngine,
+    RiskClass,
     ToolCall,
     ToolManifest,
 )
+from runtime.policy.manifest import ToolSpec as ManifestToolSpec
 from runtime.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from runtime.tools import ToolRegistry
 from runtime.turn_engine import TurnEngine
@@ -297,6 +299,60 @@ def test_unregistered_control_tool_cannot_invoke_callback(tmp_path) -> None:
         if event.type is EventType.TOOL_FINISHED
     ][0]
     assert denied.data["status"] == "error"
+
+
+def test_unhandled_interactive_tool_never_claims_deferred_consent(
+    tmp_path,
+) -> None:
+    calls = []
+    audits = []
+
+    def unhandled_interactive(path):
+        calls.append(path)
+        return {"ok": True}
+
+    manifest = ToolManifest()
+    manifest.add(
+        ManifestToolSpec(
+            "unhandled_interactive",
+            RiskClass.EXTERNAL,
+            category="interactive",
+        )
+    )
+    registry = ToolRegistry(manifest)
+    registry.register(
+        unhandled_interactive,
+        schema=schema("unhandled_interactive"),
+    )
+    provider = SequenceProvider(
+        [
+            AssistantTurn(
+                tool_calls=[
+                    ToolCall(
+                        "call_1",
+                        "unhandled_interactive",
+                        {"path": "README.md"},
+                    )
+                ]
+            ),
+            AssistantTurn(text="done"),
+        ]
+    )
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(tmp_path, mode=Mode.AUTO),
+        model="openai:gpt-test",
+        audit_sink=audits.append,
+    )
+
+    asyncio.run(collect(engine))
+
+    assert calls == ["README.md"]
+    assert not any(
+        event.get("stage") == "interactive_consent_deferred"
+        for event in audits
+    )
 
 
 def test_provider_exception_details_are_not_exposed(tmp_path) -> None:

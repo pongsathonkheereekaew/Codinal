@@ -61,6 +61,7 @@ class RuntimeServices:
     git: Any | None = None
     restores: CheckpointRestoreCoordinator | None = None
     approvals: ApprovalBroker | None = None
+    interactions: Any | None = None
 
 
 def compose_runtime(
@@ -81,6 +82,7 @@ def compose_runtime(
     workspace_preparer: WorkspacePreparer | None = None,
     git_service: Any | None = None,
     approval_broker: ApprovalBroker | None = None,
+    interaction_broker: Any | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -188,4 +190,5 @@ def compose_runtime(
         git=git_service,
         restores=restores,
         approvals=approval_broker,
+        interactions=interaction_broker,
     )

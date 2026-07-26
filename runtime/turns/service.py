@@ -83,6 +83,8 @@ class TurnCoordinator:
         self._retired_engines: list[Any] = []
         self._starting: set[str] = set()
         self._executing: dict[str, set[str]] = {}
+        self._waiting: set[str] = set()
+        self._durability_tasks: set[asyncio.Task[Any]] = set()
         self._snapshot_barrier = asyncio.Lock()
         self._shutting_down = False
 
@@ -93,6 +95,7 @@ class TurnCoordinator:
         user_input: str | list[dict[str, Any]],
         workspace: str | Path | None = None,
         agent: str = "code",
+        mode: str | None = None,
         model: str | None = None,
         source: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -102,6 +105,7 @@ class TurnCoordinator:
                 user_input=user_input,
                 workspace=workspace,
                 agent=agent,
+                mode=mode,
                 model=model,
                 source=source,
             )
@@ -113,6 +117,7 @@ class TurnCoordinator:
         user_input: str | list[dict[str, Any]],
         workspace: str | Path | None,
         agent: str,
+        mode: str | None,
         model: str | None,
         source: dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -145,6 +150,8 @@ class TurnCoordinator:
                 }
                 if model is not None:
                     engine_options["model"] = model
+                if mode is not None:
+                    engine_options["mode"] = mode
                 engine = await asyncio.to_thread(
                     self._sessions.get_engine,
                     session_id,
@@ -242,6 +249,26 @@ class TurnCoordinator:
         """Stop live work while preserving its latest durable checkpoint."""
         async with self._snapshot_barrier:
             self._shutting_down = True
+            durability_quiesced = True
+            durability_deadline = (
+                asyncio.get_running_loop().time()
+                + _SHUTDOWN_TIMEOUT_SECONDS
+            )
+            while self._durability_tasks:
+                remaining = (
+                    durability_deadline
+                    - asyncio.get_running_loop().time()
+                )
+                if remaining <= 0:
+                    durability_quiesced = False
+                    break
+                _, pending_durability = await asyncio.wait(
+                    tuple(self._durability_tasks),
+                    timeout=remaining,
+                )
+                if pending_durability:
+                    durability_quiesced = False
+                    break
             tasks = [
                 task
                 for task in self._active.values()
@@ -262,17 +289,30 @@ class TurnCoordinator:
                 )
             )
             for engine in engines:
+                session_id = next(
+                    (
+                        candidate
+                        for candidate, active in self._engines.items()
+                        if active is engine
+                    ),
+                    None,
+                )
+                if session_id in self._waiting:
+                    task = self._active.get(str(session_id))
+                    if task is not None and not task.done():
+                        task.cancel()
+                    continue
                 try:
                     engine.request_interrupt()
                 except Exception:
                     pass
-        quiesced = True
+        quiesced = durability_quiesced
         if tasks:
             _, pending = await asyncio.wait(
                 tasks,
                 timeout=_SHUTDOWN_TIMEOUT_SECONDS,
             )
-            quiesced = not pending
+            quiesced = quiesced and not pending
             for task in pending:
                 task.cancel()
             if pending:
@@ -509,10 +549,19 @@ class TurnCoordinator:
                                 "completed_tool_call_id"
                             ] = completed_id
                         try:
-                            persisted = await asyncio.to_thread(
-                                self._sessions.persist_checkpoint,
-                                session_id,
-                                **persistence_options,
+                            persistence = asyncio.create_task(
+                                asyncio.to_thread(
+                                    self._sessions.persist_checkpoint,
+                                    session_id,
+                                    **persistence_options,
+                                )
+                            )
+                            self._durability_tasks.add(persistence)
+                            persistence.add_done_callback(
+                                self._durability_tasks.discard
+                            )
+                            persisted = await asyncio.shield(
+                                persistence
                             )
                         except Exception:
                             durability_failed = True
@@ -618,6 +667,7 @@ class TurnCoordinator:
                 self._active.pop(session_id, None)
                 self._engines.pop(session_id, None)
                 self._executing.pop(session_id, None)
+                self._waiting.discard(session_id)
                 if not _engine_is_quiescent(engine):
                     self._retired_engines.append(engine)
             if terminal is not None:
@@ -654,6 +704,7 @@ class TurnCoordinator:
                 executing.add(tool_call_id)
             return TurnCheckpoint.executing(executing)
         if event.type is EventType.TOOL_FINISHED:
+            self._waiting.discard(session_id)
             tool_call_id = event.data.get("tool_call_id")
             if isinstance(tool_call_id, str):
                 executing.discard(tool_call_id)
@@ -667,7 +718,13 @@ class TurnCoordinator:
             if executing:
                 return TurnCheckpoint.executing(executing)
             return TurnCheckpoint(TurnStatus.RUNNING)
-        if event.type is EventType.PERMISSION_REQUIRED:
+        if event.type in {
+            EventType.PERMISSION_REQUIRED,
+            EventType.DIRECTORY_REQUESTED,
+            EventType.PLAN_PROPOSED,
+            EventType.QUESTION_REQUESTED,
+        }:
+            self._waiting.add(session_id)
             return TurnCheckpoint(TurnStatus.AWAITING_APPROVAL)
         return None
 

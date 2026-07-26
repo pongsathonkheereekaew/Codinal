@@ -54,6 +54,37 @@ def test_metadata_requires_approval_is_external():
     assert classify("custom_tool", M()) is RiskClass.EXTERNAL
 
 
+def test_only_handled_interactive_tools_can_defer_final_consent(
+    workspace,
+):
+    metadata = type(
+        "Metadata",
+        (),
+        {
+            "risk": RiskClass.EXTERNAL,
+            "category": "interactive",
+            "requires_approval": False,
+            "target_arg": None,
+        },
+    )()
+
+    unhandled = PermissionEngine(
+        workspace,
+        mode=Mode.PLAN,
+    ).evaluate("unhandled_interactive", {}, metadata)
+    handled = PermissionEngine(
+        workspace,
+        mode=Mode.PLAN,
+    ).evaluate("propose_plan", {}, metadata)
+
+    assert unhandled.allowed is False
+    assert unhandled.needs_user is False
+    assert handled.allowed is True
+    assert handled.reason == (
+        "final consent is handled by the interactive tool"
+    )
+
+
 # -- READ always allowed ------------------------------------------------------
 def test_read_allowed_any_mode(engine, workspace):
     engine.mode = Mode.PLAN

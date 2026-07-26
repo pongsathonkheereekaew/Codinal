@@ -2,6 +2,7 @@
 
 from .core import build_core_registry
 from .git_tools import GitToolService, register_git_tools
+from .interactions import register_interaction_tools
 from .mutations import ShellExecutor, register_mutation_tools
 from .registry import ToolRegistry, ToolSpec
 
@@ -12,5 +13,6 @@ __all__ = [
     "ToolSpec",
     "build_core_registry",
     "register_git_tools",
+    "register_interaction_tools",
     "register_mutation_tools",
 ]

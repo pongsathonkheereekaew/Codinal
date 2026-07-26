@@ -32,6 +32,10 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     script = (UI / "startup.js").read_text(encoding="utf-8")
 
     assert "/approvals/" in script
+    assert "/interactions" in script
+    assert "question_requested" in script
+    assert "plan_proposed" in script
+    assert "directory_requested" in script
     assert "always_tool" in script
     assert "always_command" in script
     assert "/git/diff?against_base=true" in script
@@ -50,6 +54,16 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "state.attachmentReader?.abort()" in script
     assert "switchWorkspace(workspace)" in script
     assert "switchWorkspace(path)" in script
+    assert 'el["agent-mode"].value === "plan"' in script
+    assert '? "plan"' in script
+    assert "const sessionId = state.sessionId" in script
+    assert "state.sessionId !== sessionId" in script
+    assert "interactionSession" in script
+    load_sessions = script.split(
+        "async function loadSessions() {",
+        1,
+    )[1].split("\n}", 1)[0]
+    assert "syncAgentMode(active)" in load_sessions
     workspace_switch = script.split(
         "function switchWorkspace(workspace) {",
         1,

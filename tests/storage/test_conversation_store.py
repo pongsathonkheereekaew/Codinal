@@ -104,6 +104,62 @@ def test_approval_decision_survives_restart_until_tool_finishes(tmp_path):
     )
 
 
+def test_interaction_decision_survives_restart_until_tool_finishes(
+    tmp_path,
+):
+    store = ConversationStore(tmp_path)
+    store.save(record())
+    response = {"answer": "Use PostgreSQL"}
+    store.save_interaction_decision(
+        "session-1",
+        "call-1",
+        "question",
+        "a" * 64,
+        response,
+    )
+    store.close()
+
+    reopened = ConversationStore(tmp_path)
+
+    assert reopened.load_interaction_decision(
+        "session-1",
+        "call-1",
+        "question",
+        "a" * 64,
+    ) == response
+    assert (
+        reopened.load_interaction_decision(
+            "session-1",
+            "call-1",
+            "question",
+            "b" * 64,
+        )
+        is None
+    )
+    reopened.save_checkpoint(
+        record(
+            messages=[
+                {"role": "user", "content": "hello"},
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "content": "done",
+                },
+            ]
+        ),
+        completed_tool_call_id="call-1",
+    )
+    assert (
+        reopened.load_interaction_decision(
+            "session-1",
+            "call-1",
+            "question",
+            "a" * 64,
+        )
+        is None
+    )
+
+
 def test_checkpoint_and_approval_consumption_commit_atomically(tmp_path):
     store = ConversationStore(tmp_path)
     initial = record(
@@ -391,8 +447,8 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
         "/Users/example/project"
     )
     with sqlite3.connect(store.db_path) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
-    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v3-*.bak"))
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v4-*.bak"))
     assert len(backups) == 1
     assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o700
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
@@ -404,7 +460,7 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
     assert "source_workspace" not in columns
 
 
-def test_v1_conversation_schema_migrates_to_v3_without_losing_data(tmp_path):
+def test_v1_conversation_schema_migrates_to_v4_without_losing_data(tmp_path):
     database = tmp_path / "codinal.db"
     with sqlite3.connect(database) as connection:
         connection.executescript(
@@ -457,11 +513,11 @@ def test_v1_conversation_schema_migrates_to_v3_without_losing_data(tmp_path):
     ]
     assert restored.source_workspace is None
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v1-to-v3-*.bak"
+                "codinal.db.pre-v1-to-v4-*.bak"
             )
         )
     ) == 1
@@ -516,11 +572,46 @@ def test_v2_conversation_schema_adds_idle_recovery_state(tmp_path):
         TurnStatus.IDLE
     )
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v2-to-v3-*.bak"
+                "codinal.db.pre-v2-to-v4-*.bak"
+            )
+        )
+    ) == 1
+
+
+def test_v3_conversation_schema_adds_interaction_decisions(tmp_path):
+    store = ConversationStore(tmp_path)
+    store.save(record())
+    store.close()
+    database = tmp_path / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE interaction_decisions")
+        connection.execute("PRAGMA user_version = 3")
+
+    migrated = ConversationStore(tmp_path)
+
+    migrated.save_interaction_decision(
+        "session-1",
+        "call-1",
+        "plan",
+        "a" * 64,
+        {"approved": True, "mode": "interactive"},
+    )
+    assert migrated.load_interaction_decision(
+        "session-1",
+        "call-1",
+        "plan",
+        "a" * 64,
+    ) == {"approved": True, "mode": "interactive"}
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert len(
+        list(
+            (tmp_path / "backups").glob(
+                "codinal.db.pre-v3-to-v4-*.bak"
             )
         )
     ) == 1
@@ -547,7 +638,7 @@ def test_corrupt_database_is_preserved_before_empty_recovery(tmp_path):
     assert database.read_bytes() != corrupt
     with sqlite3.connect(database) as recovered:
         assert recovered.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_corrupt_database_restores_latest_valid_backup(tmp_path):

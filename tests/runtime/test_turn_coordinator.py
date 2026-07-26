@@ -818,6 +818,170 @@ def test_graceful_shutdown_preserves_last_non_idle_checkpoint():
     assert sessions.persisted == []
 
 
+def test_shutdown_waits_for_prompt_checkpoint_before_cancelling_turn():
+    class AwaitingQuestionEngine(ScriptedEngine):
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            yield Event(
+                EventType.QUESTION_REQUESTED,
+                {"interaction_id": "safe-id", "question": "Choose?"},
+            )
+            await asyncio.Event().wait()
+
+    class BlockingSessions(FakeSessions):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.checkpoint_started = threading.Event()
+            self.release_checkpoint = threading.Event()
+
+        def persist_checkpoint(self, session_id, *, checkpoint, **kwargs):
+            if checkpoint.status is TurnStatus.AWAITING_APPROVAL:
+                self.checkpoint_started.set()
+                self.release_checkpoint.wait(timeout=5)
+            return super().persist_checkpoint(
+                session_id,
+                checkpoint=checkpoint,
+                **kwargs,
+            )
+
+    async def scenario():
+        sessions = BlockingSessions(AwaitingQuestionEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="ask")
+        while not sessions.checkpoint_started.is_set():
+            await asyncio.sleep(0)
+        shutdown = asyncio.create_task(turns.shutdown())
+        await asyncio.sleep(0.05)
+        assert not shutdown.done()
+        sessions.release_checkpoint.set()
+        assert await shutdown is True
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.checkpoints[-1] == (
+        "session-1",
+        "awaiting_approval",
+        [],
+    )
+    assert sessions.persisted == []
+
+
+def test_shutdown_drains_prompt_checkpoints_created_while_waiting():
+    class AwaitingQuestionEngine(ScriptedEngine):
+        def __init__(self, gate=None):
+            super().__init__()
+            self.gate = gate
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            if self.gate is not None:
+                await self.gate.wait()
+            yield Event(
+                EventType.QUESTION_REQUESTED,
+                {"interaction_id": "safe-id", "question": "Choose?"},
+            )
+            await asyncio.Event().wait()
+
+    class BlockingSessions(FakeSessions):
+        def __init__(self, engines):
+            super().__init__()
+            self.engines = engines
+            self.started = {
+                session_id: threading.Event()
+                for session_id in engines
+            }
+            self.release = {
+                session_id: threading.Event()
+                for session_id in engines
+            }
+
+        def get_engine(self, session_id, **_kwargs):
+            return self.engines[session_id]
+
+        def persist_checkpoint(self, session_id, *, checkpoint, **kwargs):
+            if checkpoint.status is TurnStatus.AWAITING_APPROVAL:
+                self.started[session_id].set()
+                self.release[session_id].wait(timeout=5)
+            return super().persist_checkpoint(
+                session_id,
+                checkpoint=checkpoint,
+                **kwargs,
+            )
+
+    async def scenario():
+        second_gate = asyncio.Event()
+        sessions = BlockingSessions(
+            {
+                "session-1": AwaitingQuestionEngine(),
+                "session-2": AwaitingQuestionEngine(second_gate),
+            }
+        )
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="first")
+        await turns.start("session-2", user_input="second")
+        while not sessions.started["session-1"].is_set():
+            await asyncio.sleep(0)
+        shutdown = asyncio.create_task(turns.shutdown())
+        await asyncio.sleep(0.05)
+        second_gate.set()
+        while not sessions.started["session-2"].is_set():
+            await asyncio.sleep(0)
+        sessions.release["session-1"].set()
+        await asyncio.sleep(0.05)
+        assert not shutdown.done()
+        sessions.release["session-2"].set()
+        assert await shutdown is True
+
+    asyncio.run(scenario())
+
+
+def test_shutdown_reports_prompt_checkpoint_durability_timeout(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "runtime.turns.service._SHUTDOWN_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    class AwaitingQuestionEngine(ScriptedEngine):
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            yield Event(
+                EventType.QUESTION_REQUESTED,
+                {"interaction_id": "safe-id", "question": "Choose?"},
+            )
+            await asyncio.Event().wait()
+
+    class BlockingSessions(FakeSessions):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def persist_checkpoint(self, session_id, *, checkpoint, **kwargs):
+            if checkpoint.status is TurnStatus.AWAITING_APPROVAL:
+                self.started.set()
+                self.release.wait(timeout=5)
+            return super().persist_checkpoint(
+                session_id,
+                checkpoint=checkpoint,
+                **kwargs,
+            )
+
+    async def scenario():
+        sessions = BlockingSessions(AwaitingQuestionEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="ask")
+        while not sessions.started.is_set():
+            await asyncio.sleep(0)
+        quiesced = await turns.shutdown()
+        sessions.release.set()
+        return quiesced
+
+    assert asyncio.run(scenario()) is False
+
+
 def test_graceful_shutdown_persists_completed_tool_progress():
     class FinishingEngine(ScriptedEngine):
         def __init__(self):

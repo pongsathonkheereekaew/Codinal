@@ -743,6 +743,20 @@ select:focus-visible,
   color: white;
 }
 
+.interaction-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 72px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  resize: vertical;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+}
+
 .composer-wrap {
   position: relative;
   padding: 8px 20px 12px;

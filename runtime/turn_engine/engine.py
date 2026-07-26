@@ -34,6 +34,7 @@ from runtime.policy import (
     deny_all,
     standing_rule_candidate,
 )
+from runtime.policy.permissions import INTERACTIVE_CONSENT_TOOLS
 from runtime.providers import AssistantTurn, ProviderClient, ToolCall
 from runtime.providers.errors import friendly_model_error
 from runtime.tools import ToolRegistry
@@ -69,6 +70,9 @@ class TurnEngine:
         ] = None,
         question_asker: Optional[
             Callable[[dict[str, Any], str], "Awaitable[dict[str, Any]]"]
+        ] = None,
+        interaction_id_factory: Optional[
+            Callable[[ToolCall, str], str]
         ] = None,
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
@@ -107,6 +111,7 @@ class TurnEngine:
         # (answerable inline in a live session or from the Inbox when unattended). None on surfaces
         # that can't ask (the tool then no-ops).
         self.question_asker = question_asker
+        self.interaction_id_factory = interaction_id_factory
         self.audit_context: dict[str, Any] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
@@ -161,6 +166,9 @@ class TurnEngine:
                 return task.result()
             task.cancel()
             return interrupted
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
         finally:
             cancel_wait.cancel()
 
@@ -677,6 +685,23 @@ class TurnEngine:
             self._audit(
                 tool_call, stage="auto_allowed", status="allowed", reason=reason
             )
+        elif (
+            allowed
+            and getattr(metadata, "category", "") == "interactive"
+            and tool_call.name in INTERACTIVE_CONSENT_TOOLS
+            and classify(
+                tool_call.name,
+                metadata,
+                self.permissions.risk_overrides,
+            )
+            is not RiskClass.READ
+        ):
+            self._audit(
+                tool_call,
+                stage="interactive_consent_deferred",
+                status="pending_user",
+                reason=reason,
+            )
 
         if not allowed and decision.needs_user:
             request = PermissionRequest(
@@ -883,10 +908,17 @@ class TurnEngine:
                 "error": "plan approval isn't available here",
             }
         else:
-            yield Event(EventType.PLAN_PROPOSED, {"plan": plan})
+            response = self.plan_approver(dict(args), tool_call.id)
+            yield Event(
+                EventType.PLAN_PROPOSED,
+                {
+                    "plan": plan,
+                    **self._interaction_identity(tool_call, "plan"),
+                },
+            )
             self._audit(tool_call, stage="plan_proposed")
             result = await self._interruptible(
-                self.plan_approver(dict(args), tool_call.id),
+                response,
                 interrupted={"approved": False, "error": "interrupted by user"},
             ) or {
                 "approved": False,
@@ -937,12 +969,20 @@ class TurnEngine:
                 "error": "directory requests aren't available here",
             }
         else:
+            response = self.directory_requester(
+                dict(args),
+                tool_call.id,
+            )
             yield Event(
                 EventType.DIRECTORY_REQUESTED,
                 {
                     "reason": str(args.get("reason", "")),
                     "path": str(args.get("path", "")),
                     "writable": bool(args.get("writable", False)),
+                    **self._interaction_identity(
+                        tool_call,
+                        "directory",
+                    ),
                 },
             )
             self._audit(
@@ -951,7 +991,7 @@ class TurnEngine:
                 reason=str(args.get("reason", "")),
             )
             result = await self._interruptible(
-                self.directory_requester(dict(args), tool_call.id),
+                response,
                 interrupted={"granted": False, "error": "interrupted by user"},
             ) or {
                 "granted": False,
@@ -992,11 +1032,21 @@ class TurnEngine:
                 ),
             }
         else:
-            # The asker is mode-aware (attended → live inline prompt; unattended → Inbox), so it
-            # owns surfacing the question. The engine just awaits the answer.
+            response = self.question_asker(dict(args), tool_call.id)
+            yield Event(
+                EventType.QUESTION_REQUESTED,
+                {
+                    "question": question,
+                    "options": args.get("options", []),
+                    **self._interaction_identity(
+                        tool_call,
+                        "question",
+                    ),
+                },
+            )
             self._audit(tool_call, stage="question_requested", reason=question)
             result = await self._interruptible(
-                self.question_asker(dict(args), tool_call.id),
+                response,
                 interrupted={"answer": "", "error": "interrupted by user"},
             ) or {
                 "answer": "",
@@ -1021,6 +1071,20 @@ class TurnEngine:
                 "result_preview": _preview(result),
             },
         )
+
+    def _interaction_identity(
+        self,
+        tool_call: ToolCall,
+        kind: str,
+    ) -> dict[str, str]:
+        if self.interaction_id_factory is None:
+            return {}
+        return {
+            "interaction_id": self.interaction_id_factory(
+                tool_call,
+                kind,
+            )
+        }
 
     def _inject_steering(self) -> None:
         for text, source in self._steering:

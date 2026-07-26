@@ -141,7 +141,21 @@ async function loadSettings() {
 
 async function loadSessions() {
   state.sessions = await api("/v1/sessions");
+  const active = state.sessions.find(
+    (session) => session.session_id === state.sessionId
+  );
+  if (active) syncAgentMode(active);
   renderSessions();
+}
+
+function syncAgentMode(session) {
+  el["agent-mode"].value = session.mode === "plan"
+    ? "plan"
+    : session.mode === "discuss"
+      ? "review"
+      : session.agent === "review"
+        ? "review"
+        : "code";
 }
 
 function renderSessions() {
@@ -216,6 +230,7 @@ async function selectSession(session) {
   state.liveAssistant = null;
   state.activities.clear();
   el["task-title"].textContent = session.title || "New task";
+  syncAgentMode(session);
   selectModel(session.model);
   updateWorkspaceLabel();
   renderSessions();
@@ -227,7 +242,11 @@ async function selectSession(session) {
     );
     renderConversation();
     connectSocket();
-    await Promise.all([loadPendingApprovals(), loadDiff(false)]);
+    await Promise.all([
+      loadPendingApprovals(),
+      loadPendingInteractions(),
+      loadDiff(false),
+    ]);
   } catch (error) {
     toast(error.message, "error");
   }
@@ -372,6 +391,13 @@ function handleEvent(event) {
       break;
     case "permission_required":
       renderApproval(event);
+      break;
+    case "directory_requested":
+    case "plan_proposed":
+    case "question_requested":
+      loadPendingInteractions().catch((error) => {
+        toast(error.message, "error");
+      });
       break;
     case "error":
       toast(event.error || "Turn failed", "error");
@@ -539,6 +565,146 @@ async function resolveApproval(card, approval, outcome) {
   }
 }
 
+async function loadPendingInteractions() {
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
+  const pending = await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/interactions`
+  );
+  if (state.sessionId !== sessionId) return;
+  const current = new Set(
+    pending.map((interaction) => interaction.interaction_id)
+  );
+  for (const card of document.querySelectorAll("[data-interaction-id]")) {
+    if (card.dataset.interactionSession === sessionId
+      && !current.has(card.dataset.interactionId)) card.remove();
+  }
+  for (const interaction of pending) {
+    renderInteraction(interaction, sessionId);
+  }
+}
+
+function renderInteraction(interaction, sessionId) {
+  const id = interaction.interaction_id;
+  if (!id || document.querySelector(`[data-interaction-id="${id}"]`)) return;
+  const args = interaction.arguments || {};
+  const card = node("section", "approval-card interaction-card");
+  card.dataset.interactionId = id;
+  card.dataset.interactionSession = sessionId;
+  const content = node("div", "approval-content");
+  const title = node("div", "approval-title");
+  const labels = {
+    directory: "Directory access",
+    plan: "Review plan",
+    question: "Question",
+  };
+  title.append(
+    node("span", "", interaction.kind === "plan" ? "◇" : "?"),
+    node("strong", "", labels[interaction.kind] || "Input required")
+  );
+  content.append(title);
+  const actions = node("div", "approval-actions");
+
+  if (interaction.kind === "plan") {
+    content.append(node("pre", "approval-arguments", args.plan || ""));
+    const feedback = node("textarea", "interaction-input");
+    feedback.placeholder = "Optional revision feedback";
+    feedback.setAttribute("aria-label", "Plan revision feedback");
+    content.append(feedback);
+    const revise = node("button", "", "Request revision");
+    const approve = node("button", "approve-once", "Approve and build");
+    revise.type = approve.type = "button";
+    revise.addEventListener("click", () => resolveInteraction(
+      card,
+      interaction,
+      { approved: false, feedback: feedback.value }
+    ));
+    approve.addEventListener("click", () => resolveInteraction(
+      card,
+      interaction,
+      { approved: true, mode: "interactive" }
+    ));
+    actions.append(revise, approve);
+  } else if (interaction.kind === "question") {
+    content.append(node("p", "", args.question || "Input required"));
+    const answer = node("textarea", "interaction-input");
+    answer.placeholder = "Type your answer";
+    answer.setAttribute("aria-label", "Answer");
+    content.append(answer);
+    for (const option of Array.isArray(args.options) ? args.options : []) {
+      const choice = node("button", "", option);
+      choice.type = "button";
+      choice.addEventListener("click", () => resolveInteraction(
+        card,
+        interaction,
+        { answer: String(option) }
+      ));
+      actions.append(choice);
+    }
+    const submit = node("button", "approve-once", "Answer");
+    submit.type = "button";
+    submit.addEventListener("click", () => {
+      if (answer.value.trim()) {
+        resolveInteraction(
+          card,
+          interaction,
+          { answer: answer.value.trim() }
+        );
+      }
+    });
+    actions.append(submit);
+  } else if (interaction.kind === "directory") {
+    content.append(
+      node("p", "", args.reason || "Codinal needs another directory."),
+      node(
+        "p",
+        "",
+        args.writable ? "Requested access: read and write" : "Requested access: read-only"
+      ),
+      node("pre", "approval-arguments", args.path || "Choose a folder")
+    );
+    const deny = node("button", "", "Decline");
+    const choose = node("button", "approve-once", "Choose folder");
+    deny.type = choose.type = "button";
+    deny.addEventListener("click", () => resolveInteraction(
+      card,
+      interaction,
+      { granted: false }
+    ));
+    choose.addEventListener("click", async () => {
+      const path = await pickWorkspace();
+      if (path) {
+        await resolveInteraction(card, interaction, {
+          granted: true,
+          path,
+          writable: Boolean(args.writable),
+        });
+      }
+    });
+    actions.append(deny, choose);
+  } else {
+    return;
+  }
+  card.append(content, actions);
+  el["message-list"].append(card);
+  el.conversation.scrollTop = el.conversation.scrollHeight;
+}
+
+async function resolveInteraction(card, interaction, response) {
+  for (const button of card.querySelectorAll("button")) button.disabled = true;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(card.dataset.interactionSession)}/interactions/`
+        + interaction.interaction_id,
+      { method: "POST", body: JSON.stringify(response) }
+    );
+    card.remove();
+  } catch (error) {
+    for (const button of card.querySelectorAll("button")) button.disabled = false;
+    toast(error.message, "error");
+  }
+}
+
 async function sendTurn() {
   const input = el.prompt.value.trim();
   if ((!input && !state.attachments.length)
@@ -578,6 +744,11 @@ async function sendTurn() {
         input: turnInput,
         workspace: state.workspace,
         agent: el["agent-mode"].value,
+        mode: el["agent-mode"].value === "plan"
+          ? "plan"
+          : el["agent-mode"].value === "review"
+            ? "discuss"
+            : "interactive",
         model: el["model-select"].value,
       }),
     });

@@ -1,5 +1,6 @@
 import base64
 import copy
+import hashlib
 import io
 import json
 import os
@@ -183,7 +184,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
     assert all(event["action"] == "preserved_corrupt_state" for event in events)
     with sqlite3.connect(data_dir / "codinal.db") as conversations:
         assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 4
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -507,6 +508,9 @@ def test_production_sidecar_turn_streams_tools_and_survives_restart(
         "read_file",
         "list_files",
         "grep",
+        "ask_user",
+        "propose_plan",
+        "request_directory",
         "write_file",
         "replace_in_file",
         "run_shell",
@@ -814,6 +818,847 @@ def test_restart_restores_awaiting_approval_without_losing_tool_call(
         for message in recovered.messages
         if message.get("role") == "tool"
     ] == ["provider/call-recovery"]
+
+
+def test_restart_restores_awaiting_question_and_resumes_once(tmp_path):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text="answer received")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id="session-question-recovery",
+            workspace=str(workspace),
+            source_workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            messages=[
+                {"role": "user", "content": "choose a database"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "provider/question-recovery",
+                            "type": "function",
+                            "function": {
+                                "name": "ask_user",
+                                "arguments": json.dumps(
+                                    {
+                                        "question": "Which database?",
+                                        "options": [
+                                            "PostgreSQL",
+                                            "SQLite",
+                                        ],
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                },
+            ],
+            turn_checkpoint=TurnCheckpoint(
+                TurnStatus.AWAITING_APPROVAL
+            ),
+        )
+    )
+    store.close()
+    provider = RecoveryProvider()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config, provider=provider)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        pending = []
+        for _ in range(100):
+            pending = client.get(
+                (
+                    "/v1/sessions/session-question-recovery/"
+                    "interactions"
+                ),
+                headers=AUTH,
+            ).json()
+            if pending:
+                break
+            time.sleep(0.01)
+        assert len(pending) == 1
+        assert pending[0]["kind"] == "question"
+        resolved = client.post(
+            (
+                "/v1/sessions/session-question-recovery/"
+                f"interactions/{pending[0]['interaction_id']}"
+            ),
+            headers=AUTH,
+            json={"answer": "PostgreSQL"},
+        )
+        assert resolved.status_code == 200
+        for _ in range(100):
+            if not services.turns.is_active(
+                "session-question-recovery"
+            ):
+                break
+            time.sleep(0.01)
+
+    assert provider.calls == 1
+    recovered = ConversationStore(data_dir).load(
+        "session-question-recovery"
+    )
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    results = [
+        message
+        for message in recovered.messages
+        if message.get("role") == "tool"
+    ]
+    assert len(results) == 1
+    assert results[0]["tool_call_id"] == "provider/question-recovery"
+    assert "PostgreSQL" in results[0]["content"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "tool_name", "arguments", "response", "mode"),
+    [
+        (
+            "plan",
+            "propose_plan",
+            {"plan": "1. Test\n2. Build"},
+            {"approved": True, "mode": "interactive"},
+            "plan",
+        ),
+        (
+            "directory",
+            "request_directory",
+            {
+                "reason": "Read shared schemas",
+                "writable": False,
+            },
+            None,
+            "interactive",
+        ),
+    ],
+)
+def test_restart_restores_other_interactions_and_resumes_once(
+    tmp_path,
+    kind,
+    tool_name,
+    arguments,
+    response,
+    mode,
+):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text=f"{kind} response applied")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+    if response is None:
+        response = {
+            "granted": True,
+            "path": str(shared),
+            "writable": False,
+        }
+    session_id = f"session-{kind}-recovery"
+    tool_call_id = f"provider/{kind}-recovery"
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id=session_id,
+            workspace=str(workspace),
+            source_workspace=str(workspace),
+            model="openai:gpt-test",
+            mode=mode,
+            messages=[
+                {"role": "user", "content": f"request {kind}"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    ],
+                },
+            ],
+            turn_checkpoint=TurnCheckpoint(
+                TurnStatus.AWAITING_APPROVAL
+            ),
+        )
+    )
+    store.close()
+    provider = RecoveryProvider()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config, provider=provider)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        pending = []
+        for _ in range(100):
+            pending = client.get(
+                f"/v1/sessions/{session_id}/interactions",
+                headers=AUTH,
+            ).json()
+            if pending:
+                break
+            time.sleep(0.01)
+        assert len(pending) == 1
+        assert pending[0]["kind"] == kind
+        resolved = client.post(
+            (
+                f"/v1/sessions/{session_id}/interactions/"
+                f"{pending[0]['interaction_id']}"
+            ),
+            headers=AUTH,
+            json=response,
+        )
+        assert resolved.status_code == 200
+        for _ in range(100):
+            if not services.turns.is_active(session_id):
+                break
+            time.sleep(0.01)
+
+    assert provider.calls == 1
+    recovered = ConversationStore(data_dir).load(session_id)
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    assert [
+        message.get("tool_call_id")
+        for message in recovered.messages
+        if message.get("role") == "tool"
+    ] == [tool_call_id]
+    if kind == "plan":
+        assert recovered.mode == "interactive"
+    else:
+        assert recovered.extra_roots == [
+            {
+                "path": str(shared.resolve()),
+                "writable": False,
+                "label": "shared",
+            }
+        ]
+
+
+def test_directory_replay_rejects_replaced_approved_filesystem_object(
+    tmp_path,
+):
+    class RecoveryProvider(ProviderClient):
+        def complete(self, **_kwargs):
+            return AssistantTurn(text="directory response handled")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    approved = tmp_path / "approved"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    approved.mkdir()
+    outside.mkdir()
+    arguments = {
+        "reason": "Read shared schemas",
+        "writable": False,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "arguments": arguments,
+                "kind": "directory",
+            },
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    metadata = approved.stat()
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id="session-directory-swap",
+            workspace=str(workspace),
+            source_workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            messages=[
+                {"role": "user", "content": "add shared schemas"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "provider/directory-swap",
+                            "type": "function",
+                            "function": {
+                                "name": "request_directory",
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    ],
+                },
+            ],
+            turn_checkpoint=TurnCheckpoint(
+                TurnStatus.AWAITING_APPROVAL
+            ),
+        )
+    )
+    store.save_interaction_decision(
+        "session-directory-swap",
+        "provider/directory-swap",
+        "directory",
+        fingerprint,
+        {
+            "granted": True,
+            "path": str(approved.resolve()),
+            "writable": False,
+            "_device": metadata.st_dev,
+            "_inode": metadata.st_ino,
+        },
+    )
+    store.close()
+    moved = tmp_path / "approved-original"
+    approved.rename(moved)
+    approved.symlink_to(outside, target_is_directory=True)
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=RecoveryProvider(),
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ):
+        for _ in range(100):
+            if not services.turns.is_active(
+                "session-directory-swap"
+            ):
+                break
+            time.sleep(0.01)
+
+    recovered = ConversationStore(data_dir).load(
+        "session-directory-swap"
+    )
+    assert recovered is not None
+    assert recovered.extra_roots == []
+    tool_result = next(
+        message
+        for message in recovered.messages
+        if message.get("role") == "tool"
+    )
+    assert "approved resource changed" in tool_result["content"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "tool_name", "arguments", "response", "mode"),
+    [
+        (
+            "question",
+            "ask_user",
+            {"question": "Which database?"},
+            {"answer": "PostgreSQL"},
+            "interactive",
+        ),
+        (
+            "plan",
+            "propose_plan",
+            {"plan": "1. Test\n2. Build"},
+            {"approved": True, "mode": "interactive"},
+            "plan",
+        ),
+        (
+            "directory",
+            "request_directory",
+            {
+                "reason": "Read shared schemas",
+                "writable": False,
+            },
+            None,
+            "interactive",
+        ),
+    ],
+)
+def test_graceful_restart_preserves_live_waiting_interaction(
+    tmp_path,
+    kind,
+    tool_name,
+    arguments,
+    response,
+    mode,
+):
+    class PromptProvider(ProviderClient):
+        def complete(self, **_kwargs):
+            return AssistantTurn(
+                tool_calls=[
+                    ToolCall(
+                        f"provider/{kind}-graceful",
+                        tool_name,
+                        arguments,
+                    )
+                ]
+            )
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text=f"{kind} resumed")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+    if response is None:
+        response = {
+            "granted": True,
+            "path": str(shared),
+            "writable": False,
+        }
+    session_id = f"session-{kind}-graceful"
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    first = build_services(config, provider=PromptProvider())
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=first)
+    ) as client:
+        with client.websocket_connect(
+            f"/ws/session/{session_id}",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                f"/v1/sessions/{session_id}/turns",
+                headers=AUTH,
+                json={
+                    "input": f"request {kind}",
+                    "workspace": str(workspace),
+                    "agent": "plan" if kind == "plan" else "code",
+                    "mode": mode,
+                },
+            )
+            assert accepted.status_code == 202
+            expected_event = {
+                "directory": "directory_requested",
+                "plan": "plan_proposed",
+                "question": "question_requested",
+            }[kind]
+            while socket.receive_json()["type"] != expected_event:
+                pass
+
+    waiting = ConversationStore(config.data_dir).load(session_id)
+    assert waiting is not None
+    assert waiting.turn_checkpoint == TurnCheckpoint(
+        TurnStatus.AWAITING_APPROVAL
+    )
+    assert not any(
+        message.get("role") == "tool"
+        for message in waiting.messages
+    )
+    recovery_provider = RecoveryProvider()
+    second = build_services(config, provider=recovery_provider)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=second)
+    ) as client:
+        pending = []
+        for _ in range(100):
+            pending = client.get(
+                f"/v1/sessions/{session_id}/interactions",
+                headers=AUTH,
+            ).json()
+            if pending:
+                break
+            time.sleep(0.01)
+        assert len(pending) == 1
+        resolved = client.post(
+            (
+                f"/v1/sessions/{session_id}/interactions/"
+                f"{pending[0]['interaction_id']}"
+            ),
+            headers=AUTH,
+            json=response,
+        )
+        assert resolved.status_code == 200
+        for _ in range(100):
+            if not second.turns.is_active(session_id):
+                break
+            time.sleep(0.01)
+
+    assert recovery_provider.calls == 1
+    recovered = ConversationStore(config.data_dir).load(session_id)
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    assert len(
+        [
+            message
+            for message in recovered.messages
+            if message.get("role") == "tool"
+        ]
+    ) == 1
+
+
+def test_production_question_and_directory_cards_apply_selected_root(
+    tmp_path,
+):
+    class InteractionProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "provider/question-1",
+                            "ask_user",
+                            {
+                                "question": "Which database?",
+                                "options": ["PostgreSQL", "SQLite"],
+                            },
+                        )
+                    ]
+                )
+            if self.calls == 2:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "provider/directory-1",
+                            "request_directory",
+                            {
+                                "reason": "Read shared schemas",
+                                "writable": False,
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text="inputs applied")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=InteractionProvider(),
+    )
+    events = []
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/session-interactions",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/session-interactions/turns",
+                headers=AUTH,
+                json={
+                    "input": "configure the project",
+                    "workspace": str(workspace),
+                },
+            )
+            while not events or events[-1]["type"] != "turn_end":
+                event = socket.receive_json()
+                events.append(event)
+                if event["type"] == "question_requested":
+                    response = client.post(
+                        (
+                            "/v1/sessions/session-interactions/"
+                            f"interactions/{event['interaction_id']}"
+                        ),
+                        headers=AUTH,
+                        json={"answer": "PostgreSQL"},
+                    )
+                    assert response.status_code == 200
+                elif event["type"] == "directory_requested":
+                    response = client.post(
+                        (
+                            "/v1/sessions/session-interactions/"
+                            f"interactions/{event['interaction_id']}"
+                        ),
+                        headers=AUTH,
+                        json={
+                            "granted": True,
+                            "path": str(shared),
+                            "writable": False,
+                        },
+                    )
+                    assert response.status_code == 200
+
+    assert accepted.status_code == 202
+    assert [
+        event["type"]
+        for event in events
+        if event["type"].endswith("_requested")
+    ] == ["question_requested", "directory_requested"]
+    assert services.sessions.roots("session-interactions")[1] == {
+        "path": str(shared.resolve()),
+        "writable": False,
+        "label": "shared",
+        "primary": False,
+        "exists": True,
+    }
+    stored = ConversationStore(config.data_dir).load(
+        "session-interactions"
+    )
+    assert stored is not None
+    assert stored.extra_roots == [
+        {
+            "path": str(shared.resolve()),
+            "writable": False,
+            "label": "shared",
+        }
+    ]
+
+
+def test_production_plan_card_approves_into_interactive_mode(tmp_path):
+    class PlanProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "provider/plan-1",
+                            "propose_plan",
+                            {"plan": "1. Test\n2. Build"},
+                        )
+                    ]
+                )
+            return AssistantTurn(text="building approved plan")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=PlanProvider(),
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/session-plan",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/session-plan/turns",
+                headers=AUTH,
+                json={
+                    "input": "plan the change",
+                    "workspace": str(workspace),
+                    "agent": "plan",
+                    "mode": "plan",
+                },
+            )
+            while True:
+                event = socket.receive_json()
+                if event["type"] == "plan_proposed":
+                    resolved = client.post(
+                        (
+                            "/v1/sessions/session-plan/"
+                            f"interactions/{event['interaction_id']}"
+                        ),
+                        headers=AUTH,
+                        json={
+                            "approved": True,
+                            "mode": "interactive",
+                        },
+                    )
+                    assert resolved.status_code == 200
+                if event["type"] == "turn_end":
+                    break
+
+    assert accepted.status_code == 202
+    stored = ConversationStore(data_dir).load("session-plan")
+    assert stored is not None
+    assert stored.mode == "interactive"
+    assert any(
+        message.get("role") == "tool"
+        and "approved" in message.get("content", "")
+        for message in stored.messages
+    )
+
+
+def test_existing_task_can_switch_from_code_to_plan_mode(tmp_path):
+    class PlanProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(text="code task ready")
+            if self.calls == 2:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "provider/existing-plan",
+                            "propose_plan",
+                            {"plan": "1. Inspect\n2. Implement"},
+                        )
+                    ]
+                )
+            return AssistantTurn(text="existing plan approved")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=PlanProvider(),
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/session-existing-plan",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            first = client.post(
+                "/v1/sessions/session-existing-plan/turns",
+                headers=AUTH,
+                json={
+                    "input": "start coding",
+                    "workspace": str(workspace),
+                    "agent": "code",
+                    "mode": "interactive",
+                },
+            )
+            while socket.receive_json()["type"] != "turn_end":
+                pass
+            second = client.post(
+                "/v1/sessions/session-existing-plan/turns",
+                headers=AUTH,
+                json={
+                    "input": "plan the next change",
+                    "agent": "plan",
+                    "mode": "plan",
+                },
+            )
+            saw_plan = False
+            while True:
+                event = socket.receive_json()
+                if event["type"] == "plan_proposed":
+                    saw_plan = True
+                    resolved = client.post(
+                        (
+                            "/v1/sessions/session-existing-plan/"
+                            f"interactions/{event['interaction_id']}"
+                        ),
+                        headers=AUTH,
+                        json={
+                            "approved": True,
+                            "mode": "interactive",
+                        },
+                    )
+                    assert resolved.status_code == 200
+                if event["type"] == "turn_end":
+                    break
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert saw_plan
+    stored = ConversationStore(data_dir).load(
+        "session-existing-plan"
+    )
+    assert stored is not None
+    assert stored.mode == "interactive"
 
 
 def test_restart_never_replays_tool_that_may_have_completed(tmp_path):

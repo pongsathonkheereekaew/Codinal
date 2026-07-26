@@ -19,6 +19,7 @@ from runtime.git import (
     NotGitRepositoryError,
     TransactionalShell,
 )
+from runtime.interactions import InteractionBroker
 from runtime.mcp import MCPManager
 from runtime.oauth import OAuthCoordinator
 from runtime.policy import ApprovalBroker, Approver, deny_all
@@ -26,6 +27,7 @@ from runtime.providers import ProviderClient, ProviderRouter
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.sandbox import SandboxedShell
 from runtime.sessions import (
+    RootDir,
     SessionCleanupError,
     SessionRecord,
     TurnCheckpoint,
@@ -34,6 +36,7 @@ from runtime.storage import ConversationStore
 from runtime.tools import (
     build_core_registry,
     register_git_tools,
+    register_interaction_tools,
     register_mutation_tools,
 )
 from runtime.turn_engine import TurnEngine
@@ -98,6 +101,7 @@ def build_services(
     provider_client = provider or ProviderRouter(secret_service)
     git_service = GitWorktreeService(config.data_dir)
     approval_broker = ApprovalBroker(decisions=store)
+    interaction_broker = InteractionBroker(store)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -155,6 +159,7 @@ def build_services(
             )
         )
         registry = build_core_registry(context.roots)
+        register_interaction_tools(registry)
         register_mutation_tools(
             registry,
             roots=context.roots,
@@ -173,6 +178,89 @@ def build_services(
                 service=git_service,
                 session_id=context.request.session_id,
             )
+
+        def bind_directory_response(
+            response: dict[str, Any],
+            replay: bool,
+        ) -> dict[str, Any]:
+            if not response.get("granted"):
+                return response
+            candidate = Path(
+                str(response.get("path", ""))
+            ).expanduser()
+            if not candidate.is_absolute():
+                raise ValueError("directory path is not absolute")
+            resolved = candidate.resolve(strict=True)
+            metadata = resolved.stat()
+            if not resolved.is_dir():
+                raise ValueError("directory is unavailable")
+            if replay:
+                if (
+                    candidate != resolved
+                    or response.get("_device") != metadata.st_dev
+                    or response.get("_inode") != metadata.st_ino
+                ):
+                    raise ValueError("approved directory changed")
+            return {
+                "granted": True,
+                "path": str(resolved),
+                "writable": bool(response.get("writable", False)),
+                "_device": metadata.st_dev,
+                "_inode": metadata.st_ino,
+            }
+
+        def request_directory(
+            arguments: dict[str, Any],
+            tool_call_id: str,
+        ):
+            response_awaitable = interaction_broker.requester(
+                context.request.session_id,
+                "directory",
+                response_normalizer=bind_directory_response,
+            )(arguments, tool_call_id)
+
+            async def apply_response() -> dict[str, Any]:
+                response = await response_awaitable
+                if not response.get("granted"):
+                    return response
+                try:
+                    bound = bind_directory_response(
+                        response,
+                        True,
+                    )
+                except (OSError, ValueError):
+                    return {
+                        "granted": False,
+                        "error": "selected directory changed",
+                    }
+                resolved = Path(str(bound["path"]))
+                writable = bool(response.get("writable", False))
+                matching = next(
+                    (
+                        root
+                        for root in context.roots
+                        if root.path == resolved
+                    ),
+                    None,
+                )
+                if matching is None:
+                    context.roots.append(
+                        RootDir(
+                            path=resolved,
+                            writable=writable,
+                            label=resolved.name,
+                        )
+                    )
+                elif matching is not context.roots[0]:
+                    matching.writable = writable
+                return {
+                    "granted": True,
+                    "path": str(resolved),
+                    "writable": writable,
+                }
+
+            return apply_response()
+
         engine = TurnEngine(
             provider=provider_client,
             registry=registry,
@@ -183,6 +271,22 @@ def build_services(
             approval_id_factory=lambda call: approval_broker.approval_id(
                 context.request.session_id,
                 call.id,
+            ),
+            directory_requester=request_directory,
+            plan_approver=interaction_broker.requester(
+                context.request.session_id,
+                "plan",
+            ),
+            question_asker=interaction_broker.requester(
+                context.request.session_id,
+                "question",
+            ),
+            interaction_id_factory=lambda call, kind: (
+                interaction_broker.interaction_id(
+                    context.request.session_id,
+                    call.id,
+                    kind,
+                )
             ),
             messages=context.request.messages,
             interrupt_hooks=[
@@ -275,6 +379,7 @@ def build_services(
         workspace_preparer=prepare_workspace,
         git_service=git_service,
         approval_broker=approval_broker,
+        interaction_broker=interaction_broker,
     )
 
 
