@@ -11,6 +11,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -33,6 +34,7 @@ from .store import GitWorktreeStore
 
 _PROBE_TIMEOUT_SECONDS = 10
 _PROBE_OUTPUT_LIMIT = 1024 * 1024
+_PREIMAGE_UNSET = object()
 _MAX_CHECKPOINT_PATCH_BYTES = 32 * 1024 * 1024
 _MAX_CHECKPOINT_FILE_BYTES = 32 * 1024 * 1024
 
@@ -71,10 +73,18 @@ class _MutationRecorder:
     service: "GitWorktreeService"
     session_id: str
 
-    def record_file_preimage(self, path: Path) -> None:
+    def record_file_preimage(
+        self,
+        path: Path,
+        *,
+        content: bytes | None | object = _PREIMAGE_UNSET,
+        mode: int = 0,
+    ) -> None:
         self.service.record_file_preimage(
             self.session_id,
             path,
+            content=content,
+            mode=mode,
         )
 
     def record_shell_fallback(self) -> None:
@@ -276,6 +286,9 @@ class GitWorktreeService:
         self,
         session_id: str,
         path: Path,
+        *,
+        content: bytes | None | object = _PREIMAGE_UNSET,
+        mode: int = 0,
     ) -> None:
         with self._lock:
             record = self._checkpoint_record(session_id)
@@ -305,13 +318,23 @@ class GitWorktreeService:
             if relative in existing:
                 return
             try:
-                blob, mode = self._capture_file_blob(record, path)
+                if content is _PREIMAGE_UNSET:
+                    blob, captured_mode = self._capture_file_blob(
+                        record,
+                        path,
+                    )
+                else:
+                    blob, captured_mode = self._capture_preimage_bytes(
+                        record,
+                        content,
+                        mode,
+                    )
                 self.store.save_checkpoint_file(
                     CheckpointFileRecord(
                         checkpoint_id=checkpoint.checkpoint_id,
                         path=relative,
                         before_blob=blob,
-                        before_mode=mode,
+                        before_mode=captured_mode,
                     )
                 )
                 self._refresh_attributed_before_tree(
@@ -1596,7 +1619,10 @@ class GitWorktreeService:
             )
         try:
             relative = candidate.relative_to(record.worktree_path)
-            if ".." in relative.parts or ".git" in relative.parts:
+            if (
+                ".." in relative.parts
+                or ".git" in (part.casefold() for part in relative.parts)
+            ):
                 raise ValueError
             ancestor = candidate.parent
             while True:
@@ -1715,6 +1741,64 @@ class GitWorktreeService:
             else 0o100644
         )
         return blob, mode
+
+    def _capture_preimage_bytes(
+        self,
+        record: GitWorkspaceRecord,
+        content: bytes | None | object,
+        mode: int,
+    ) -> tuple[str, int]:
+        if content is None:
+            return "", 0
+        if (
+            not isinstance(content, bytes)
+            or len(content) > _MAX_CHECKPOINT_FILE_BYTES
+            or isinstance(mode, bool)
+            or not isinstance(mode, int)
+        ):
+            raise GitWorkspaceError("checkpoint file is unsupported")
+        repository = self._checkpoint_repository(record)
+        self._ensure_checkpoint_repository(record)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix="preimage-",
+            dir=repository,
+        )
+        temporary = Path(temporary_name)
+        try:
+            view = memoryview(content)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("short write")
+                view = view[written:]
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = -1
+            result = self._checkpoint_git(
+                record,
+                "hash-object",
+                "-w",
+                "--no-filters",
+                temporary,
+            )
+            blob = result.stdout.strip()
+            if (
+                result.exit_code != 0
+                or re.fullmatch(r"[0-9a-f]{40,64}", blob) is None
+            ):
+                raise GitWorkspaceError(
+                    "unable to capture checkpoint file"
+                )
+        except OSError:
+            raise GitWorkspaceError(
+                "checkpoint file is unavailable"
+            ) from None
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
+        captured_mode = 0o100755 if mode & stat.S_IXUSR else 0o100644
+        return blob, captured_mode
 
     def _checkpoint_file_tree(
         self,

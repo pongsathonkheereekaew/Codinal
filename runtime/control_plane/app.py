@@ -56,6 +56,7 @@ DEFAULT_ALLOWED_ORIGINS = (
 MAX_CHECKPOINT_RESTORE_BODY_BYTES = 1024
 MAX_INTERACTION_BODY_BYTES = 32 * 1024
 MAX_SESSION_FORK_BODY_BYTES = 1024
+MAX_ROOT_BODY_BYTES = 8 * 1024
 
 
 class SettingsView(Protocol):
@@ -142,6 +143,29 @@ class SessionControl(Protocol):
     def export(self) -> dict[str, Any]: ...
 
     def roots(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def tree(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        path: str,
+        limit: int,
+    ) -> dict[str, Any]: ...
+
+    def add_root(
+        self,
+        session_id: str,
+        path: str,
+        *,
+        writable: bool = False,
+    ) -> dict[str, Any]: ...
+
+    def remove_root(
+        self,
+        session_id: str,
+        path: str,
+    ) -> dict[str, Any]: ...
 
     def rename(self, session_id: str, title: str) -> dict[str, Any]: ...
 
@@ -401,6 +425,93 @@ def create_control_plane_app(
     ) -> list[dict[str, Any]]:
         _validate_public_session_id(session_id)
         return services.sessions.roots(session_id)
+
+    @app.get("/v1/sessions/{session_id}/tree")
+    async def session_tree(
+        session_id: str,
+        root: str,
+        path: str = "",
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if (
+            not 1 <= len(root) <= 4096
+            or not Path(root).is_absolute()
+            or len(path) > 4096
+            or Path(path).is_absolute()
+            or ".." in Path(path).parts
+            or not 1 <= limit <= 500
+        ):
+            raise HTTPException(status_code=400, detail="invalid tree path")
+        result = await asyncio.to_thread(
+            services.sessions.tree,
+            session_id,
+            root=root,
+            path=path,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            status = (
+                404
+                if result.get("error")
+                in {
+                    "root is not part of the session",
+                    "root is unavailable",
+                }
+                else 400
+            )
+            raise HTTPException(status_code=status, detail=result["error"])
+        return result
+
+    @app.post("/v1/sessions/{session_id}/roots")
+    async def add_session_root(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        path, writable = await _read_root_update(request, remove=False)
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: services.sessions.add_root(
+                    session_id,
+                    path,
+                    writable=writable,
+                ),
+            )
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        if not result.get("ok"):
+            status = (
+                404
+                if result.get("error") == "session not found"
+                else 400
+            )
+            raise HTTPException(status_code=status, detail=result["error"])
+        return result
+
+    @app.delete("/v1/sessions/{session_id}/roots")
+    async def remove_session_root(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        path, _writable = await _read_root_update(request, remove=True)
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: services.sessions.remove_root(session_id, path),
+            )
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        if not result.get("ok"):
+            status = (
+                404
+                if result.get("error") == "session not found"
+                else 400
+            )
+            raise HTTPException(status_code=status, detail=result["error"])
+        return result
 
     @app.patch("/v1/sessions/{session_id}")
     async def update_session(
@@ -1146,6 +1257,47 @@ async def _read_session_fork(request: Request) -> int:
             detail="invalid session fork",
         )
     return body["message_index"]
+
+
+async def _read_root_update(
+    request: Request,
+    *,
+    remove: bool,
+) -> tuple[str, bool]:
+    try:
+        chunks = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_ROOT_BODY_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="invalid root update",
+                )
+            chunks.append(chunk)
+        body = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid root update",
+        ) from None
+    expected = {"path"} if remove else {"path", "writable"}
+    if (
+        not isinstance(body, dict)
+        or set(body) != expected
+        or not isinstance(body.get("path"), str)
+        or not 1 <= len(body["path"]) <= 4096
+        or not Path(body["path"]).is_absolute()
+        or (
+            not remove
+            and not isinstance(body.get("writable"), bool)
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid root update",
+        )
+    return body["path"], bool(body.get("writable", False))
 
 
 async def _read_mcp_server(request: Request) -> MCPServerDef:

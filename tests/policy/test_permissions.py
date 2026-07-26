@@ -172,6 +172,23 @@ def test_auto_mode_still_scopes_writes(workspace, tmp_path_factory):
     assert not d.allowed  # path scope holds even in AUTO
 
 
+def test_auto_mode_rejects_retargeted_workspace(workspace):
+    bound = workspace / "bound"
+    bound.mkdir()
+    outside = workspace / "outside"
+    outside.mkdir()
+    eng = PermissionEngine(workspace_root=bound, mode=Mode.AUTO)
+    bound.rename(workspace / "bound-moved")
+    bound.symlink_to(outside, target_is_directory=True)
+
+    decision = eng.evaluate(
+        "write_file",
+        {"path": str(bound / "escaped.txt")},
+    )
+
+    assert not decision.allowed
+
+
 # -- session memory -----------------------------------------------------------
 def test_allow_tool_for_session_then_allowed(engine):
     engine.allow_tool_for_session("write_file")

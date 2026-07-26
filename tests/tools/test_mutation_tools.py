@@ -110,10 +110,8 @@ def test_mutation_recorder_observes_preimage_before_file_write(
         def __init__(self):
             self.preimages = []
 
-        def record_file_preimage(self, path):
-            self.preimages.append(
-                (path, path.read_text(encoding="utf-8"))
-            )
+        def record_file_preimage(self, path, *, content, mode):
+            self.preimages.append((path, content, mode))
 
         def record_shell_fallback(self):
             raise AssertionError("shell fallback was not expected")
@@ -130,7 +128,7 @@ def test_mutation_recorder_observes_preimage_before_file_write(
     )
 
     assert result["ok"] is True
-    assert recorder.preimages == [(target, "manual\n")]
+    assert recorder.preimages == [(target, b"manual\n", 0o644)]
     assert target.read_text(encoding="utf-8") == "agent\n"
 
 
@@ -141,7 +139,7 @@ def test_mutation_recorder_failure_prevents_file_and_shell_mutation(
     target.write_text("manual\n", encoding="utf-8")
 
     class FailingRecorder:
-        def record_file_preimage(self, _path):
+        def record_file_preimage(self, _path, *, content, mode):
             raise OSError("private failure")
 
         def record_shell_fallback(self):
@@ -181,7 +179,7 @@ def test_transactional_shell_owns_shell_path_attribution(
         transactional_mutations = True
 
     class Recorder:
-        def record_file_preimage(self, _path):
+        def record_file_preimage(self, _path, *, content, mode):
             pass
 
         def record_shell_fallback(self):
@@ -258,6 +256,20 @@ def test_write_file_refuses_nested_git_metadata(tmp_path: Path) -> None:
     assert not (nested_git / "config").exists()
 
 
+def test_write_file_refuses_case_variant_git_metadata(tmp_path: Path) -> None:
+    registry, _ = build_registry(tmp_path)
+
+    result = registry.execute(
+        "write_file",
+        {"path": ".GIT/config", "content": "secret"},
+    )
+
+    assert result == {
+        "ok": False,
+        "error": "Git metadata is not writable",
+    }
+
+
 def test_read_only_extra_root_cannot_be_written(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     read_only = tmp_path / "reference"
@@ -285,6 +297,146 @@ def test_read_only_extra_root_cannot_be_written(tmp_path: Path) -> None:
     assert denied == {"ok": False, "error": "path is outside writable roots"}
     assert allowed["ok"] is True
     assert (writable / "yes").read_text(encoding="utf-8") == "good"
+
+
+def test_write_root_binding_rejects_retargeted_extra_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    shared.mkdir()
+    outside.mkdir()
+    metadata = shared.stat()
+    registry, _ = build_registry(
+        workspace,
+        extra_roots=[
+            RootDir(
+                shared,
+                writable=True,
+                device=metadata.st_dev,
+                inode=metadata.st_ino,
+            )
+        ],
+    )
+    shared.rename(tmp_path / "moved")
+    shared.symlink_to(outside, target_is_directory=True)
+
+    result = registry.execute(
+        "write_file",
+        {"path": str(shared / "escaped.txt"), "content": "bad"},
+    )
+
+    assert result == {
+        "ok": False,
+        "error": "path is outside writable roots",
+    }
+    assert not (outside / "escaped.txt").exists()
+
+
+def test_write_rechecks_ancestor_after_checkpoint_callback(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    nested = workspace / "nested"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    nested.mkdir()
+    outside.mkdir()
+
+    class SwappingRecorder:
+        def record_file_preimage(
+            self,
+            _path: Path,
+            *,
+            content: bytes | None,
+            mode: int,
+        ) -> None:
+            nested.rename(workspace / "moved")
+            nested.symlink_to(outside, target_is_directory=True)
+
+        def record_shell_fallback(self) -> None:
+            pass
+
+    registry, _ = build_registry(
+        workspace,
+        mutation_recorder=SwappingRecorder(),
+    )
+
+    result = registry.execute(
+        "write_file",
+        {"path": "nested/escaped.txt", "content": "bad"},
+    )
+
+    assert result == {"ok": False, "error": "file write failed"}
+    assert not (outside / "escaped.txt").exists()
+
+
+def test_write_does_not_replace_file_created_by_checkpoint_callback(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "new.txt"
+
+    class CreatingRecorder:
+        def record_file_preimage(
+            self,
+            _path: Path,
+            *,
+            content: bytes | None,
+            mode: int,
+        ) -> None:
+            assert content is None
+            target.write_text("concurrent\n", encoding="utf-8")
+
+        def record_shell_fallback(self) -> None:
+            pass
+
+    registry, _ = build_registry(
+        tmp_path,
+        mutation_recorder=CreatingRecorder(),
+    )
+
+    result = registry.execute(
+        "write_file",
+        {"path": "new.txt", "content": "agent\n"},
+    )
+
+    assert result == {
+        "ok": False,
+        "error": "file changed during write",
+    }
+    assert target.read_text(encoding="utf-8") == "concurrent\n"
+
+
+def test_committed_new_file_ignores_temporary_unlink_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original_unlink = mutations.os.unlink
+    failures = 0
+
+    def fail_first_temporary_unlink(path, *args, **kwargs):
+        nonlocal failures
+        if str(path).startswith(".codinal-") and failures == 0:
+            failures += 1
+            raise OSError("injected cleanup failure")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        mutations.os,
+        "unlink",
+        fail_first_temporary_unlink,
+    )
+    registry, _ = build_registry(tmp_path)
+
+    result = registry.execute(
+        "write_file",
+        {"path": "new.txt", "content": "agent\n"},
+    )
+
+    assert result["ok"] is True
+    assert failures == 1
+    assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "agent\n"
+    assert not list(tmp_path.glob(".codinal-*.tmp"))
 
 
 def test_replace_in_file_requires_exact_expected_match_count(

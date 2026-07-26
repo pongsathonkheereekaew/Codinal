@@ -58,6 +58,8 @@ class FakeSessions:
         self.models = []
         self.deleted = []
         self.forked = []
+        self.added_roots = []
+        self.removed_roots = []
         self.export_too_large = False
 
     def list_sessions(self, *, workspace=None):
@@ -85,6 +87,25 @@ class FakeSessions:
 
     def roots(self, _session_id):
         return [{"path": "/tmp/project", "writable": True, "primary": True}]
+
+    def tree(self, session_id, *, root, path, limit):
+        return {
+            "ok": True,
+            "root": root,
+            "path": path,
+            "entries": [
+                {"name": session_id, "path": session_id, "kind": "file"}
+            ][:limit],
+            "truncated": False,
+        }
+
+    def add_root(self, session_id, path, *, writable=False):
+        self.added_roots.append((session_id, path, writable))
+        return {"ok": True, "roots": self.roots(session_id)}
+
+    def remove_root(self, session_id, path):
+        self.removed_roots.append((session_id, path))
+        return {"ok": True, "roots": self.roots(session_id)}
 
     def rename(self, session_id, title):
         self.renamed.append((session_id, title))
@@ -201,6 +222,56 @@ def test_session_routes_list_messages_and_roots():
         {"role": "user", "content": "session-1"}
     ]
     assert roots.json()[0]["primary"] is True
+
+
+def test_session_tree_and_root_mutations_are_bounded_and_idle_gated():
+    client, sessions, turns = make_client()
+    with client:
+        tree = client.get(
+            "/v1/sessions/session-1/tree",
+            headers=AUTH,
+            params={
+                "root": "/tmp/project",
+                "path": "src",
+                "limit": 100,
+            },
+        )
+        invalid_tree = client.get(
+            "/v1/sessions/session-1/tree",
+            headers=AUTH,
+            params={"root": "/tmp/project", "path": "../escape"},
+        )
+        turns.active.add("session-1")
+        busy = client.post(
+            "/v1/sessions/session-1/roots",
+            headers=AUTH,
+            json={"path": "/tmp/shared", "writable": False},
+        )
+        turns.active.clear()
+        added = client.post(
+            "/v1/sessions/session-1/roots",
+            headers=AUTH,
+            json={"path": "/tmp/shared", "writable": True},
+        )
+        removed = client.request(
+            "DELETE",
+            "/v1/sessions/session-1/roots",
+            headers=AUTH,
+            json={"path": "/tmp/shared"},
+        )
+
+    assert tree.status_code == 200
+    assert tree.json()["entries"][0]["name"] == "session-1"
+    assert invalid_tree.status_code == 400
+    assert busy.status_code == 409
+    assert added.status_code == 200
+    assert sessions.added_roots == [
+        ("session-1", "/tmp/shared", True)
+    ]
+    assert removed.status_code == 200
+    assert sessions.removed_roots == [
+        ("session-1", "/tmp/shared")
+    ]
 
 
 def test_session_search_is_authenticated_and_bounded():

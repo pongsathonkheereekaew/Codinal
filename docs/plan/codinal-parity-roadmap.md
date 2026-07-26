@@ -46,7 +46,7 @@ acceptance evidence is recorded from the real product surface.
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
 | MCP | Secure connect/runtime tools implemented; lifecycle UI/governance missing | MCP contract/service tests |
-| Multi-root and artifacts | Service methods exist; complete API/UI workflows missing | `runtime/sessions/service.py` |
+| Multi-root and project tree | Durable add/remove root UI and bounded lazy tree implemented; explicit file/folder/Git context chips and open/reveal missing | authenticated idle-gated root routes, non-following-symlink tree tests, restart E2E |
 | Plan/question/directory prompts | Durable production callbacks, authenticated resolution routes, and resumable desktop cards implemented | restart-while-waiting E2Es for all three prompt kinds, schema v4 migration, native directory picker |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
 | Checkpoints | Automatic exact-path checkpoints cover Git and non-Git workspaces, including direct files, transactionally isolated shell changes, private content-minimized object storage, and crash-consistent composite restore journaling | Git ignored-file restore, non-Git restart reconciliation, same-path conflict-abort, uncaptured-secret exclusion, and active-turn manual-edit preservation E2Es |
@@ -219,8 +219,9 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Complete in-thread search/export/side conversations and explicit
-   context/file-tree surfaces on the durable global search/fork baseline.
+1. Complete in-thread search/export/side conversations plus exact provider
+   file/folder/Git context chips and open/reveal actions on the durable
+   search/fork and project-tree baseline.
 2. Add parallel isolated subagents now that checkpoint and prompt recovery are
    proven.
 3. Add editable persisted plan artifacts and selective task approval on top of

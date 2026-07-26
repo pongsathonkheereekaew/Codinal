@@ -39,6 +39,8 @@ def record(session_id="session-1", **changes):
 def test_save_reopen_and_load_preserves_complete_session(tmp_path):
     store = ConversationStore(tmp_path)
     original = record(
+        workspace_device=12,
+        workspace_inode=34,
         extra_roots=[
             {"path": "/tmp/shared", "writable": False, "label": "shared"}
         ],
@@ -59,6 +61,8 @@ def test_save_reopen_and_load_preserves_complete_session(tmp_path):
 
     assert loaded is not None
     assert loaded.workspace == "/tmp/workspace"
+    assert loaded.workspace_device == 12
+    assert loaded.workspace_inode == 34
     assert loaded.model == "openai:gpt-test"
     assert loaded.messages == original.messages
     assert loaded.message_count == 1
@@ -516,8 +520,8 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
         "/Users/example/project"
     )
     with sqlite3.connect(store.db_path) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
-    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v4-*.bak"))
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
+    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v5-*.bak"))
     assert len(backups) == 1
     assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o700
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
@@ -582,11 +586,11 @@ def test_v1_conversation_schema_migrates_to_v4_without_losing_data(tmp_path):
     ]
     assert restored.source_workspace is None
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v1-to-v4-*.bak"
+                "codinal.db.pre-v1-to-v5-*.bak"
             )
         )
     ) == 1
@@ -641,11 +645,11 @@ def test_v2_conversation_schema_adds_idle_recovery_state(tmp_path):
         TurnStatus.IDLE
     )
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v2-to-v4-*.bak"
+                "codinal.db.pre-v2-to-v5-*.bak"
             )
         )
     ) == 1
@@ -653,7 +657,14 @@ def test_v2_conversation_schema_adds_idle_recovery_state(tmp_path):
 
 def test_v3_conversation_schema_adds_interaction_decisions(tmp_path):
     store = ConversationStore(tmp_path)
-    store.save(record())
+    legacy_roots = [
+        {
+            "path": "/legacy/shared",
+            "writable": False,
+            "label": "legacy",
+        }
+    ]
+    store.save(record(extra_roots=legacy_roots))
     store.close()
     database = tmp_path / "codinal.db"
     with sqlite3.connect(database) as connection:
@@ -662,6 +673,7 @@ def test_v3_conversation_schema_adds_interaction_decisions(tmp_path):
 
     migrated = ConversationStore(tmp_path)
 
+    assert migrated.load("session-1").extra_roots == legacy_roots
     migrated.save_interaction_decision(
         "session-1",
         "call-1",
@@ -676,11 +688,11 @@ def test_v3_conversation_schema_adds_interaction_decisions(tmp_path):
         "a" * 64,
     ) == {"approved": True, "mode": "interactive"}
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v3-to-v4-*.bak"
+                "codinal.db.pre-v3-to-v5-*.bak"
             )
         )
     ) == 1
@@ -707,7 +719,7 @@ def test_corrupt_database_is_preserved_before_empty_recovery(tmp_path):
     assert database.read_bytes() != corrupt
     with sqlite3.connect(database) as recovered:
         assert recovered.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_corrupt_database_restores_latest_valid_backup(tmp_path):

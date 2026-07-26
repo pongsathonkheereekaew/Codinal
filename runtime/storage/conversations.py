@@ -31,7 +31,7 @@ from .migrations import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
 
 
@@ -148,11 +148,27 @@ def _migrate_to_v4(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v5(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(sessions)")
+    }
+    if "workspace_device" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN workspace_device INTEGER"
+        )
+    if "workspace_inode" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN workspace_inode INTEGER"
+        )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }
 
 
@@ -222,19 +238,21 @@ class ConversationStore:
                 f"""
                 INSERT INTO sessions (
                     session_id, workspace, source_workspace, model, mode,
-                    title, agent,
+                    workspace_device, workspace_inode, title, agent,
                     extra_roots, grants, pinned, archived, origin,
                     origin_label, turn_status, active_tool_call_ids,
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {_NOW}
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {_NOW}
                 )
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace,
                     source_workspace = excluded.source_workspace,
                     model = excluded.model,
                     mode = excluded.mode,
+                    workspace_device = excluded.workspace_device,
+                    workspace_inode = excluded.workspace_inode,
                     title = excluded.title,
                     agent = excluded.agent,
                     extra_roots = excluded.extra_roots,
@@ -253,6 +271,8 @@ class ConversationStore:
                     record.source_workspace,
                     record.model,
                     record.mode,
+                    record.workspace_device,
+                    record.workspace_inode,
                     title,
                     record.agent,
                     extra_roots,
@@ -876,6 +896,19 @@ def _validate_record(record: SessionRecord) -> None:
         or not isinstance(record.extra_roots, list)
         or not isinstance(record.grants, dict)
         or not isinstance(record.turn_checkpoint, TurnCheckpoint)
+        or (
+            (record.workspace_device is None)
+            != (record.workspace_inode is None)
+        )
+        or (
+            record.workspace_device is not None
+            and (
+                isinstance(record.workspace_device, bool)
+                or not isinstance(record.workspace_device, int)
+                or isinstance(record.workspace_inode, bool)
+                or not isinstance(record.workspace_inode, int)
+            )
+        )
     ):
         raise ValueError("invalid session data")
     if record.source_workspace is not None and (
@@ -917,6 +950,8 @@ def _record_from_row(
     return SessionRecord(
         session_id=row["session_id"],
         workspace=row["workspace"],
+        workspace_device=row["workspace_device"],
+        workspace_inode=row["workspace_inode"],
         source_workspace=row["source_workspace"],
         model=row["model"],
         mode=row["mode"],

@@ -115,6 +115,8 @@ def compose_runtime(
                     path=root["path"],
                     writable=bool(root.get("writable", False)),
                     label=str(root.get("label", "")),
+                    device=root.get("_device"),
+                    inode=root.get("_inode"),
                 )
                 for root in request.extra_roots
             ],

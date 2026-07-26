@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from runtime.sessions import (
     RootDir,
     SessionCleanupError,
@@ -110,6 +112,9 @@ def test_session_messages_prefer_live_engine_over_persisted_record(tmp_path):
 
 
 def test_get_engine_builds_from_persisted_session_once(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    docs_stat = docs.stat()
     record = SessionRecord(
         session_id="s1",
         workspace=str(tmp_path),
@@ -117,7 +122,14 @@ def test_get_engine_builds_from_persisted_session_once(tmp_path):
         mode="interactive",
         messages=[{"role": "user", "content": "restore me"}],
         agent="code",
-        extra_roots=[{"path": str(tmp_path / "docs"), "writable": False}],
+        extra_roots=[
+            {
+                "path": str(docs),
+                "writable": False,
+                "_device": docs_stat.st_dev,
+                "_inode": docs_stat.st_ino,
+            }
+        ],
         grants={"tools": ["write_file"]},
     )
     built = []
@@ -757,6 +769,8 @@ def test_root_changes_update_live_engine_and_persist_adapter_state(tmp_path):
             "path": str(shared.resolve()),
             "writable": True,
             "label": "shared",
+            "_device": shared.stat().st_dev,
+            "_inode": shared.stat().st_ino,
         }
     ]
 
@@ -764,6 +778,403 @@ def test_root_changes_update_live_engine_and_persist_adapter_state(tmp_path):
     assert len(engine.roots) == 1
     assert store.load("s1").extra_roots == []
 
+
+def test_tree_lists_one_bounded_level_without_following_symlinks(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.py").write_text("print('ok')")
+    (workspace / "README.md").write_text("read me")
+    (workspace / ".GIT").mkdir()
+    (workspace / ".GIT" / "config").write_text("also secret")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    (workspace / "linked").symlink_to(outside, target_is_directory=True)
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+        )
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    root = service.tree("s1", root=str(workspace), path="", limit=20)
+    nested = service.tree(
+        "s1",
+        root=str(workspace),
+        path="src",
+        limit=20,
+    )
+
+    assert root == {
+        "ok": True,
+        "root": str(workspace.resolve()),
+        "path": "",
+        "entries": [
+            {"name": "src", "path": "src", "kind": "directory"},
+            {"name": "linked", "path": "linked", "kind": "symlink"},
+            {"name": "README.md", "path": "README.md", "kind": "file"},
+        ],
+        "truncated": False,
+    }
+    assert nested["entries"] == [
+        {"name": "app.py", "path": "src/app.py", "kind": "file"}
+    ]
+    assert service.tree(
+        "s1",
+        root=str(workspace),
+        path="linked",
+        limit=20,
+    ) == {"ok": False, "error": "directory is unavailable"}
+    assert service.tree(
+        "s1",
+        root=str(workspace),
+        path="linked/subdirectory",
+        limit=20,
+    ) == {"ok": False, "error": "directory is unavailable"}
+    assert service.tree(
+        "s1",
+        root=str(workspace),
+        path=".git",
+        limit=20,
+    ) == {"ok": False, "error": "invalid tree path"}
+    assert service.tree(
+        "s1",
+        root=str(workspace),
+        path=".GIT",
+        limit=20,
+    ) == {"ok": False, "error": "invalid tree path"}
+    assert service.tree(
+        "s1",
+        root=str(workspace),
+        path="../outside",
+        limit=20,
+    ) == {"ok": False, "error": "invalid tree path"}
+    assert service.tree(
+        "s1",
+        root=str(outside),
+        path="",
+        limit=20,
+    ) == {"ok": False, "error": "root is not part of the session"}
+    assert service.add_root("s1", str(workspace / ".git")) == {
+        "ok": False,
+        "error": "directory cannot be added",
+    }
+    assert service.add_root("s1", str(workspace / ".GIT")) == {
+        "ok": False,
+        "error": "directory cannot be added",
+    }
+
+
+def test_primary_tree_root_rejects_retargeted_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+        )
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    assert service.roots("s1")
+
+    workspace.rename(tmp_path / "moved-workspace")
+    workspace.symlink_to(outside, target_is_directory=True)
+
+    assert service.roots("s1") == []
+    result = service.tree("s1", root=str(workspace), path="", limit=20)
+    assert result == {"ok": False, "error": "root is unavailable"}
+    assert "secret" not in str(result)
+
+
+def test_primary_tree_root_rejects_real_directory_replacement(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+        )
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    assert service.roots("s1")
+    bound = store.load("s1")
+    assert bound.workspace_device == workspace.stat().st_dev
+    assert bound.workspace_inode == workspace.stat().st_ino
+
+    workspace.rename(tmp_path / "moved-workspace")
+    workspace.mkdir()
+    (workspace / "secret.txt").write_text("replacement secret")
+    restarted = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    assert restarted.roots("s1") == []
+    result = restarted.tree(
+        "s1",
+        root=str(workspace),
+        path="",
+        limit=20,
+    )
+    assert result == {
+        "ok": False,
+        "error": "root is not part of the session",
+    }
+    assert "secret" not in str(result)
+
+
+def test_extra_root_identity_blocks_retarget_after_restart(tmp_path):
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    shared.mkdir()
+    outside.mkdir()
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+        )
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    assert service.add_root("s1", str(shared))["ok"] is True
+
+    moved = tmp_path / "moved-shared"
+    shared.rename(moved)
+    shared.symlink_to(outside, target_is_directory=True)
+    restarted = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    roots = restarted.roots("s1")
+    assert len(roots) == 2
+    assert roots[1]["path"] == str(shared)
+    assert roots[1]["available"] is False
+    assert restarted.tree(
+        "s1",
+        root=str(outside),
+        path="",
+    ) == {"ok": False, "error": "root is not part of the session"}
+
+
+def test_legacy_extra_root_is_bound_once_and_persisted(tmp_path):
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "legacy-shared"
+    workspace.mkdir()
+    shared.mkdir()
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+            extra_roots=[
+                {
+                    "path": str(shared),
+                    "writable": False,
+                    "label": "legacy",
+                }
+            ],
+        )
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    roots = service.roots("s1")
+
+    assert [root["path"] for root in roots] == [
+        str(workspace),
+        str(shared),
+    ]
+    persisted = store.load("s1").extra_roots
+    assert persisted == [
+        {
+            "path": str(shared),
+            "writable": False,
+            "label": "legacy",
+            "_device": shared.stat().st_dev,
+            "_inode": shared.stat().st_ino,
+        }
+    ]
+
+    shared.rename(tmp_path / "legacy-moved")
+    shared.mkdir()
+    restarted = SessionService(store, scratch_base=tmp_path / "scratch")
+    restarted_roots = restarted.roots("s1")
+    assert [root["path"] for root in restarted_roots] == [
+        str(workspace),
+        str(shared),
+    ]
+    assert restarted_roots[1]["available"] is False
+    assert store.load("s1").extra_roots == persisted
+
+
+def test_bound_extra_root_survives_temporary_unavailability(tmp_path):
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+        )
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    assert service.add_root("s1", str(shared))["ok"] is True
+    persisted = list(store.load("s1").extra_roots)
+
+    moved = tmp_path / "shared-offline"
+    shared.rename(moved)
+    unavailable = service.roots("s1")
+    assert [root["path"] for root in unavailable] == [
+        str(workspace),
+        str(shared),
+    ]
+    assert unavailable[1]["available"] is False
+    assert store.load("s1").extra_roots == persisted
+
+    moved.rename(shared)
+    assert [root["path"] for root in service.roots("s1")] == [
+        str(workspace),
+        str(shared),
+    ]
+    assert store.load("s1").extra_roots == persisted
+
+
+def test_remove_unavailable_symlink_root_matches_configured_path(
+    tmp_path,
+):
+    workspace = tmp_path / "workspace"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    workspace.mkdir()
+    first.mkdir()
+    second.mkdir()
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+        )
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    assert service.add_root("s1", str(first))["ok"] is True
+    assert service.add_root("s1", str(second))["ok"] is True
+    first.rename(tmp_path / "first-moved")
+    first.symlink_to(second, target_is_directory=True)
+
+    result = service.remove_root("s1", str(first))
+
+    assert result["ok"] is True
+    assert [root["path"] for root in result["roots"]] == [
+        str(workspace),
+        str(second),
+    ]
+    assert [root["path"] for root in store.load("s1").extra_roots] == [
+        str(second)
+    ]
+
+
+def test_live_engine_reactivates_returned_durable_root(tmp_path):
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+    metadata = shared.stat()
+    durable = {
+        "path": str(shared),
+        "writable": False,
+        "label": "shared",
+        "_device": metadata.st_dev,
+        "_inode": metadata.st_ino,
+    }
+    store = MemorySessionStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+            extra_roots=[durable],
+        )
+    )
+    moved = tmp_path / "shared-offline"
+    shared.rename(moved)
+
+    class LiveEngine:
+        messages = []
+        roots = [RootDir(workspace, writable=True)]
+        durable_extra_roots = [durable]
+
+    engine = LiveEngine()
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    service.attach_engine("s1", engine)
+    unavailable = service.roots("s1")
+    assert unavailable[1]["available"] is False
+    assert len(engine.roots) == 1
+
+    moved.rename(shared)
+    assert service.get_engine("s1") is engine
+    assert len(engine.roots) == 2
+    restored = service.roots("s1")
+
+    assert restored[1]["path"] == str(shared)
+    assert restored[1].get("available", True) is True
+
+
+def test_live_root_mutation_waits_for_durable_persistence(tmp_path):
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+
+    class FailingStore(MemorySessionStore):
+        def set_extra_roots(self, *_args, **_kwargs):
+            raise OSError("disk full")
+
+    store = FailingStore(
+        SessionRecord(
+            session_id="s1",
+            workspace=str(workspace),
+            model="test-model",
+            mode="interactive",
+        )
+    )
+
+    class LiveEngine:
+        messages = []
+        roots = [RootDir(workspace, writable=True)]
+
+    engine = LiveEngine()
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    service.attach_engine("s1", engine)
+
+    with pytest.raises(OSError, match="disk full"):
+        service.add_root("s1", str(shared), writable=True)
+    assert len(engine.roots) == 1
+
+    shared_stat = shared.stat()
+    engine.roots.append(
+        RootDir(
+            shared,
+            writable=True,
+            device=shared_stat.st_dev,
+            inode=shared_stat.st_ino,
+        )
+    )
+    with pytest.raises(OSError, match="disk full"):
+        service.remove_root("s1", str(shared))
+    assert len(engine.roots) == 2
 
 def test_read_artifact_returns_text_and_blocks_workspace_escape(tmp_path):
     workspace = tmp_path / "workspace"

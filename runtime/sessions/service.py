@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import os
 import shutil
 import time
 from uuid import uuid4
@@ -64,6 +65,16 @@ _ARTIFACT_SUFFIXES = {
     ".docm",
 }
 _MAX_BINARY_PREVIEW = 25 * 1024 * 1024
+_TREE_IGNORE_NAMES = {
+    ".git",
+    ".venv",
+    "__pycache__",
+    "dist",
+    "node_modules",
+    "target",
+}
+_TREE_IGNORE_CASEFOLD = {name.casefold() for name in _TREE_IGNORE_NAMES}
+_MAX_TREE_SCAN = 5_000
 
 
 class SessionStore(Protocol):
@@ -202,6 +213,9 @@ class SessionService:
     ) -> Optional[SessionEngine]:
         engine = self._engines.get(session_id)
         if engine is not None:
+            live_roots = getattr(engine, "roots", None)
+            if live_roots is not None:
+                self._reconcile_live_roots(engine, live_roots)
             if mode is not None:
                 engine.permissions.mode = Mode(mode)
                 self.persist(session_id)
@@ -215,6 +229,8 @@ class SessionService:
             else workspace
         )
         if not selected_workspace:
+            return None
+        if record is not None and self._primary_root(record) is None:
             return None
         resolved_workspace = Path(selected_workspace).expanduser().resolve()
         if not resolved_workspace.is_dir():
@@ -236,6 +252,14 @@ class SessionService:
             if record
             else mode or self._default_mode
         )
+        durable_extra_roots = (
+            self._durable_extra_roots(record) if record else []
+        )
+        active_extra_roots = [
+            active
+            for root in durable_extra_roots
+            for active in _validated_extra_roots([root])
+        ]
         engine = self._engine_factory(
             EngineRequest(
                 session_id=session_id,
@@ -245,10 +269,16 @@ class SessionService:
                 mode=selected_mode,
                 agent=record.agent if record else agent,
                 messages=list(record.messages) if record else [],
-                extra_roots=list(record.extra_roots) if record else [],
+                extra_roots=(
+                    active_extra_roots
+                ),
                 grants=dict(record.grants) if record else {},
             )
         )
+        try:
+            engine.durable_extra_roots = durable_extra_roots
+        except (AttributeError, TypeError):
+            pass
         self._engines[session_id] = engine
         if record is not None and mode is not None:
             self.persist(session_id)
@@ -463,9 +493,15 @@ class SessionService:
         if target_id is None or self._store.load(target_id) is not None:
             return {"ok": False, "error": "could not allocate session"}
         source_workspace = record.source_workspace or record.workspace
+        try:
+            fork_root = RootDir(source_workspace, writable=True)
+        except (OSError, ValueError):
+            return {"ok": False, "error": "workspace is unavailable"}
         forked = SessionRecord(
             session_id=target_id,
             workspace=source_workspace,
+            workspace_device=fork_root.device,
+            workspace_inode=fork_root.inode,
             source_workspace=source_workspace,
             model=record.model,
             mode=record.mode,
@@ -632,41 +668,89 @@ class SessionService:
         engine = self._engines.get(session_id)
         live_roots = getattr(engine, "roots", None) if engine is not None else None
         if live_roots is not None:
-            return [
-                self._root_view(root, primary=index == 0)
+            self._reconcile_live_roots(engine, live_roots)
+            roots = [
+                self._root_view(
+                    root,
+                    primary=index == 0,
+                    available=_root_available(root),
+                )
                 for index, root in enumerate(live_roots)
             ]
+            configured = {
+                str(root.get("path", "")): root
+                for root in getattr(engine, "durable_extra_roots", [])
+            }
+            visible = {root["path"] for root in roots}
+            roots.extend(
+                _inactive_root_view(root)
+                for path, root in configured.items()
+                if path and path not in visible
+            )
+            source_workspace = getattr(engine, "source_workspace", None)
+            if roots and source_workspace:
+                roots[0]["label"] = (
+                    Path(source_workspace).name or str(source_workspace)
+                )
+            return roots
 
         record = self._store.load(session_id)
         if record is None or not record.workspace:
             return []
-        roots = [
-            RootDir(
-                path=record.workspace,
-                writable=True,
-                label=Path(record.workspace).name,
-            )
-        ]
-        roots.extend(
+        primary = self._primary_root(record)
+        if primary is None:
+            return []
+        primary.label = Path(
+            record.source_workspace or record.workspace
+        ).name
+        active_roots = [
             RootDir(
                 path=root["path"],
                 writable=bool(root.get("writable", False)),
                 label=str(root.get("label", "")),
+                device=int(root["_device"]),
+                inode=int(root["_inode"]),
             )
-            for root in record.extra_roots
-        )
-        return [
+            for root in self._record_extra_roots(record)
+        ]
+        roots = [primary, *active_roots]
+        views = [
             self._root_view(root, primary=index == 0)
             for index, root in enumerate(roots)
         ]
+        visible = {root["path"] for root in views}
+        views.extend(
+            _inactive_root_view(root)
+            for root in self._durable_extra_roots(record)
+            if str(root.get("path", "")) not in visible
+        )
+        return views
 
     def add_root(
         self, session_id: str, path: str, *, writable: bool = False
     ) -> dict[str, Any]:
-        resolved = Path(path).expanduser()
-        if not resolved.is_dir():
+        candidate = Path(path).expanduser()
+        if not candidate.is_dir():
             return {"ok": False, "error": f"not a directory: {path}"}
-        resolved = resolved.resolve()
+        try:
+            resolved = candidate.resolve(strict=True)
+            if candidate.is_symlink() or resolved != candidate.absolute():
+                raise OSError("root is not a real directory")
+        except (OSError, RuntimeError):
+            return {"ok": False, "error": "directory is unavailable"}
+        if _disallowed_tree_root(resolved):
+            return {"ok": False, "error": "directory cannot be added"}
+        try:
+            stat = resolved.stat()
+        except OSError:
+            return {"ok": False, "error": "directory is unavailable"}
+        binding = {
+            "path": str(resolved),
+            "writable": writable,
+            "label": resolved.name,
+            "_device": int(stat.st_dev),
+            "_inode": int(stat.st_ino),
+        }
         current = self.roots(session_id)
         if current and Path(current[0]["path"]).resolve() == resolved:
             return {"ok": True, "roots": current}
@@ -674,42 +758,56 @@ class SessionService:
         live_roots = getattr(engine, "roots", None) if engine is not None else None
 
         if live_roots is not None:
-            matching = next(
-                (root for root in live_roots if root.path == resolved),
-                None,
+            durable_roots = getattr(
+                engine,
+                "durable_extra_roots",
+                self._extra_root_records(live_roots),
             )
-            if matching is None:
-                live_roots.append(
-                    RootDir(path=resolved, writable=writable)
-                )
-            else:
-                matching.writable = writable
-            extra_roots = self._extra_root_records(live_roots)
+            extra_roots = [
+                record
+                for record in durable_roots
+                if Path(str(record["path"])).expanduser().absolute()
+                != resolved
+            ]
+            extra_roots.append(binding)
         else:
             record = self._store.load(session_id)
             if record is None:
                 return {"ok": False, "error": "session not found"}
             extra_roots = [
                 root
-                for root in record.extra_roots
-                if Path(str(root["path"])).expanduser().resolve() != resolved
+                for root in self._durable_extra_roots(record)
+                if Path(str(root["path"])).expanduser().absolute() != resolved
             ]
-            extra_roots.append(
-                {
-                    "path": str(resolved),
-                    "writable": writable,
-                    "label": resolved.name,
-                }
-            )
+            extra_roots.append(binding)
 
-        self._store.set_extra_roots(session_id, extra_roots)
         self._store.touch_workspace(str(resolved))
+        self._store.set_extra_roots(session_id, extra_roots)
+        if live_roots is not None:
+            engine.durable_extra_roots = extra_roots
+            live_roots[1:] = [
+                RootDir(
+                    path=root["path"],
+                    writable=bool(root["writable"]),
+                    label=str(root["label"]),
+                    device=int(root["_device"]),
+                    inode=int(root["_inode"]),
+                )
+                for root in _validated_extra_roots(extra_roots)
+            ]
         return {"ok": True, "roots": self.roots(session_id)}
 
     def remove_root(self, session_id: str, path: str) -> dict[str, Any]:
-        resolved = Path(path).expanduser().resolve()
+        configured_path = Path(path).expanduser()
+        if not configured_path.is_absolute():
+            return {"ok": False, "error": "invalid root path"}
+        configured_path = configured_path.absolute()
         current = self.roots(session_id)
-        if current and Path(current[0]["path"]).resolve() == resolved:
+        if (
+            current
+            and Path(current[0]["path"]).expanduser().absolute()
+            == configured_path
+        ):
             return {
                 "ok": False,
                 "error": "cannot remove the primary workspace",
@@ -718,19 +816,168 @@ class SessionService:
         engine = self._engines.get(session_id)
         live_roots = getattr(engine, "roots", None) if engine is not None else None
         if live_roots is not None:
-            live_roots[:] = [root for root in live_roots if root.path != resolved]
-            extra_roots = self._extra_root_records(live_roots)
+            durable_roots = getattr(
+                engine,
+                "durable_extra_roots",
+                self._extra_root_records(live_roots),
+            )
+            extra_roots = [
+                root
+                for root in durable_roots
+                if Path(str(root["path"])).expanduser().absolute()
+                != configured_path
+            ]
         else:
             record = self._store.load(session_id)
             if record is None:
                 return {"ok": False, "error": "session not found"}
             extra_roots = [
                 root
-                for root in record.extra_roots
-                if Path(str(root["path"])).expanduser().resolve() != resolved
+                for root in self._durable_extra_roots(record)
+                if Path(str(root["path"])).expanduser().absolute()
+                != configured_path
             ]
         self._store.set_extra_roots(session_id, extra_roots)
+        if live_roots is not None:
+            engine.durable_extra_roots = extra_roots
+            live_roots[1:] = [
+                RootDir(
+                    path=root["path"],
+                    writable=bool(root["writable"]),
+                    label=str(root["label"]),
+                    device=int(root["_device"]),
+                    inode=int(root["_inode"]),
+                )
+                for root in _validated_extra_roots(extra_roots)
+            ]
         return {"ok": True, "roots": self.roots(session_id)}
+
+    def tree(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        path: str = "",
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        if (
+            not isinstance(root, str)
+            or not root
+            or not isinstance(path, str)
+            or len(path) > 4096
+            or Path(path).is_absolute()
+            or ".." in Path(path).parts
+            or isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= 500
+        ):
+            return {"ok": False, "error": "invalid tree path"}
+        requested_root = Path(root).expanduser()
+        if not requested_root.is_absolute():
+            return {"ok": False, "error": "root is unavailable"}
+        requested_root = requested_root.absolute()
+        try:
+            if (
+                requested_root.is_symlink()
+                or requested_root.resolve(strict=True) != requested_root
+            ):
+                raise OSError("root is not a real directory")
+        except (OSError, ValueError, RuntimeError):
+            return {"ok": False, "error": "root is unavailable"}
+        root_view = next(
+            (
+                candidate
+                for candidate in self.roots(session_id)
+                if Path(candidate["path"]).expanduser().absolute()
+                == requested_root
+            ),
+            None,
+        )
+        if root_view is None or _disallowed_tree_root(requested_root):
+            return {
+                "ok": False,
+                "error": "root is not part of the session",
+            }
+        if root_view.get("available") is False:
+            return {"ok": False, "error": "root is unavailable"}
+        selected = requested_root
+        parts = tuple(
+            part for part in Path(path).parts if part not in {"", "."}
+        )
+        if any(part.casefold() in _TREE_IGNORE_CASEFOLD for part in parts):
+            return {"ok": False, "error": "invalid tree path"}
+        expected_identity = self._root_identity(
+            session_id,
+            selected,
+        )
+        if expected_identity is None:
+            return {"ok": False, "error": "root is unavailable"}
+        entries = []
+        scanned = 0
+        scan_limit = min(max(limit * 10, limit + 1), _MAX_TREE_SCAN)
+        descriptors = []
+        try:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            current_fd = os.open(selected, flags)
+            descriptors.append(current_fd)
+            root_stat = os.fstat(current_fd)
+            if expected_identity is not None and expected_identity != (
+                int(root_stat.st_dev),
+                int(root_stat.st_ino),
+            ):
+                raise OSError("root identity changed")
+            for component in parts:
+                current_fd = os.open(
+                    component,
+                    flags,
+                    dir_fd=current_fd,
+                )
+                descriptors.append(current_fd)
+            with os.scandir(current_fd) as iterator:
+                for candidate in iterator:
+                    if candidate.name.casefold() in _TREE_IGNORE_CASEFOLD:
+                        continue
+                    scanned += 1
+                    if scanned > scan_limit:
+                        break
+                    if candidate.is_symlink():
+                        kind = "symlink"
+                    elif candidate.is_dir(follow_symlinks=False):
+                        kind = "directory"
+                    elif candidate.is_file(follow_symlinks=False):
+                        kind = "file"
+                    else:
+                        continue
+                    entries.append(
+                        {
+                            "name": candidate.name,
+                            "path": "/".join((*parts, candidate.name)),
+                            "kind": kind,
+                        }
+                    )
+        except (OSError, ValueError):
+            return {"ok": False, "error": "directory is unavailable"}
+        finally:
+            for descriptor in reversed(descriptors):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        order = {"directory": 0, "symlink": 1, "file": 2}
+        entries.sort(
+            key=lambda entry: (
+                order[entry["kind"]],
+                entry["name"].casefold(),
+            )
+        )
+        truncated = len(entries) > limit or scanned > scan_limit
+        return {
+            "ok": True,
+            "root": str(selected),
+            "path": "/".join(parts),
+            "entries": entries[:limit],
+            "truncated": truncated,
+        }
 
     def list_artifacts(self, session_id: str) -> list[dict[str, Any]]:
         record = self._store.load(session_id)
@@ -865,14 +1112,103 @@ class SessionService:
         return target, None
 
     @staticmethod
-    def _root_view(root: RootDir, *, primary: bool) -> dict[str, Any]:
-        return {
+    def _root_view(
+        root: RootDir,
+        *,
+        primary: bool,
+        available: bool = True,
+    ) -> dict[str, Any]:
+        view = {
             "path": str(root.path),
             "writable": bool(root.writable),
             "label": root.label,
             "primary": primary,
-            "exists": root.path.is_dir(),
+            "exists": available and root.path.is_dir(),
         }
+        if not available:
+            view["available"] = False
+        return view
+
+    def _primary_root(self, record: SessionRecord) -> RootDir | None:
+        try:
+            root = RootDir(
+                path=record.workspace,
+                writable=True,
+                device=record.workspace_device,
+                inode=record.workspace_inode,
+            )
+        except (OSError, ValueError):
+            return None
+        if (
+            record.workspace_device is None
+            and record.workspace_inode is None
+        ):
+            record.workspace_device = root.device
+            record.workspace_inode = root.inode
+            self._store.save(record)
+        return root
+
+    def _record_extra_roots(
+        self,
+        record: SessionRecord,
+    ) -> list[dict[str, Any]]:
+        durable = self._durable_extra_roots(record)
+        active: list[dict[str, Any]] = []
+        for root in durable:
+            active.extend(_validated_extra_roots([root]))
+        return active
+
+    @staticmethod
+    def _reconcile_live_roots(
+        engine: SessionEngine,
+        live_roots: list[RootDir],
+    ) -> None:
+        active_paths = {str(root.path) for root in live_roots[1:]}
+        for record in getattr(engine, "durable_extra_roots", []):
+            validated = _validated_extra_roots([record])
+            if not validated:
+                continue
+            root = validated[0]
+            if str(root["path"]) in active_paths:
+                continue
+            live_roots.append(
+                RootDir(
+                    path=root["path"],
+                    writable=bool(root["writable"]),
+                    label=str(root["label"]),
+                    device=int(root["_device"]),
+                    inode=int(root["_inode"]),
+                )
+            )
+            active_paths.add(str(root["path"]))
+
+    def _durable_extra_roots(
+        self,
+        record: SessionRecord,
+    ) -> list[dict[str, Any]]:
+        durable: list[dict[str, Any]] = []
+        changed = False
+        for root in record.extra_roots:
+            if not isinstance(root, dict):
+                continue
+            device = root.get("_device")
+            inode = root.get("_inode")
+            if device is None and inode is None:
+                bound = _validated_extra_roots(
+                    [root],
+                    bind_unbound=True,
+                )
+                if bound:
+                    durable.append(bound[0])
+                    changed = True
+                else:
+                    durable.append(root)
+            else:
+                durable.append(root)
+        if changed:
+            record.extra_roots = durable
+            self._store.save(record)
+        return durable
 
     @staticmethod
     def _extra_root_records(roots: list[RootDir]) -> list[dict[str, Any]]:
@@ -881,9 +1217,138 @@ class SessionService:
                 "path": str(root.path),
                 "writable": bool(root.writable),
                 "label": root.label,
+                "_device": root.device,
+                "_inode": root.inode,
             }
             for root in roots[1:]
+            if root.device is not None and root.inode is not None
         ]
+
+    def _root_identity(
+        self,
+        session_id: str,
+        selected: Path,
+    ) -> tuple[int, int] | None:
+        engine = self._engines.get(session_id)
+        live_roots = getattr(engine, "roots", None) if engine is not None else None
+        if live_roots is not None:
+            matching = next(
+                (
+                    root
+                    for root in live_roots
+                    if root.path == selected
+                    and root.device is not None
+                    and root.inode is not None
+                ),
+                None,
+            )
+            return (
+                (int(matching.device), int(matching.inode))
+                if matching is not None
+                else None
+            )
+        record = self._store.load(session_id)
+        if record is None:
+            return None
+        primary = Path(record.workspace).expanduser().absolute()
+        if primary == selected:
+            root = self._primary_root(record)
+            if root is None:
+                return None
+            return (int(root.device), int(root.inode))
+        matching = next(
+            (
+                root
+                for root in self._record_extra_roots(record)
+                if Path(root["path"]) == selected
+            ),
+            None,
+        )
+        return (
+            (int(matching["_device"]), int(matching["_inode"]))
+            if matching is not None
+            else None
+        )
+
+
+def _disallowed_tree_root(path: Path) -> bool:
+    return (
+        ".git" in (part.casefold() for part in path.parts)
+        or path.name.casefold() in _TREE_IGNORE_CASEFOLD
+    )
+
+
+def _root_available(root: RootDir) -> bool:
+    try:
+        metadata = os.stat(root.path, follow_symlinks=False)
+    except OSError:
+        return False
+    return (
+        not root.path.is_symlink()
+        and root.path.resolve(strict=True) == root.path
+        and root.device is not None
+        and root.inode is not None
+        and (int(metadata.st_dev), int(metadata.st_ino))
+        == (int(root.device), int(root.inode))
+    )
+
+
+def _inactive_root_view(root: dict[str, Any]) -> dict[str, Any]:
+    path = str(root.get("path", ""))
+    return {
+        "path": path,
+        "writable": bool(root.get("writable", False)),
+        "label": str(root.get("label", "")) or Path(path).name,
+        "primary": False,
+        "exists": False,
+        "available": False,
+    }
+
+
+def _validated_extra_roots(
+    roots: list[dict[str, Any]],
+    *,
+    bind_unbound: bool = False,
+) -> list[dict[str, Any]]:
+    valid = []
+    for root in roots:
+        try:
+            path = Path(str(root["path"])).expanduser()
+            device = root.get("_device")
+            inode = root.get("_inode")
+            if (
+                path.is_symlink()
+                or _disallowed_tree_root(path)
+            ):
+                continue
+            resolved = path.resolve(strict=True)
+            if resolved != path.absolute() or not resolved.is_dir():
+                continue
+            stat = os.stat(resolved, follow_symlinks=False)
+            if device is None and inode is None and bind_unbound:
+                device = int(stat.st_dev)
+                inode = int(stat.st_ino)
+            if (
+                isinstance(device, bool)
+                or not isinstance(device, int)
+                or isinstance(inode, bool)
+                or not isinstance(inode, int)
+            ):
+                continue
+            if (int(stat.st_dev), int(stat.st_ino)) != (device, inode):
+                continue
+            valid.append(
+                {
+                    "path": str(resolved),
+                    "writable": bool(root.get("writable", False)),
+                    "label": str(root.get("label", "")) or resolved.name,
+                    "_device": device,
+                    "_inode": inode,
+                }
+            )
+        except (KeyError, OSError, TypeError, ValueError):
+            continue
+    return valid
 
 
 def _is_safe_fork_boundary(

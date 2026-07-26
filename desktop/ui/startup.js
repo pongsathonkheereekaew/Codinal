@@ -34,6 +34,9 @@ const state = {
   sessionSearchTimer: null,
   highlightedMessageIndex: null,
   sessionSelectionGeneration: 0,
+  roots: [],
+  treeGeneration: 0,
+  rootMutationPending: false,
 };
 
 const el = Object.fromEntries(
@@ -52,6 +55,7 @@ const el = Object.fromEntries(
     "provider-list", "toast-region",
     "session-dialog", "session-title-input", "rename-session",
     "pin-session", "archive-session", "delete-session",
+    "context-roots", "project-tree", "add-context-root",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -259,6 +263,8 @@ async function selectSession(session) {
   state.workspace = session.workspace;
   state.messages = [];
   state.checkpoints = [];
+  state.roots = [];
+  state.treeGeneration += 1;
   invalidateAttachments();
   state.liveAssistant = null;
   state.activities.clear();
@@ -269,6 +275,8 @@ async function selectSession(session) {
   renderSessions();
   renderConversation();
   renderCheckpoints();
+  renderContextRoots();
+  renderProjectTree();
   try {
     const messages = await api(
       `/v1/sessions/${encodeURIComponent(sessionId)}/messages`
@@ -284,6 +292,7 @@ async function selectSession(session) {
       loadPendingApprovals(),
       loadPendingInteractions(),
       loadDiff(false),
+      loadRootsAndTree(),
     ]);
     if (
       state.sessionId !== sessionId
@@ -331,6 +340,8 @@ function switchWorkspace(workspace) {
   state.workspace = workspace;
   state.messages = [];
   state.highlightedMessageIndex = null;
+  state.roots = [];
+  state.treeGeneration += 1;
   invalidateAttachments();
   state.liveAssistant = null;
   state.activities.clear();
@@ -342,6 +353,8 @@ function switchWorkspace(workspace) {
   renderConversation();
   renderDiff();
   renderCheckpoints();
+  renderContextRoots();
+  renderProjectTree();
   connectSocket();
   return true;
 }
@@ -405,6 +418,9 @@ function setBusy(busy) {
   el["agent-mode"].disabled = busy;
   el["new-task"].disabled = busy;
   el["choose-workspace"].disabled = busy;
+  el["add-context-root"].disabled = (
+    busy || state.rootMutationPending || !state.roots.length
+  );
   el["restore-checkpoint"].disabled = (
     busy || !el["checkpoint-select"].value
   );
@@ -469,11 +485,243 @@ async function finishTurn() {
     state.messages = await api(
       `/v1/sessions/${encodeURIComponent(state.sessionId)}/messages`
     );
-    await Promise.all([loadSessions(), loadDiff(false)]);
+    await Promise.all([
+      loadSessions(),
+      loadDiff(false),
+      loadRootsAndTree(),
+    ]);
   } catch (error) {
     toast(error.message, "error");
   }
   renderConversation();
+}
+
+async function loadRootsAndTree() {
+  const sessionId = state.sessionId;
+  const generation = ++state.treeGeneration;
+  if (!sessionId) {
+    state.roots = [];
+    renderContextRoots();
+    renderProjectTree();
+    return;
+  }
+  const roots = await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/roots`
+  );
+  if (
+    state.sessionId !== sessionId
+    || state.treeGeneration !== generation
+  ) return;
+  state.roots = roots;
+  el["add-context-root"].disabled = (
+    state.busy || state.rootMutationPending || !roots.length
+  );
+  renderContextRoots();
+  renderProjectTree(generation);
+}
+
+function renderContextRoots() {
+  el["add-context-root"].disabled = (
+    state.busy || state.rootMutationPending || !state.roots.length
+  );
+  el["context-roots"].replaceChildren();
+  for (const root of state.roots) {
+    const chip = node("div", "context-root");
+    chip.classList.toggle("is-unavailable", root.available === false);
+    chip.title = root.path;
+    const label = node("span", "context-root-label");
+    label.append(
+      node("strong", "", root.label || basename(root.path)),
+      node(
+        "small",
+        "",
+        `${root.available === false
+          ? "Unavailable"
+          : root.writable ? "Read and write" : "Read only"} · ${shortPath(root.path)}`
+      )
+    );
+    chip.append(label);
+    if (!root.primary) {
+      const remove = node("button", "context-root-remove", "×");
+      remove.type = "button";
+      remove.setAttribute(
+        "aria-label",
+        `Remove ${root.path}`
+      );
+      remove.addEventListener("click", () => {
+        removeContextRoot(root).catch(
+          (error) => toast(error.message, "error")
+        );
+      });
+      chip.append(remove);
+    }
+    el["context-roots"].append(chip);
+  }
+}
+
+function renderProjectTree(generation = state.treeGeneration) {
+  el["project-tree"].replaceChildren();
+  if (!state.roots.length) {
+    el["project-tree"].append(
+      node("p", "tree-empty", "Project files appear after the first turn")
+    );
+    return;
+  }
+  for (const root of state.roots) {
+    const section = node("section", "tree-root");
+    const title = node(
+      "strong",
+      "tree-root-title",
+      root.label || basename(root.path)
+    );
+    title.title = root.path;
+    section.append(title);
+    const entries = node("div", "tree-entries");
+    section.append(entries);
+    el["project-tree"].append(section);
+    if (root.available === false) {
+      entries.append(
+        node("p", "tree-empty", "Root unavailable — reconnect or remove it")
+      );
+      continue;
+    }
+    loadTreeDirectory(entries, root, "", generation).catch(
+      (error) => {
+        if (state.treeGeneration === generation) {
+          entries.replaceChildren(
+            node("p", "tree-empty", error.message)
+          );
+        }
+      }
+    );
+  }
+}
+
+async function loadTreeDirectory(container, root, path, generation) {
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
+  const query = new URLSearchParams({
+    root: root.path,
+    path,
+    limit: "200",
+  });
+  const result = await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/tree?${query}`
+  );
+  if (
+    state.sessionId !== sessionId
+    || state.treeGeneration !== generation
+  ) return;
+  container.replaceChildren();
+  for (const entry of result.entries || []) {
+    if (entry.kind === "directory") {
+      const details = node("details", "tree-directory");
+      const summary = node("summary", "", entry.name);
+      const children = node("div", "tree-children");
+      details.append(summary, children);
+      details.addEventListener("toggle", () => {
+        if (!details.open || details.dataset.loaded) return;
+        details.dataset.loaded = "true";
+        loadTreeDirectory(
+          children,
+          root,
+          entry.path,
+          generation
+        ).catch((error) => {
+          delete details.dataset.loaded;
+          children.replaceChildren(
+            node("p", "tree-empty", error.message)
+          );
+        });
+      });
+      container.append(details);
+    } else {
+      const row = node(
+        "div",
+        `tree-file${entry.kind === "symlink" ? " is-symlink" : ""}`
+      );
+      row.append(
+        node(
+          "span",
+          "tree-file-icon",
+          entry.kind === "symlink" ? "↗" : "·"
+        ),
+        node("span", "", entry.name)
+      );
+      container.append(row);
+    }
+  }
+  if (result.truncated) {
+    container.append(
+      node("p", "tree-empty", "More entries are hidden")
+    );
+  }
+}
+
+async function addContextRoot() {
+  const sessionId = state.sessionId;
+  if (
+    !sessionId
+    || state.busy
+    || state.rootMutationPending
+    || !state.roots.length
+  ) return;
+  const path = await pickWorkspace();
+  if (!path || state.sessionId !== sessionId) return;
+  if (
+    !window.confirm(
+      "Add this folder as readable project context for this task?"
+    )
+  ) return;
+  const writable = window.confirm(
+    "Also allow Codinal to edit files in this folder?\n\n"
+    + "Cancel keeps the folder read-only."
+  );
+  state.rootMutationPending = true;
+  renderContextRoots();
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/roots`,
+      {
+        method: "POST",
+        body: JSON.stringify({ path, writable }),
+      }
+    );
+    if (state.sessionId === sessionId) await loadRootsAndTree();
+  } finally {
+    state.rootMutationPending = false;
+    renderContextRoots();
+  }
+}
+
+async function removeContextRoot(root) {
+  const sessionId = state.sessionId;
+  if (
+    !sessionId
+    || state.busy
+    || state.rootMutationPending
+    || root.primary
+  ) return;
+  if (
+    !window.confirm(
+      `Remove ${root.label || basename(root.path)} from this task?`
+    )
+  ) return;
+  state.rootMutationPending = true;
+  renderContextRoots();
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/roots`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ path: root.path }),
+      }
+    );
+    if (state.sessionId === sessionId) await loadRootsAndTree();
+  } finally {
+    state.rootMutationPending = false;
+    renderContextRoots();
+  }
 }
 
 function renderConversation() {
@@ -1316,6 +1564,9 @@ async function renderProviders() {
 
 function wireEvents() {
   el["new-task"].addEventListener("click", newTask);
+  el["add-context-root"].addEventListener("click", () => {
+    addContextRoot().catch((error) => toast(error.message, "error"));
+  });
   el["refresh-sessions"].addEventListener("click", loadSessions);
   el["session-search"].addEventListener("input", scheduleSessionSearch);
   el["theme-toggle"].addEventListener("click", toggleTheme);
@@ -1357,10 +1608,14 @@ function wireEvents() {
         state.sessionId = null;
         state.workspace = null;
         state.messages = [];
+        state.roots = [];
+        state.treeGeneration += 1;
         invalidateAttachments();
         el["task-title"].textContent = "New task";
         updateWorkspaceLabel();
         renderConversation();
+        renderContextRoots();
+        renderProjectTree();
       }
       state.managedSession = null;
       el["session-dialog"].close();

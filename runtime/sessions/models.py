@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -62,6 +64,8 @@ class SessionRecord:
     workspace: str
     model: str
     mode: str
+    workspace_device: Optional[int] = None
+    workspace_inode: Optional[int] = None
     source_workspace: Optional[str] = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     title: Optional[str] = None
@@ -91,8 +95,28 @@ class RootDir:
     path: Path
     writable: bool = False
     label: str = ""
+    device: Optional[int] = None
+    inode: Optional[int] = None
 
     def __post_init__(self) -> None:
-        self.path = Path(self.path).expanduser().resolve()
+        path = Path(self.path).expanduser()
+        resolved = path.resolve(strict=True)
+        metadata = os.stat(path, follow_symlinks=False)
+        if (
+            path.is_symlink()
+            or resolved != path.absolute()
+            or not stat.S_ISDIR(metadata.st_mode)
+        ):
+            raise ValueError("root must be a real directory")
+        identity = (int(metadata.st_dev), int(metadata.st_ino))
+        if self.device is None and self.inode is None:
+            self.device, self.inode = identity
+        elif (
+            self.device is None
+            or self.inode is None
+            or identity != (self.device, self.inode)
+        ):
+            raise ValueError("root identity changed")
+        self.path = resolved
         if not self.label:
             self.label = self.path.name or str(self.path)

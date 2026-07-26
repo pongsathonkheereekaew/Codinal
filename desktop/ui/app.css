@@ -299,7 +299,8 @@ select:focus-visible,
 
 .session-list {
   min-width: 232px;
-  flex: 1;
+  max-height: 38%;
+  flex: 0 1 38%;
   overflow-y: auto;
   padding: 0 7px 12px;
 }
@@ -370,6 +371,129 @@ select:focus-visible,
   padding: 18px 12px;
   color: var(--muted);
   text-align: center;
+}
+
+.context-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+}
+
+.context-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 9px 8px;
+}
+
+.context-root {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 5px 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.context-root.is-unavailable {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+.context-root-label {
+  display: grid;
+  min-width: 0;
+}
+
+.context-root-label strong,
+.context-root-label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-root-label strong {
+  font-size: 10.5px;
+}
+
+.context-root-label small {
+  color: var(--muted);
+  font-size: 8.5px;
+}
+
+.context-root-remove {
+  padding: 2px;
+  color: var(--muted);
+}
+
+.project-tree {
+  min-width: 232px;
+  flex: 1;
+  overflow: auto;
+  padding: 0 8px 10px;
+  font-size: 11px;
+}
+
+.tree-root + .tree-root {
+  margin-top: 10px;
+}
+
+.tree-root-title {
+  display: block;
+  padding: 3px 5px;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tree-directory > summary,
+.tree-file {
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 5px;
+  border-radius: 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-directory > summary {
+  cursor: pointer;
+}
+
+.tree-directory > summary:hover,
+.tree-file:hover {
+  background: var(--surface-hover);
+}
+
+.tree-children {
+  margin-left: 12px;
+}
+
+.tree-file {
+  display: flex;
+  gap: 5px;
+}
+
+.tree-file.is-symlink {
+  color: var(--muted);
+}
+
+.tree-file-icon {
+  color: var(--faint);
+}
+
+.tree-empty {
+  margin: 0;
+  padding: 7px;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .sidebar-footer {

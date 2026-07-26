@@ -21,6 +21,51 @@ requires_seatbelt = pytest.mark.skipif(
 )
 
 
+def test_direct_mutation_recorder_uses_supplied_preimage_bytes(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "secure-preimage"
+    workspace.mkdir()
+    target = workspace / "target.txt"
+    target.write_text("outside secret\n", encoding="utf-8")
+    service = GitWorktreeService(tmp_path / "secure-preimage-data")
+    service.prepare_plain("secure-preimage", workspace)
+    checkpoint = service.begin_checkpoint(
+        "secure-preimage",
+        message_count=0,
+        attributed=True,
+    )
+    assert checkpoint is not None
+
+    service.mutation_recorder("secure-preimage").record_file_preimage(
+        target,
+        content=b"approved preimage\n",
+        mode=0o640,
+    )
+
+    stored = service.store.list_checkpoint_files(
+        checkpoint.checkpoint_id
+    )
+    assert len(stored) == 1
+    repository = service.checkpoint_base / hashlib.sha256(
+        b"secure-preimage"
+    ).hexdigest()
+    captured = subprocess.run(
+        [
+            service.git_executable,
+            f"--git-dir={repository}",
+            "cat-file",
+            "blob",
+            stored[0].before_blob,
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ).stdout
+    assert captured == b"approved preimage\n"
+    assert b"outside secret" not in captured
+
+
 @requires_seatbelt
 def test_plain_workspace_checkpoint_restores_only_agent_paths(
     tmp_path: Path,

@@ -63,6 +63,7 @@ def test_composition_injects_policy_roots_grants_and_session_event_sink(tmp_path
     readonly = tmp_path / "readonly"
     workspace.mkdir()
     readonly.mkdir()
+    readonly_stat = readonly.stat()
     store = MemorySessionStore(
         SessionRecord(
             session_id="s1",
@@ -70,7 +71,14 @@ def test_composition_injects_policy_roots_grants_and_session_event_sink(tmp_path
             model="openai:gpt-test",
             mode="interactive",
             messages=[],
-            extra_roots=[{"path": str(readonly), "writable": False}],
+            extra_roots=[
+                {
+                    "path": str(readonly),
+                    "writable": False,
+                    "_device": readonly_stat.st_dev,
+                    "_inode": readonly_stat.st_ino,
+                }
+            ],
             grants={
                 "tools": ["write_file"],
                 "commands": ["git status"],

@@ -16,6 +16,7 @@ prefix matching. ``git status`` matches ``git status -s`` but never
 """
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass, field
 from enum import Enum
@@ -134,7 +135,15 @@ class PermissionEngine:
         self.workspace_root = Path(self.workspace_root).expanduser().resolve()
         self.auto_allow_tools = set(self.auto_allow_tools)
         if self.roots is None:
-            self.roots = [{"path": self.workspace_root, "writable": True}]
+            metadata = os.stat(self.workspace_root, follow_symlinks=False)
+            self.roots = [
+                {
+                    "path": self.workspace_root,
+                    "writable": True,
+                    "_device": int(metadata.st_dev),
+                    "_inode": int(metadata.st_ino),
+                }
+            ]
 
     def _resolved_roots(self) -> list[tuple[Path, bool]]:
         out: list[tuple[Path, bool]] = []
@@ -145,7 +154,32 @@ class PermissionEngine:
                 p, w = r, True
             else:
                 p, w = getattr(r, "path"), bool(getattr(r, "writable", False))
-            out.append((Path(p).expanduser().resolve(), w))
+            path = Path(p).expanduser()
+            device = (
+                r.get("_device")
+                if isinstance(r, dict)
+                else getattr(r, "device", None)
+            )
+            inode = (
+                r.get("_inode")
+                if isinstance(r, dict)
+                else getattr(r, "inode", None)
+            )
+            try:
+                resolved = path.resolve(strict=True)
+                metadata = os.stat(path, follow_symlinks=False)
+                if (
+                    device is None
+                    or inode is None
+                    or path.is_symlink()
+                    or resolved != path.absolute()
+                    or (int(metadata.st_dev), int(metadata.st_ino))
+                    != (int(device), int(inode))
+                ):
+                    continue
+            except (OSError, ValueError):
+                continue
+            out.append((resolved, w))
         return out
 
     def evaluate(

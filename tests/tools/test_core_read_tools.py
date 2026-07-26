@@ -65,6 +65,38 @@ def test_absolute_path_in_extra_root_is_readable(tmp_path):
     assert result["path"] == str(document)
 
 
+def test_read_root_binding_rejects_retargeted_extra_root(tmp_path):
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    shared.mkdir()
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    metadata = shared.stat()
+    registry = build_core_registry(
+        [
+            RootDir(workspace, writable=True),
+            RootDir(
+                shared,
+                writable=False,
+                device=metadata.st_dev,
+                inode=metadata.st_ino,
+            ),
+        ],
+        manifest=ToolManifest(),
+    )
+    shared.rename(tmp_path / "moved")
+    shared.symlink_to(outside, target_is_directory=True)
+
+    result = registry.execute(
+        "read_file",
+        {"path": str(shared / "secret.txt")},
+    )
+
+    assert result == {"error": "path is outside readable roots"}
+
+
 def test_list_files_is_bounded_and_skips_generated_directories(tmp_path):
     (tmp_path / ".git").mkdir()
     (tmp_path / ".git" / "config").write_text("hidden")

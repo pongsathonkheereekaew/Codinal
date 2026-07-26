@@ -184,7 +184,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
     assert all(event["action"] == "preserved_corrupt_state" for event in events)
     with sqlite3.connect(data_dir / "codinal.db") as conversations:
         assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 5
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -476,6 +476,81 @@ def test_production_session_search_and_fork_survive_restart(tmp_path):
     assert fork_record is not None
     assert fork_record.grants == {}
     assert fork_record.turn_checkpoint == TurnCheckpoint()
+
+
+def test_production_project_roots_and_tree_survive_restart(tmp_path):
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+    (shared / "docs").mkdir()
+    (shared / "docs" / "guide.md").write_text("guide")
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id="context-session",
+            workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            messages=[{"role": "user", "content": "inspect project"}],
+        )
+    )
+    store.close()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=AttachmentCaptureProvider(),
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        added = client.post(
+            "/v1/sessions/context-session/roots",
+            headers=AUTH,
+            json={"path": str(shared), "writable": False},
+        )
+        tree = client.get(
+            "/v1/sessions/context-session/tree",
+            headers=AUTH,
+            params={"root": str(shared), "path": "docs"},
+        )
+
+    assert added.status_code == 200
+    assert added.json()["roots"][1]["writable"] is False
+    assert tree.status_code == 200
+    assert tree.json()["entries"] == [
+        {"name": "guide.md", "path": "docs/guide.md", "kind": "file"}
+    ]
+
+    restarted = build_services(
+        config,
+        provider=AttachmentCaptureProvider(),
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=restarted)
+    ) as client:
+        roots = client.get(
+            "/v1/sessions/context-session/roots",
+            headers=AUTH,
+        )
+        removed = client.request(
+            "DELETE",
+            "/v1/sessions/context-session/roots",
+            headers=AUTH,
+            json={"path": str(shared)},
+        )
+
+    assert roots.status_code == 200
+    assert roots.json()[1]["path"] == str(shared.resolve())
+    assert removed.status_code == 200
+    assert len(removed.json()["roots"]) == 1
 
 
 def test_workspace_switch_uses_a_new_session_and_permission_root(tmp_path):
@@ -1155,6 +1230,8 @@ def test_restart_restores_other_interactions_and_resumes_once(
                 "path": str(shared.resolve()),
                 "writable": False,
                 "label": "shared",
+                "_device": shared.stat().st_dev,
+                "_inode": shared.stat().st_ino,
             }
         ]
 
@@ -1559,6 +1636,8 @@ def test_production_question_and_directory_cards_apply_selected_root(
             "path": str(shared.resolve()),
             "writable": False,
             "label": "shared",
+            "_device": shared.stat().st_dev,
+            "_inode": shared.stat().st_ino,
         }
     ]
 

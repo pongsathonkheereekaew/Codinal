@@ -249,10 +249,14 @@ def build_services(
                             path=resolved,
                             writable=writable,
                             label=resolved.name,
+                            device=int(bound["_device"]),
+                            inode=int(bound["_inode"]),
                         )
                     )
                 elif matching is not context.roots[0]:
                     matching.writable = writable
+                    matching.device = int(bound["_device"])
+                    matching.inode = int(bound["_inode"])
                 return {
                     "granted": True,
                     "path": str(resolved),
@@ -322,9 +326,26 @@ def build_services(
         existing = store.load(session_id)
         roots = list(engine.roots)
         permissions = engine.permissions
+        active_extra_roots = {
+            str(root.path): {
+                "path": str(root.path),
+                "writable": bool(root.writable),
+                "label": root.label,
+                "_device": root.device,
+                "_inode": root.inode,
+            }
+            for root in roots[1:]
+        }
+        extra_roots = []
+        for root in getattr(engine, "durable_extra_roots", []):
+            path = str(root.get("path", ""))
+            extra_roots.append(active_extra_roots.pop(path, root))
+        extra_roots.extend(active_extra_roots.values())
         return SessionRecord(
             session_id=session_id,
             workspace=str(roots[0].path),
+            workspace_device=roots[0].device,
+            workspace_inode=roots[0].inode,
             source_workspace=str(
                 getattr(engine, "source_workspace", roots[0].path)
             ),
@@ -334,14 +355,7 @@ def build_services(
             title=existing.title if existing else None,
             agent=str(getattr(engine, "agent", "code")),
             message_count=len(engine.messages),
-            extra_roots=[
-                {
-                    "path": str(root.path),
-                    "writable": bool(root.writable),
-                    "label": root.label,
-                }
-                for root in roots[1:]
-            ],
+            extra_roots=extra_roots,
             grants={
                 "tools": sorted(permissions.session_allow_tools),
                 "commands": sorted(permissions.session_allow_commands),

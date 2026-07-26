@@ -167,7 +167,8 @@ class TransactionalShell:
             if not changed:
                 return result
             if any(
-                ".git" in PurePosixPath(path).parts
+                ".git"
+                in (part.casefold() for part in PurePosixPath(path).parts)
                 for path in changed
             ):
                 return _failed(

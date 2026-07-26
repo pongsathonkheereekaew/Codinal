@@ -42,6 +42,19 @@
         <nav id="session-list" class="session-list"
           aria-label="Recent tasks"></nav>
 
+        <section class="context-panel" aria-label="Project context">
+          <div class="sidebar-heading">
+            <span>Project</span>
+            <button id="add-context-root" class="icon-button" type="button"
+              aria-label="Add project folder" title="Add project folder"
+              disabled>＋</button>
+          </div>
+          <div id="context-roots" class="context-roots"
+            aria-label="Approved project folders"></div>
+          <div id="project-tree" class="project-tree"
+            aria-label="Project files"></div>
+        </section>
+
         <div class="sidebar-footer">
           <button id="theme-toggle" class="footer-button" type="button">
             <span aria-hidden="true">◐</span>

@@ -21,6 +21,7 @@ from .registry import ToolRegistry
 _MAX_WRITE_BYTES = 5 * 1024 * 1024
 _MAX_REPLACEMENTS = 10_000
 _MAX_COMMAND_SECONDS = 600.0
+_EXPECTED_ABSENT = object()
 
 
 class ShellExecutor(Protocol):
@@ -33,13 +34,21 @@ class ShellExecutor(Protocol):
 
 
 class MutationRecorder(Protocol):
-    def record_file_preimage(self, path: Path) -> None: ...
+    def record_file_preimage(
+        self,
+        path: Path,
+        *,
+        content: bytes | None,
+        mode: int,
+    ) -> None: ...
 
     def record_shell_fallback(self) -> None: ...
 
 
 @dataclass(frozen=True)
 class _Target:
+    root: RootDir
+    parent_parts: tuple[str, ...]
     parent: Path
     name: str
     display: str
@@ -76,26 +85,37 @@ def register_mutation_tools(
         target, error = paths.target(path)
         if target is None:
             return {"ok": False, "error": error}
-        existing, error = _existing_metadata(target)
+        raw, existing_mode, version, error = _read_regular_file(
+            target,
+            allow_missing=True,
+        )
         if error:
             return {"ok": False, "error": error}
-        mode = existing.st_mode & 0o777 if existing else 0o600
+        created = raw is None
+        mode = existing_mode if not created else 0o600
         if not _record_file_preimage(
             mutation_recorder,
             target.parent / target.name,
+            content=raw,
+            mode=existing_mode,
         ):
             return {
                 "ok": False,
                 "error": "automatic checkpoint unavailable",
             }
-        error = _atomic_write(target, encoded, mode=mode)
+        error = _atomic_write(
+            target,
+            encoded,
+            mode=mode,
+            expected=_EXPECTED_ABSENT if created else version,
+        )
         if error:
             return {"ok": False, "error": error}
         return {
             "ok": True,
             "path": target.display,
             "bytes_written": len(encoded),
-            "created": existing is None,
+            "created": created,
         }
 
     def replace_in_file(
@@ -153,6 +173,8 @@ def register_mutation_tools(
         if not _record_file_preimage(
             mutation_recorder,
             target.parent / target.name,
+            content=raw,
+            mode=mode,
         ):
             return {
                 "ok": False,
@@ -221,11 +243,18 @@ def register_mutation_tools(
 def _record_file_preimage(
     recorder: MutationRecorder | None,
     path: Path,
+    *,
+    content: bytes | None,
+    mode: int,
 ) -> bool:
     if recorder is None:
         return True
     try:
-        recorder.record_file_preimage(path)
+        recorder.record_file_preimage(
+            path,
+            content=content,
+            mode=mode,
+        )
     except Exception:
         return False
     return True
@@ -240,83 +269,101 @@ class _WritablePaths:
     def target(self, value: Any) -> tuple[Optional[_Target], str]:
         if not isinstance(value, str) or not 1 <= len(value) <= 4096:
             return None, "invalid path"
-        primary = _root_path(self._roots[0])
-        candidate = Path(value).expanduser()
-        if not candidate.is_absolute():
-            candidate = primary / candidate
         try:
-            if candidate.is_symlink():
-                return None, "symbolic links are not writable"
-            parent = candidate.parent.resolve(strict=True)
-        except FileNotFoundError:
-            return None, "parent directory does not exist"
-        except (OSError, RuntimeError):
-            return None, "path is unavailable"
-        if not parent.is_dir():
-            return None, "parent is not a directory"
-        if not self._inside_writable_root(parent):
+            primary = _root_path(self._roots[0])
+        except (OSError, ValueError):
+            return None, "workspace root is unavailable"
+        candidate = Path(value).expanduser()
+        if ".." in candidate.parts:
             return None, "path is outside writable roots"
-        target_path = parent / candidate.name
-        if self._contains_protected_git_path(target_path):
+        if not candidate.is_absolute():
+            selected_root = self._roots[0]
+            relative = candidate
+        else:
+            candidate = Path(os.path.abspath(candidate))
+            matches: list[tuple[int, RootDir, Path]] = []
+            for root in self._roots:
+                if not _root_writable(root):
+                    continue
+                try:
+                    root_path = _root_path(root)
+                    relative = candidate.relative_to(root_path)
+                except (OSError, ValueError):
+                    continue
+                matches.append((len(root_path.parts), root, relative))
+            if not matches:
+                return None, "path is outside writable roots"
+            _, selected_root, relative = max(
+                matches,
+                key=lambda item: item[0],
+            )
+        if not _root_writable(selected_root):
+            return None, "path is outside writable roots"
+        parts = tuple(
+            component
+            for component in relative.parts
+            if component not in {"", "."}
+        )
+        if not parts:
+            return None, "invalid path"
+        if any(component.casefold() == ".git" for component in parts):
             return None, "Git metadata is not writable"
+        try:
+            selected_path = _root_path(selected_root)
+        except (OSError, ValueError):
+            return None, "workspace root is unavailable"
+        parent_parts = parts[:-1]
+        parent = selected_path.joinpath(*parent_parts)
+        ancestor = selected_path
+        for component in parent_parts:
+            ancestor = ancestor / component
+            try:
+                metadata = os.stat(ancestor, follow_symlinks=False)
+            except FileNotFoundError:
+                return None, "parent directory does not exist"
+            except OSError:
+                return None, "path is unavailable"
+            if stat.S_ISLNK(metadata.st_mode):
+                return None, "path is outside writable roots"
+            if not stat.S_ISDIR(metadata.st_mode):
+                return None, "parent is not a directory"
+        target_path = parent / parts[-1]
+        try:
+            target_metadata = os.stat(
+                target_path,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            target_metadata = None
+        except OSError:
+            return None, "path is unavailable"
+        if target_metadata is not None and stat.S_ISLNK(
+            target_metadata.st_mode
+        ):
+            return None, "symbolic links are not writable"
         try:
             display = str(target_path.relative_to(primary))
         except ValueError:
             display = str(target_path)
-        return _Target(parent=parent, name=candidate.name, display=display), ""
-
-    def _contains_protected_git_path(self, candidate: Path) -> bool:
-        for root in self._roots:
-            try:
-                relative = candidate.relative_to(_root_path(root))
-            except ValueError:
-                continue
-            if ".git" in relative.parts:
-                return True
-        return False
-
-    def _inside_writable_root(self, candidate: Path) -> bool:
-        for root in self._roots:
-            if not _root_writable(root):
-                continue
-            try:
-                candidate.relative_to(_root_path(root))
-                return True
-            except ValueError:
-                continue
-        return False
-
-
-def _existing_metadata(target: _Target) -> tuple[Optional[os.stat_result], str]:
-    try:
-        directory_fd = _open_directory(target.parent)
-    except OSError:
-        return None, "target is unavailable"
-    try:
-        try:
-            metadata = os.stat(
-                target.name,
-                dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
-        except FileNotFoundError:
-            return None, ""
-        except OSError:
-            return None, "target is unavailable"
-    finally:
-        os.close(directory_fd)
-    if stat.S_ISLNK(metadata.st_mode):
-        return None, "symbolic links are not writable"
-    if not stat.S_ISREG(metadata.st_mode):
-        return None, "target is not a regular file"
-    return metadata, ""
+        return (
+            _Target(
+                root=selected_root,
+                parent_parts=parent_parts,
+                parent=parent,
+                name=parts[-1],
+                display=display,
+            ),
+            "",
+        )
 
 
 def _read_regular_file(
     target: _Target,
+    *,
+    allow_missing: bool = False,
 ) -> tuple[Optional[bytes], int, Optional[_FileVersion], str]:
     try:
-        directory_fd = _open_directory(target.parent)
+        directory_fd = _open_target_directory(target)
     except OSError:
         return None, 0, None, "target is unavailable"
     try:
@@ -327,7 +374,11 @@ def _read_regular_file(
                 dir_fd=directory_fd,
             )
         except FileNotFoundError:
-            return None, 0, None, "target does not exist"
+            return (
+                (None, 0, None, "")
+                if allow_missing
+                else (None, 0, None, "target does not exist")
+            )
         except OSError:
             return None, 0, None, "target is unavailable"
         try:
@@ -360,10 +411,10 @@ def _atomic_write(
     content: bytes,
     *,
     mode: int,
-    expected: Optional[_FileVersion] = None,
+    expected: _FileVersion | object | None = None,
 ) -> str:
     try:
-        directory_fd = _open_directory(target.parent)
+        directory_fd = _open_target_directory(target)
     except OSError:
         return "file write failed"
     temporary = f".codinal-{secrets.token_hex(16)}.tmp"
@@ -389,7 +440,33 @@ def _atomic_write(
         os.fsync(file_fd)
         os.close(file_fd)
         file_fd = None
+        if expected is _EXPECTED_ABSENT:
+            try:
+                os.link(
+                    temporary,
+                    target.name,
+                    src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                return "file changed during write"
+            except OSError:
+                return "file write failed"
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except OSError:
+                # The destination is already published. Cleanup is retried
+                # below and must not make a committed write look failed.
+                pass
+            try:
+                os.fsync(directory_fd)
+            except OSError:
+                # Publication already committed.
+                pass
+            return ""
         if expected is not None:
+            assert isinstance(expected, _FileVersion)
             try:
                 current = os.stat(
                     target.name,
@@ -434,18 +511,74 @@ def _atomic_write(
         os.close(directory_fd)
 
 
-def _open_directory(path: Path) -> int:
-    return os.open(
-        path,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+def _open_target_directory(target: _Target) -> int:
+    root_path = _root_path(target.root)
+    expected = _root_identity(target.root)
+    flags = (
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     )
+    descriptors: list[int] = []
+    try:
+        current_fd = os.open(root_path, flags)
+        descriptors.append(current_fd)
+        metadata = os.fstat(current_fd)
+        if (int(metadata.st_dev), int(metadata.st_ino)) != expected:
+            raise OSError("root identity changed")
+        for component in target.parent_parts:
+            current_fd = os.open(component, flags, dir_fd=current_fd)
+            descriptors.append(current_fd)
+        return os.dup(current_fd)
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def _root_path(root: Any) -> Path:
     value = root.get("path", "") if isinstance(root, dict) else getattr(
         root, "path", root
     )
-    return Path(value).expanduser().resolve()
+    path = Path(value).expanduser()
+    resolved = path.resolve(strict=True)
+    device = (
+        root.get("_device")
+        if isinstance(root, dict)
+        else getattr(root, "device", None)
+    )
+    inode = (
+        root.get("_inode")
+        if isinstance(root, dict)
+        else getattr(root, "inode", None)
+    )
+    metadata = os.stat(path, follow_symlinks=False)
+    if (
+        device is None
+        or inode is None
+        or path.is_symlink()
+        or resolved != path.absolute()
+        or (int(metadata.st_dev), int(metadata.st_ino))
+        != (int(device), int(inode))
+    ):
+        raise ValueError("root identity changed")
+    return resolved
+
+
+def _root_identity(root: Any) -> tuple[int, int]:
+    device = (
+        root.get("_device")
+        if isinstance(root, dict)
+        else getattr(root, "device", None)
+    )
+    inode = (
+        root.get("_inode")
+        if isinstance(root, dict)
+        else getattr(root, "inode", None)
+    )
+    if device is None or inode is None:
+        raise ValueError("root identity is unavailable")
+    return int(device), int(inode)
 
 
 def _root_writable(root: Any) -> bool:

@@ -14,6 +14,9 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="review-panel"' in html
     assert 'id="settings-dialog"' in html
     assert 'id="session-dialog"' in html
+    assert 'id="context-roots"' in html
+    assert 'id="project-tree"' in html
+    assert 'id="add-context-root"' in html
     assert 'id="new-task"' in html
     assert 'id="send-turn"' in html
     assert 'id="attach-files"' in html
@@ -66,6 +69,11 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "isSafeForkBoundary(index)" in script
     assert "state.highlightedMessageIndex = null" in script
     assert "sessionSelectionGeneration" in script
+    assert "/tree?" in script
+    assert "/roots" in script
+    assert "loadRootsAndTree" in script
+    assert "Root unavailable — reconnect or remove it" in script
+    assert "root.available === false" in script
     load_sessions = script.split(
         "async function loadSessions() {",
         1,
