@@ -76,6 +76,24 @@
             <span id="workspace-path">Choose a workspace to begin</span>
           </div>
           <div class="header-actions">
+            <button id="return-to-parent" class="secondary-button is-hidden"
+              type="button">← Parent task</button>
+            <div class="thread-search-controls" role="search">
+              <label>
+                <span class="sr-only">Search this conversation</span>
+                <input id="thread-search" type="search"
+                  placeholder="Find in task" />
+              </label>
+              <button id="thread-search-previous" class="icon-button"
+                type="button" aria-label="Previous conversation match"
+                title="Previous match" disabled>↑</button>
+              <button id="thread-search-next" class="icon-button"
+                type="button" aria-label="Next conversation match"
+                title="Next match" disabled>↓</button>
+            </div>
+            <button id="export-thread" class="icon-button" type="button"
+              aria-label="Export conversation as Markdown"
+              title="Export Markdown" disabled>⇩</button>
             <span id="runtime-status" class="status-chip">
               <i></i><span>Connecting</span>
             </span>

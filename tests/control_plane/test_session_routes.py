@@ -58,6 +58,7 @@ class FakeSessions:
         self.models = []
         self.deleted = []
         self.forked = []
+        self.side_conversations = []
         self.added_roots = []
         self.removed_roots = []
         self.export_too_large = False
@@ -130,6 +131,27 @@ class FakeSessions:
             "session_id": "session-fork",
             "source_session_id": session_id,
             "message_count": message_index + 1,
+        }
+
+    def side_conversation(self, session_id, *, message_index):
+        self.side_conversations.append((session_id, message_index))
+        return {
+            "ok": True,
+            "session_id": "session-side",
+            "source_session_id": session_id,
+            "message_count": message_index + 1,
+            "session": {
+                "session_id": "session-side",
+                "origin": "side_conversation",
+                "origin_session_id": session_id,
+            },
+        }
+
+    def export_markdown(self, session_id):
+        return {
+            "ok": True,
+            "filename": "inspect-runtime.md",
+            "content": f"# Inspect runtime\n\n{session_id}\n",
         }
 
     def export(self):
@@ -364,6 +386,47 @@ def test_session_fork_refuses_active_turn_then_forks_selected_history():
     assert sessions.forked == [("session-1", 3)]
     assert invalid.status_code == 400
     assert oversized.status_code == 400
+
+
+def test_session_markdown_export_is_authenticated_and_not_cached():
+    with make_client()[0] as client:
+        unauthorized = client.get("/v1/sessions/session-1/export.md")
+        exported = client.get(
+            "/v1/sessions/session-1/export.md",
+            headers=AUTH,
+        )
+
+    assert unauthorized.status_code == 401
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("text/markdown")
+    assert exported.headers["cache-control"] == "no-store"
+    assert exported.headers["content-disposition"] == (
+        'attachment; filename="inspect-runtime.md"'
+    )
+    assert exported.text == "# Inspect runtime\n\nsession-1\n"
+
+
+def test_side_conversation_refuses_active_turn_then_branches_history():
+    client, sessions, turns = make_client()
+    turns.active.add("session-1")
+    with client:
+        busy = client.post(
+            "/v1/sessions/session-1/side-conversations",
+            headers=AUTH,
+            json={"message_index": 1},
+        )
+        turns.active.clear()
+        created = client.post(
+            "/v1/sessions/session-1/side-conversations",
+            headers=AUTH,
+            json={"message_index": 1},
+        )
+
+    assert busy.status_code == 409
+    assert created.status_code == 200
+    assert created.json()["session"]["origin"] == "side_conversation"
+    assert created.json()["session"]["origin_session_id"] == "session-1"
+    assert sessions.side_conversations == [("session-1", 1)]
 
 
 def test_session_patch_is_strict_and_delegates_metadata_changes():

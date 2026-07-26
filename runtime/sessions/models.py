@@ -78,6 +78,7 @@ class SessionRecord:
     archived: bool = False
     origin: Optional[str] = None
     origin_label: Optional[str] = None
+    origin_session_id: Optional[str] = None
     turn_checkpoint: TurnCheckpoint = field(
         default_factory=TurnCheckpoint
     )

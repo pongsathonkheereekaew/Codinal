@@ -17,6 +17,11 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="context-roots"' in html
     assert 'id="project-tree"' in html
     assert 'id="add-context-root"' in html
+    assert 'id="thread-search"' in html
+    assert 'id="thread-search-next"' in html
+    assert 'id="thread-search-previous"' in html
+    assert 'id="export-thread"' in html
+    assert 'id="return-to-parent"' in html
     assert 'id="new-task"' in html
     assert 'id="send-turn"' in html
     assert 'id="attach-files"' in html
@@ -63,9 +68,16 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "state.sessionId !== sessionId" in script
     assert "interactionSession" in script
     assert "/v1/sessions/search" in script
-    assert "/fork" in script
+    assert "BRANCH_SETTINGS" in script
+    assert 'endpoint: "side-conversations"' in script
     assert "message_index" in script
     assert "Fork task from here" in script
+    assert "Open side conversation" in script
+    assert "/export.md" in script
+    assert "threadSearchMatches" in script
+    assert "findThreadMatches" in script
+    assert "origin_session_id" in script
+    assert "returnToParentSession" in script
     assert "isSafeForkBoundary(index)" in script
     assert "state.highlightedMessageIndex = null" in script
     assert "sessionSelectionGeneration" in script

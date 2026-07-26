@@ -31,7 +31,7 @@ from .migrations import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
 
 
@@ -163,12 +163,24 @@ def _migrate_to_v5(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v6(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(sessions)")
+    }
+    if "origin_session_id" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions ADD COLUMN origin_session_id TEXT"
+        )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
     5: _migrate_to_v5,
+    6: _migrate_to_v6,
 }
 
 
@@ -240,11 +252,13 @@ class ConversationStore:
                     session_id, workspace, source_workspace, model, mode,
                     workspace_device, workspace_inode, title, agent,
                     extra_roots, grants, pinned, archived, origin,
-                    origin_label, turn_status, active_tool_call_ids,
+                    origin_label, origin_session_id, turn_status,
+                    active_tool_call_ids,
                     updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {_NOW}
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    {_NOW}
                 )
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace,
@@ -261,6 +275,7 @@ class ConversationStore:
                     archived = excluded.archived,
                     origin = excluded.origin,
                     origin_label = excluded.origin_label,
+                    origin_session_id = excluded.origin_session_id,
                     turn_status = excluded.turn_status,
                     active_tool_call_ids = excluded.active_tool_call_ids,
                     updated_at = excluded.updated_at
@@ -281,6 +296,7 @@ class ConversationStore:
                     int(record.archived),
                     record.origin,
                     record.origin_label,
+                    record.origin_session_id,
                     record.turn_checkpoint.status.value,
                     active_tool_call_ids,
                 ),
@@ -676,6 +692,9 @@ class ConversationStore:
                     + LENGTH(CAST(grants AS BLOB))
                     + COALESCE(LENGTH(CAST(origin AS BLOB)), 0)
                     + COALESCE(LENGTH(CAST(origin_label AS BLOB)), 0)
+                    + COALESCE(
+                        LENGTH(CAST(origin_session_id AS BLOB)), 0
+                    )
                     + LENGTH(CAST(turn_status AS BLOB))
                     + LENGTH(CAST(active_tool_call_ids AS BLOB))
                     + LENGTH(CAST(updated_at AS BLOB))
@@ -916,6 +935,8 @@ def _validate_record(record: SessionRecord) -> None:
         or not 1 <= len(record.source_workspace) <= 4096
     ):
         raise ValueError("invalid session data")
+    if record.origin_session_id is not None:
+        _validate_session_id(record.origin_session_id)
 
 
 def _encode_json(value: Any) -> str:
@@ -968,6 +989,7 @@ def _record_from_row(
         archived=bool(row["archived"]),
         origin=row["origin"],
         origin_label=row["origin_label"],
+        origin_session_id=row["origin_session_id"],
         turn_checkpoint=TurnCheckpoint(
             status=TurnStatus(row["turn_status"]),
             active_tool_call_ids=tuple(

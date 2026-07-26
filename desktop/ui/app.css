@@ -579,6 +579,28 @@ select:focus-visible,
   gap: 8px;
 }
 
+.thread-search-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.thread-search-controls input {
+  width: 132px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: inherit;
+  font-size: 10.5px;
+}
+
+.thread-search-controls input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 .status-chip {
   display: flex;
   align-items: center;

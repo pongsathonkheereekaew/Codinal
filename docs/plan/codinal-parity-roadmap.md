@@ -40,8 +40,8 @@ acceptance evidence is recorded from the real product surface.
 | Policy and approvals | Implemented | `runtime/policy`, approval broker E2E |
 | OS shell sandbox | Implemented on macOS | sandbox negative tests and notarization spike |
 | Isolated session worktrees | Implemented | Git lifecycle E2E and Apply conflict tests |
-| Sessions/history/model swap | Durable global content search and message-position forks implemented; in-thread search/export/side conversations missing | authenticated search/fork routes, approval-grant-reset fork tests, desktop search highlighting, restart E2E |
-| Durable migrations/recovery/export | Implemented and verified | v0/v1/v2/v3 matrix, restore-from-backup startup E2E, authenticated export v1 with 32 MiB stored-data safety bound |
+| Sessions/history/model swap | Durable global/in-thread search, message-position forks, Markdown export, and parent-linked side conversations implemented | authenticated search/branch/export routes, desktop match navigation and parent return, restart E2E |
+| Durable migrations/recovery/export | Implemented and verified | v0/v1/v2/v3 and v5→v6 coverage, restore-from-backup startup E2E, authenticated JSON/Markdown export safety bounds |
 | Interrupted turn recovery | Streaming, approval, and parallel-tool baseline verified; plan/shell/apply-back pending | real SIGKILL/restart E2Es, durable approval ledger, no-replay multi-call tests |
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
@@ -128,7 +128,7 @@ Acceptance evidence:
 - [ ] Add fast text/symbol search, then a local semantic index respecting
   ignore files, symlinks, repository boundaries, deletion, resource budgets,
   and index-schema migration.
-- [ ] Add durable global session search, in-thread search, fork from message,
+- [x] Add durable global session search, in-thread search, fork from message,
   Markdown export, and side conversations.
 - [ ] Add model routing profiles and capability-aware selection without hiding
   the chosen provider, cost class, or degradation.
@@ -219,9 +219,8 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Complete in-thread search/export/side conversations plus exact provider
-   file/folder/Git context chips and open/reveal actions on the durable
-   search/fork and project-tree baseline.
+1. Add exact provider file/folder/Git context chips and open/reveal actions on
+   the durable project-tree baseline.
 2. Add parallel isolated subagents now that checkpoint and prompt recovery are
    proven.
 3. Add editable persisted plan artifacts and selective task approval on top of

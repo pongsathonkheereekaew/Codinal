@@ -17,7 +17,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from runtime.events import EventHub
 from runtime.git import (
@@ -142,6 +142,8 @@ class SessionControl(Protocol):
 
     def export(self) -> dict[str, Any]: ...
 
+    def export_markdown(self, session_id: str) -> dict[str, Any]: ...
+
     def roots(self, session_id: str) -> list[dict[str, Any]]: ...
 
     def tree(
@@ -186,6 +188,13 @@ class SessionControl(Protocol):
     def delete(self, session_id: str) -> dict[str, Any]: ...
 
     def fork(
+        self,
+        session_id: str,
+        *,
+        message_index: int,
+    ) -> dict[str, Any]: ...
+
+    def side_conversation(
         self,
         session_id: str,
         *,
@@ -419,6 +428,43 @@ def create_control_plane_app(
         _validate_public_session_id(session_id)
         return services.sessions.messages(session_id)
 
+    @app.get("/v1/sessions/{session_id}/export.md")
+    async def export_session_markdown(
+        session_id: str,
+    ) -> PlainTextResponse:
+        _validate_public_session_id(session_id)
+        try:
+            result = await services.turns.export_when_idle(
+                lambda: services.sessions.export_markdown(session_id)
+            )
+        except ExportBusyError:
+            raise HTTPException(
+                status_code=409,
+                detail="cannot export while a turn is active",
+            ) from None
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=404,
+                detail=result.get("error", "session not found"),
+            )
+        content = str(result.get("content", ""))
+        if len(content.encode("utf-8")) > 32 * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail="Markdown export exceeds the 32 MiB safety limit",
+            )
+        filename = str(result.get("filename", "codinal-conversation.md"))
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,99}\.md", filename):
+            filename = "codinal-conversation.md"
+        return PlainTextResponse(
+            content,
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        )
+
     @app.get("/v1/sessions/{session_id}/roots")
     async def session_roots(
         session_id: str,
@@ -582,17 +628,17 @@ def create_control_plane_app(
             raise HTTPException(status_code=404, detail="session not found")
         return result
 
-    @app.post("/v1/sessions/{session_id}/fork")
-    async def fork_session(
+    async def branch_session(
         session_id: str,
         request: Request,
+        brancher: Any,
     ) -> dict[str, Any]:
         _validate_public_session_id(session_id)
         message_index = await _read_session_fork(request)
         try:
             result = await services.turns.mutate_when_idle(
                 session_id,
-                lambda: services.sessions.fork(
+                lambda: brancher(
                     session_id,
                     message_index=message_index,
                 ),
@@ -611,6 +657,28 @@ def create_control_plane_app(
                 detail=result.get("error", "session not found"),
             )
         return result
+
+    @app.post("/v1/sessions/{session_id}/fork")
+    async def fork_session(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        return await branch_session(
+            session_id,
+            request,
+            services.sessions.fork,
+        )
+
+    @app.post("/v1/sessions/{session_id}/side-conversations")
+    async def create_side_conversation(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        return await branch_session(
+            session_id,
+            request,
+            services.sessions.side_conversation,
+        )
 
     @app.get("/v1/secrets/providers")
     async def provider_secret_status() -> list[dict[str, Any]]:

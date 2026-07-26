@@ -49,6 +49,7 @@ def test_save_reopen_and_load_preserves_complete_session(tmp_path):
         archived=True,
         origin="desktop",
         origin_label="Codinal",
+        origin_session_id="parent-session",
         turn_checkpoint=TurnCheckpoint.executing(
             {"provider-call-1"}
         ),
@@ -72,9 +73,35 @@ def test_save_reopen_and_load_preserves_complete_session(tmp_path):
     assert loaded.archived is True
     assert loaded.origin == "desktop"
     assert loaded.origin_label == "Codinal"
+    assert loaded.origin_session_id == "parent-session"
     assert loaded.turn_checkpoint == TurnCheckpoint.executing(
         {"provider-call-1"}
     )
+
+
+def test_v5_store_migrates_side_conversation_parent_column(tmp_path):
+    store = ConversationStore(tmp_path)
+    store.save(record())
+    store.close()
+    with sqlite3.connect(tmp_path / "codinal.db") as connection:
+        connection.execute(
+            "ALTER TABLE sessions DROP COLUMN origin_session_id"
+        )
+        connection.execute("PRAGMA user_version = 5")
+
+    migrated = ConversationStore(tmp_path)
+    loaded = migrated.load("session-1")
+    with sqlite3.connect(tmp_path / "codinal.db") as connection:
+        columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(sessions)")
+        }
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    assert loaded is not None
+    assert loaded.origin_session_id is None
+    assert "origin_session_id" in columns
+    assert version == 6
 
 
 def test_approval_decision_survives_restart_until_tool_finishes(tmp_path):
@@ -520,8 +547,8 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
         "/Users/example/project"
     )
     with sqlite3.connect(store.db_path) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
-    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v5-*.bak"))
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 6
+    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v6-*.bak"))
     assert len(backups) == 1
     assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o700
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
@@ -586,11 +613,11 @@ def test_v1_conversation_schema_migrates_to_v4_without_losing_data(tmp_path):
     ]
     assert restored.source_workspace is None
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 6
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v1-to-v5-*.bak"
+                "codinal.db.pre-v1-to-v6-*.bak"
             )
         )
     ) == 1
@@ -645,11 +672,11 @@ def test_v2_conversation_schema_adds_idle_recovery_state(tmp_path):
         TurnStatus.IDLE
     )
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 6
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v2-to-v5-*.bak"
+                "codinal.db.pre-v2-to-v6-*.bak"
             )
         )
     ) == 1
@@ -688,11 +715,11 @@ def test_v3_conversation_schema_adds_interaction_decisions(tmp_path):
         "a" * 64,
     ) == {"approved": True, "mode": "interactive"}
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v3-to-v5-*.bak"
+                "codinal.db.pre-v3-to-v6-*.bak"
             )
         )
     ) == 1
@@ -719,7 +746,7 @@ def test_corrupt_database_is_preserved_before_empty_recovery(tmp_path):
     assert database.read_bytes() != corrupt
     with sqlite3.connect(database) as recovered:
         assert recovered.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_corrupt_database_restores_latest_valid_backup(tmp_path):

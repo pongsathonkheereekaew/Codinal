@@ -184,7 +184,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
     assert all(event["action"] == "preserved_corrupt_state" for event in events)
     with sqlite3.connect(data_dir / "codinal.db") as conversations:
         assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 6
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -392,9 +392,20 @@ def test_production_attachments_survive_restart_and_model_switch(tmp_path):
         provider=AttachmentCaptureProvider(),
     )
     assert restarted.sessions.messages("attachment-session") == persisted
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=restarted)
+    ) as client:
+        markdown = client.get(
+            "/v1/sessions/attachment-session/export.md",
+            headers=AUTH,
+        )
+    assert markdown.status_code == 200
+    assert "Review the PDF again" in markdown.text
+    assert "_Attachment: design.pdf_" in markdown.text
+    assert "data:application/pdf;base64" not in markdown.text
 
 
-def test_production_session_search_and_fork_survive_restart(tmp_path):
+def test_production_search_fork_and_side_conversation_survive_restart(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     data_dir = tmp_path / "data"
@@ -439,12 +450,19 @@ def test_production_session_search_and_fork_survive_restart(tmp_path):
             headers=AUTH,
             json={"message_index": 1},
         )
+        side = client.post(
+            "/v1/sessions/search-source/side-conversations",
+            headers=AUTH,
+            json={"message_index": 1},
+        )
 
     assert found.status_code == 200
     assert found.json()[0]["match_message_index"] == 0
     assert found.json()[0]["match_excerpt"] == "Find retry jitter"
     assert forked.status_code == 200
     fork_id = forked.json()["session_id"]
+    assert side.status_code == 200
+    side_id = side.json()["session_id"]
 
     restarted = build_services(
         config,
@@ -462,6 +480,7 @@ def test_production_session_search_and_fork_survive_restart(tmp_path):
             f"/v1/sessions/{fork_id}/messages",
             headers=AUTH,
         )
+        persisted_sessions = client.get("/v1/sessions", headers=AUTH)
 
     assert fork_id in {
         result["session_id"] for result in persisted_search.json()
@@ -470,6 +489,13 @@ def test_production_session_search_and_fork_survive_restart(tmp_path):
         {"role": "user", "content": "Find retry jitter"},
         {"role": "assistant", "content": "Inspect backoff.py"},
     ]
+    persisted_side = next(
+        session
+        for session in persisted_sessions.json()
+        if session["session_id"] == side_id
+    )
+    assert persisted_side["origin"] == "side_conversation"
+    assert persisted_side["origin_session_id"] == "search-source"
     reopened_store = ConversationStore(data_dir)
     fork_record = reopened_store.load(fork_id)
     reopened_store.close()

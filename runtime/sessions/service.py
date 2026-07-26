@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import copy
 import os
+import re
 import shutil
 import time
 from uuid import uuid4
@@ -423,6 +424,7 @@ class SessionService:
                 "archived": record.archived,
                 "origin": record.origin,
                 "origin_label": record.origin_label,
+                "origin_session_id": record.origin_session_id,
             }
             for record in self._store.list(workspace=workspace)
             if not record.session_id.startswith("__")
@@ -455,6 +457,7 @@ class SessionService:
                     "archived": record.archived,
                     "origin": record.origin,
                     "origin_label": record.origin_label,
+                    "origin_session_id": record.origin_session_id,
                     "match_excerpt": hit.excerpt,
                     "match_message_index": hit.message_index,
                 }
@@ -467,6 +470,38 @@ class SessionService:
         *,
         message_index: int,
         new_session_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._branch_conversation(
+            session_id,
+            message_index=message_index,
+            new_session_id=new_session_id,
+            origin="fork",
+            title_prefix="Fork of ",
+        )
+
+    def side_conversation(
+        self,
+        session_id: str,
+        *,
+        message_index: int,
+        new_session_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._branch_conversation(
+            session_id,
+            message_index=message_index,
+            new_session_id=new_session_id,
+            origin="side_conversation",
+            title_prefix="Side conversation · ",
+        )
+
+    def _branch_conversation(
+        self,
+        session_id: str,
+        *,
+        message_index: int,
+        new_session_id: str | None,
+        origin: str,
+        title_prefix: str,
     ) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "session not found"}
@@ -508,13 +543,16 @@ class SessionService:
             messages=copy.deepcopy(
                 record.messages[: message_index + 1]
             ),
-            title=f"Fork of {record.title or 'New session'}"[:120],
+            title=f"{title_prefix}{record.title or 'New session'}"[:120],
             agent=record.agent,
             message_count=message_index + 1,
             extra_roots=[],
             grants={},
-            origin="fork",
+            origin=origin,
             origin_label=record.title or record.session_id,
+            origin_session_id=(
+                record.session_id if origin == "side_conversation" else None
+            ),
         )
         self._store.save(forked)
         public_session = {
@@ -530,6 +568,7 @@ class SessionService:
             "archived": False,
             "origin": forked.origin,
             "origin_label": forked.origin_label,
+            "origin_session_id": forked.origin_session_id,
         }
         return {
             "ok": True,
@@ -537,6 +576,39 @@ class SessionService:
             "source_session_id": session_id,
             "message_count": message_index + 1,
             "session": public_session,
+        }
+
+    def export_markdown(self, session_id: str) -> dict[str, Any]:
+        if session_id.startswith("__"):
+            return {"ok": False, "error": "session not found"}
+        record = self._snapshot(session_id) or self._store.load(session_id)
+        if record is None:
+            return {"ok": False, "error": "session not found"}
+        title = record.title or "Codinal conversation"
+        sections = [f"# {title}"]
+        for message in record.messages:
+            role = message.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            content, attachments = _visible_markdown_content(
+                message.get("content")
+            )
+            if not content and not attachments:
+                continue
+            body = content
+            if attachments:
+                labels = "\n".join(
+                    f"_Attachment: {filename}_" for filename in attachments
+                )
+                body = f"{body}\n\n{labels}" if body else labels
+            sections.append(
+                f"## {'You' if role == 'user' else 'Codinal'}\n\n{body}"
+            )
+        content = "\n\n".join(sections).rstrip() + "\n"
+        return {
+            "ok": True,
+            "filename": f"{_safe_markdown_slug(title)}.md",
+            "content": content,
         }
 
     def export(self) -> dict[str, Any]:
@@ -1388,6 +1460,33 @@ def _is_safe_fork_boundary(
             return False
         pending.update(call_ids)
     return not pending
+
+
+def _visible_markdown_content(content: Any) -> tuple[str, list[str]]:
+    if isinstance(content, str):
+        return content, []
+    if not isinstance(content, list):
+        return "", []
+    text_parts = []
+    attachments = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "text" and isinstance(part.get("text"), str):
+            text_parts.append(part["text"])
+        elif part.get("type") == "file":
+            file = part.get("file")
+            filename = file.get("filename") if isinstance(file, dict) else None
+            if isinstance(filename, str) and filename:
+                attachments.append(Path(filename).name)
+        elif part.get("type") == "image_url":
+            attachments.append("Image")
+    return "\n".join(text_parts), attachments
+
+
+def _safe_markdown_slug(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")
+    return (slug or "codinal-conversation")[:80].rstrip("-")
 
 
 def _artifact_kind(path: Path) -> str:

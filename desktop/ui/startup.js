@@ -9,12 +9,29 @@ const MAX_ATTACHMENTS = 5;
 const ATTACHMENT_TYPES = new Set([
   "image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf",
 ]);
+const BRANCH_SETTINGS = Object.freeze({
+  fork: Object.freeze({
+    endpoint: "fork",
+    busy: "Stop the active turn before forking",
+    created: "Forked task created",
+    missing: "Forked task could not be loaded",
+    opened: "Forked task from selected message",
+  }),
+  side: Object.freeze({
+    endpoint: "side-conversations",
+    busy: "Stop the active turn before opening a side conversation",
+    created: "Side conversation created",
+    missing: "Side conversation could not be loaded",
+    opened: "Opened side conversation",
+  }),
+});
 
 const state = {
   online: false,
   busy: false,
   sessions: [],
   sessionId: null,
+  parentSessionId: null,
   workspace: null,
   messages: [],
   socket: null,
@@ -33,6 +50,8 @@ const state = {
   sessionSearchGeneration: 0,
   sessionSearchTimer: null,
   highlightedMessageIndex: null,
+  threadSearchMatches: [],
+  threadSearchCursor: -1,
   sessionSelectionGeneration: 0,
   roots: [],
   treeGeneration: 0,
@@ -56,6 +75,8 @@ const el = Object.fromEntries(
     "session-dialog", "session-title-input", "rename-session",
     "pin-session", "archive-session", "delete-session",
     "context-roots", "project-tree", "add-context-root",
+    "thread-search", "thread-search-previous", "thread-search-next",
+    "export-thread", "return-to-parent",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -259,7 +280,15 @@ async function selectSession(session) {
   const selectionGeneration = ++state.sessionSelectionGeneration;
   const sessionId = session.session_id;
   disconnectSocket();
+  el["thread-search"].value = "";
+  state.threadSearchMatches = [];
+  state.threadSearchCursor = -1;
   state.sessionId = sessionId;
+  state.parentSessionId = session.origin_session_id || null;
+  el["return-to-parent"].classList.toggle(
+    "is-hidden",
+    !state.parentSessionId
+  );
   state.workspace = session.workspace;
   state.messages = [];
   state.checkpoints = [];
@@ -277,6 +306,7 @@ async function selectSession(session) {
   renderCheckpoints();
   renderContextRoots();
   renderProjectTree();
+  updateThreadSearchControls();
   try {
     const messages = await api(
       `/v1/sessions/${encodeURIComponent(sessionId)}/messages`
@@ -336,10 +366,15 @@ function switchWorkspace(workspace) {
   }
   disconnectSocket();
   state.sessionId = `session-${crypto.randomUUID()}`;
+  state.parentSessionId = null;
+  el["return-to-parent"].classList.add("is-hidden");
   state.sessionSelectionGeneration += 1;
   state.workspace = workspace;
   state.messages = [];
   state.highlightedMessageIndex = null;
+  el["thread-search"].value = "";
+  state.threadSearchMatches = [];
+  state.threadSearchCursor = -1;
   state.roots = [];
   state.treeGeneration += 1;
   invalidateAttachments();
@@ -355,6 +390,7 @@ function switchWorkspace(workspace) {
   renderCheckpoints();
   renderContextRoots();
   renderProjectTree();
+  updateThreadSearchControls();
   connectSocket();
   return true;
 }
@@ -427,6 +463,7 @@ function setBusy(busy) {
   el["stop-turn"].classList.toggle("is-hidden", !busy);
   el["send-turn"].classList.toggle("is-hidden", busy);
   setRuntimeStatus(busy ? "Codinal is working" : "Local runtime", busy ? "busy" : "online");
+  updateThreadSearchControls();
   updateComposer();
 }
 
@@ -725,6 +762,11 @@ async function removeContextRoot(root) {
 }
 
 function renderConversation() {
+  if (el["thread-search"].value) {
+    syncThreadSearchMatches();
+  } else {
+    updateThreadSearchControls();
+  }
   const visible = state.messages
     .map((message, index) => ({ message, index }))
     .filter(
@@ -762,6 +804,57 @@ function renderConversation() {
   } else {
     el.conversation.scrollTop = el.conversation.scrollHeight;
   }
+}
+
+function findThreadMatches(query = el["thread-search"].value) {
+  syncThreadSearchMatches(query, true);
+  renderConversation();
+}
+
+function syncThreadSearchMatches(
+  query = el["thread-search"].value,
+  reset = false
+) {
+  const needle = query.trim().toLocaleLowerCase();
+  const matches = needle
+    ? state.messages
+      .map((message, index) => ({ message, index }))
+      .filter(
+        ({ message }) => (
+          (message.role === "user" || message.role === "assistant")
+          && contentText(message.content).toLocaleLowerCase().includes(needle)
+        )
+      )
+      .map(({ index }) => index)
+    : [];
+  const currentIndex = reset ? null : state.highlightedMessageIndex;
+  state.threadSearchMatches = matches;
+  const retainedCursor = matches.indexOf(currentIndex);
+  state.threadSearchCursor = retainedCursor >= 0
+    ? retainedCursor
+    : matches.length ? 0 : -1;
+  state.highlightedMessageIndex = (
+    state.threadSearchMatches[state.threadSearchCursor] ?? null
+  );
+  updateThreadSearchControls();
+}
+
+function moveThreadSearch(direction) {
+  if (!state.threadSearchMatches.length) return;
+  state.threadSearchCursor = (
+    state.threadSearchCursor + direction + state.threadSearchMatches.length
+  ) % state.threadSearchMatches.length;
+  state.highlightedMessageIndex = (
+    state.threadSearchMatches[state.threadSearchCursor]
+  );
+  renderConversation();
+}
+
+function updateThreadSearchControls() {
+  const hasMatches = state.threadSearchMatches.length > 0;
+  el["thread-search-previous"].disabled = !hasMatches;
+  el["thread-search-next"].disabled = !hasMatches;
+  el["export-thread"].disabled = !state.sessionId || state.busy;
 }
 
 function contentText(content) {
@@ -812,6 +905,14 @@ function renderMessage(
       );
     });
     actions.append(fork);
+    const side = node("button", "message-action", "Open side conversation");
+    side.type = "button";
+    side.addEventListener("click", () => {
+      createSideConversationAt(messageIndex).catch(
+        (error) => toast(error.message, "error")
+      );
+    });
+    actions.append(side);
     body.append(actions);
   }
   article.append(body);
@@ -842,16 +943,26 @@ function isSafeForkBoundary(messageIndex) {
 }
 
 async function forkSessionAt(messageIndex) {
+  return branchSessionAt(messageIndex, "fork");
+}
+
+async function createSideConversationAt(messageIndex) {
+  return branchSessionAt(messageIndex, "side");
+}
+
+async function branchSessionAt(messageIndex, kind) {
   if (!state.sessionId) return;
+  const settings = BRANCH_SETTINGS[kind];
+  if (!settings) throw new Error("Unknown conversation branch type");
   if (state.busy) {
-    toast("Stop the active turn before forking", "error");
+    toast(settings.busy, "error");
     return;
   }
   const sourceSessionId = state.sessionId;
   const sourceSelectionGeneration = state.sessionSelectionGeneration;
   const sourceSearchGeneration = state.sessionSearchGeneration;
   const result = await api(
-    `/v1/sessions/${encodeURIComponent(sourceSessionId)}/fork`,
+    `/v1/sessions/${encodeURIComponent(sourceSessionId)}/${settings.endpoint}`,
     {
       method: "POST",
       body: JSON.stringify({ message_index: messageIndex }),
@@ -862,16 +973,54 @@ async function forkSessionAt(messageIndex) {
     || state.sessionSelectionGeneration !== sourceSelectionGeneration
   ) {
     loadSessions().catch((error) => toast(error.message, "error"));
-    toast("Forked task created");
+    toast(settings.created);
     return;
   }
-  if (!result.session) throw new Error("Forked task could not be loaded");
+  if (!result.session) {
+    throw new Error(settings.missing);
+  }
   if (state.sessionSearchGeneration === sourceSearchGeneration) {
     el["session-search"].value = "";
   }
   await selectSession(result.session);
   await loadSessions();
-  toast("Forked task from selected message");
+  toast(settings.opened);
+}
+
+async function exportThread() {
+  if (!state.sessionId || state.busy) return;
+  const response = await fetch(
+    `${HTTP}/v1/sessions/${encodeURIComponent(state.sessionId)}/export.md`,
+    { headers: { Authorization: `Bearer ${TOKEN}` } }
+  );
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(
+      payload.detail || `Runtime returned HTTP ${response.status}`
+    );
+  }
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1]
+    || "codinal-conversation.md";
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+  toast("Exported conversation as Markdown");
+}
+
+async function returnToParentSession() {
+  const parentSessionId = state.parentSessionId;
+  if (!parentSessionId || state.busy) return;
+  el["session-search"].value = "";
+  await loadSessions();
+  const parent = state.sessions.find(
+    (session) => session.session_id === parentSessionId
+  );
+  if (!parent) throw new Error("Parent task is unavailable");
+  await selectSession(parent);
 }
 
 function addActivity(name, status, running = false) {
@@ -1569,6 +1718,21 @@ function wireEvents() {
   });
   el["refresh-sessions"].addEventListener("click", loadSessions);
   el["session-search"].addEventListener("input", scheduleSessionSearch);
+  el["thread-search"].addEventListener("input", () => findThreadMatches());
+  el["thread-search-previous"].addEventListener(
+    "click",
+    () => moveThreadSearch(-1)
+  );
+  el["thread-search-next"].addEventListener(
+    "click",
+    () => moveThreadSearch(1)
+  );
+  el["export-thread"].addEventListener("click", () => {
+    exportThread().catch((error) => toast(error.message, "error"));
+  });
+  el["return-to-parent"].addEventListener("click", () => {
+    returnToParentSession().catch((error) => toast(error.message, "error"));
+  });
   el["theme-toggle"].addEventListener("click", toggleTheme);
   el["open-settings"].addEventListener("click", openSettings);
   el["check-update"].addEventListener("click", checkForUpdate);

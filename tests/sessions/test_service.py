@@ -365,8 +365,9 @@ def test_list_sessions_returns_public_metadata_and_hides_internal_records(tmp_pa
             "messages": 3,
             "pinned": True,
             "archived": False,
-            "origin": None,
-            "origin_label": None,
+                "origin": None,
+                "origin_label": None,
+                "origin_session_id": None,
         }
     ]
 
@@ -401,8 +402,9 @@ def test_search_sessions_returns_match_location_and_public_metadata(tmp_path):
             "messages": 2,
             "pinned": False,
             "archived": False,
-            "origin": None,
-            "origin_label": None,
+                "origin": None,
+                "origin_label": None,
+                "origin_session_id": None,
             "match_excerpt": "Find the retry jitter",
             "match_message_index": 0,
         }
@@ -461,6 +463,7 @@ def test_fork_copies_history_through_selected_message_without_authority(
             "archived": False,
             "origin": "fork",
             "origin_label": "Original",
+            "origin_session_id": None,
         },
     }
     assert forked is not None
@@ -474,6 +477,7 @@ def test_fork_copies_history_through_selected_message_without_authority(
     assert forked.archived is False
     assert forked.origin == "fork"
     assert forked.origin_label == "Original"
+    assert forked.origin_session_id is None
     assert forked.turn_checkpoint == TurnCheckpoint()
 
 
@@ -492,6 +496,94 @@ def test_fork_rejects_missing_source_or_invalid_message_index(tmp_path):
 
     assert service.fork("missing", message_index=0)["ok"] is False
     assert service.fork("s1", message_index=1)["ok"] is False
+
+
+def test_side_conversation_preserves_safe_history_and_resets_authority(tmp_path):
+    original = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="plan",
+        messages=[
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ],
+        title="Architecture",
+        agent="review",
+        extra_roots=[{"path": "/private", "writable": True}],
+        grants={"tools": ["shell"]},
+    )
+    store = MemorySessionStore(original)
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    result = service.side_conversation(
+        "s1",
+        message_index=1,
+        new_session_id="session-side",
+    )
+    side = store.load("session-side")
+
+    assert result["ok"] is True
+    assert result["session"]["origin"] == "side_conversation"
+    assert result["session"]["title"] == "Side conversation · Architecture"
+    assert side is not None
+    assert side.messages == original.messages
+    assert side.extra_roots == []
+    assert side.grants == {}
+    assert side.origin == "side_conversation"
+    assert side.origin_label == "Architecture"
+    assert side.origin_session_id == "s1"
+
+
+def test_markdown_export_contains_only_visible_conversation_content(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="interactive",
+        title='Release / "notes"',
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Ship **today**"},
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": "spec.pdf",
+                            "file_data": "data:application/pdf;base64,SECRET",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "Ready.",
+                "tool_calls": [{"id": "call-1", "function": {"arguments": "SECRET"}}],
+            },
+            {"role": "tool", "tool_call_id": "call-1", "content": "SECRET"},
+        ],
+    )
+    service = SessionService(
+        MemorySessionStore(record),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    result = service.export_markdown("s1")
+
+    assert result == {
+        "ok": True,
+        "filename": "release-notes.md",
+        "content": (
+            '# Release / "notes"\n\n'
+            "## You\n\n"
+            "Ship **today**\n\n"
+            "_Attachment: spec.pdf_\n\n"
+            "## Codinal\n\n"
+            "Ready.\n"
+        ),
+    }
+    assert "SECRET" not in result["content"]
 
 
 def test_fork_rejects_incomplete_tool_transcript_and_preserves_source_scratch(
