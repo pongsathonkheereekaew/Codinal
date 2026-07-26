@@ -121,14 +121,25 @@ test -f "$APP/Contents/Resources/runtime/python-sbom.cdx.json"
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
+  NOTARY_ARCHIVE="$BUILD_DIR/Codinal-notary.zip"
+  ditto -c -k --keepParent "$APP" "$NOTARY_ARCHIVE"
+
   if [ -n "${CODINAL_NOTARY_PROFILE:-}" ]; then
-    NOTARY_ARCHIVE="$BUILD_DIR/Codinal-notary.zip"
-    ditto -c -k --keepParent "$APP" "$NOTARY_ARCHIVE"
     xcrun notarytool submit "$NOTARY_ARCHIVE" \
       --keychain-profile "$CODINAL_NOTARY_PROFILE" \
       --wait
-    xcrun stapler staple "$APP"
+  elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+    xcrun notarytool submit "$NOTARY_ARCHIVE" \
+      --apple-id "$APPLE_ID" \
+      --password "@env:APPLE_PASSWORD" \
+      --team-id "$APPLE_TEAM_ID" \
+      --wait
+  else
+    echo "notarization credentials are required: set CODINAL_NOTARY_PROFILE or APPLE_ID/APPLE_TEAM_ID/APPLE_PASSWORD" >&2
+    exit 1
   fi
+
+  xcrun stapler staple "$APP"
   xcrun stapler validate "$APP"
   spctl --assess --type execute --verbose=2 "$APP"
 fi

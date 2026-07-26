@@ -21,6 +21,9 @@ def test_release_builder_pins_and_verifies_embedded_python():
     assert "stapler validate" in script
     assert "spctl --assess" in script
     assert "--keychain-profile" in script
+    assert "--apple-id \"$APPLE_ID\"" in script
+    assert "--password \"@env:APPLE_PASSWORD\"" in script
+    assert "--team-id \"$APPLE_TEAM_ID\"" in script
     assert "notarytool submit" in script
     assert "stapler staple" in script
     assert "TAURI_SIGNING_PRIVATE_KEY_PATH" in script
