@@ -98,6 +98,9 @@ impl SidecarLaunch {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        if let Ok(helper) = std::env::current_exe() {
+            command.env("CODINAL_HOST_HELPER", helper);
+        }
         command
     }
 

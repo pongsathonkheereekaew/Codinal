@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Protocol
+from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 
 from runtime.events import Event, EventHub, EventType
 from runtime.sessions import (
@@ -98,6 +98,10 @@ class TurnCoordinator:
         mode: str | None = None,
         model: str | None = None,
         source: dict[str, Any] | None = None,
+        user_input_resolver: Callable[
+            [], Awaitable[str | list[dict[str, Any]]]
+        ]
+        | None = None,
     ) -> dict[str, Any]:
         async with self._snapshot_barrier:
             return await self._start(
@@ -108,6 +112,7 @@ class TurnCoordinator:
                 mode=mode,
                 model=model,
                 source=source,
+                user_input_resolver=user_input_resolver,
             )
 
     async def _start(
@@ -120,6 +125,10 @@ class TurnCoordinator:
         mode: str | None,
         model: str | None,
         source: dict[str, Any] | None,
+        user_input_resolver: Callable[
+            [], Awaitable[str | list[dict[str, Any]]]
+        ]
+        | None,
     ) -> dict[str, Any]:
         if self._shutting_down:
             raise SessionBusyError("turn coordinator is shutting down")
@@ -165,6 +174,8 @@ class TurnCoordinator:
             self._starting.discard(session_id)
         if engine is None:
             raise SessionNotFoundError(session_id)
+        if user_input_resolver is not None:
+            user_input = await user_input_resolver()
         self._starting.add(session_id)
         try:
             try:

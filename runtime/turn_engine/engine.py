@@ -1122,6 +1122,25 @@ class TurnEngine:
             for msg in self.messages
             if msg.get("role") != "notice"
         ]
+        out = [
+            (
+                {
+                    **msg,
+                    "content": [
+                        (
+                            {k: v for k, v in part.items() if k != "_codinal_context"}
+                            if isinstance(part, dict)
+                            and "_codinal_context" in part
+                            else part
+                        )
+                        for part in msg["content"]
+                    ],
+                }
+                if isinstance(msg.get("content"), list)
+                else msg
+            )
+            for msg in out
+        ]
         # PDF attachments (stored as `file` parts) are adapted to the ACTIVE model right
         # here — never in the persisted history — so a mid-session model switch always
         # re-decides: native PDF models get the real document, the rest get the local

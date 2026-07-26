@@ -9,6 +9,7 @@ from runtime.providers import (
     ProviderClient,
     StreamChunk,
 )
+from runtime.sessions.context import make_project_context_item
 from runtime.tools import ToolRegistry
 from runtime.turn_engine import TurnEngine
 
@@ -365,6 +366,40 @@ def test_outbound_pdf_adaptation_does_not_mutate_history(
     assert outbound[-1]["content"][1]["type"] == "text"
     assert "local text" in outbound[-1]["content"][1]["text"]
     assert engine.messages[-1]["content"][1] is file_part
+
+
+def test_outbound_project_context_strips_trusted_storage_marker(tmp_path):
+    context_part = make_project_context_item(
+        kind="file",
+        root=str(tmp_path),
+        path="main.py",
+        label="main.py",
+        content="print('context')",
+        truncated=False,
+    )["content_part"]
+    engine = TurnEngine(
+        provider=StreamingProvider(),
+        registry=ToolRegistry(ToolManifest()),
+        permissions=PermissionEngine(tmp_path, mode=Mode.INTERACTIVE),
+        model="openai:gpt-test",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    context_part,
+                    {"type": "text", "text": "use it"},
+                ],
+            }
+        ],
+    )
+
+    outbound = engine._outbound_messages()
+
+    assert outbound[-1]["content"][0] == {
+        "type": "text",
+        "text": context_part["text"],
+    }
+    assert engine.messages[-1]["content"][0] is context_part
 
 
 def test_pdf_adaptation_does_not_block_the_event_loop(tmp_path, monkeypatch):

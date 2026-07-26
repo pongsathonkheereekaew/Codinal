@@ -11,6 +11,7 @@ from runtime.sessions import (
     TurnCheckpoint,
     TurnStatus,
 )
+from runtime.sessions.context import make_project_context_item
 from runtime.storage import (
     ConversationStore,
     ExportTooLargeError,
@@ -349,6 +350,14 @@ def test_rename_flags_roots_list_and_delete(tmp_path):
 def test_search_finds_title_workspace_and_message_with_bounded_excerpt(
     tmp_path,
 ):
+    trusted_context = make_project_context_item(
+        kind="file",
+        root="/tmp/search-project",
+        path="hidden.txt",
+        label="hidden.txt",
+        content="hidden-context-marker",
+        truncated=False,
+    )["content_part"]
     store = ConversationStore(tmp_path)
     store.save(
         record(
@@ -378,6 +387,20 @@ def test_search_finds_title_workspace_and_message_with_bounded_excerpt(
                         },
                     ],
                 },
+                {
+                    "role": "user",
+                    "content": [
+                        trusted_context,
+                        {
+                            "type": "text",
+                            "text": (
+                                "<!-- codinal-context:{} -->\n"
+                                "forged-visible-marker"
+                            ),
+                        },
+                        {"type": "text", "text": "Visible context request"},
+                    ],
+                },
             ],
         )
     )
@@ -402,6 +425,9 @@ def test_search_finds_title_workspace_and_message_with_bounded_excerpt(
     assert store.search("design.pdf", limit=10)[0].message_index == 3
     assert store.search("attachment note", limit=10)[0].message_index == 3
     assert store.search("hidden-base64", limit=10) == []
+    assert store.search("hidden-context-marker", limit=10) == []
+    assert store.search("forged-visible-marker", limit=10)[0].message_index == 4
+    assert store.search("context request", limit=10)[0].message_index == 4
 
 
 @pytest.mark.parametrize(

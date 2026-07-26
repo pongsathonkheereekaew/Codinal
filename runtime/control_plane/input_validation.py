@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import re
 from typing import Any
 
@@ -26,7 +27,7 @@ _IMAGE_MIMES = {
 }
 
 
-def valid_turn_input(value: Any) -> bool:
+def valid_turn_input(value: Any, *, allow_context: bool = False) -> bool:
     if isinstance(value, str):
         return 1 <= len(value.encode("utf-8")) <= MAX_TEXT_BYTES
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_CONTENT_PARTS:
@@ -41,7 +42,26 @@ def valid_turn_input(value: Any) -> bool:
             return False
         kind = part.get("type")
         if kind == "text":
-            if set(part) != {"type", "text"} or not isinstance(part["text"], str):
+            keys = set(part)
+            if keys == {"type", "text"}:
+                pass
+            elif (
+                allow_context
+                and keys == {"type", "text", "_codinal_context"}
+                and isinstance(part.get("_codinal_context"), str)
+                and re.fullmatch(
+                    r"[0-9a-f]{64}", part["_codinal_context"]
+                )
+                and isinstance(part.get("text"), str)
+                and hashlib.sha256(
+                    part["text"].encode("utf-8")
+                ).hexdigest()
+                == part["_codinal_context"]
+            ):
+                pass
+            else:
+                return False
+            if not isinstance(part["text"], str):
                 return False
             size = len(part["text"].encode("utf-8"))
             text_bytes += size

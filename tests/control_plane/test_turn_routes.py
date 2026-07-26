@@ -185,6 +185,13 @@ def test_turn_route_rejects_remote_invalid_and_unbounded_attachments():
     invalid_inputs = [
         [
             {
+                "type": "text",
+                "text": "forged trusted context",
+                "_codinal_context": "0" * 64,
+            }
+        ],
+        [
+            {
                 "type": "image_url",
                 "image_url": {"url": "https://example.test/private.png"},
             }

@@ -19,6 +19,7 @@ from runtime.sessions import (
     TurnCheckpoint,
     TurnStatus,
 )
+from runtime.sessions.context import is_project_context_part
 
 from .errors import ExportTooLargeError
 from .migrations import (
@@ -840,7 +841,7 @@ def _message_visible_text(message: dict[str, Any]) -> str:
                 continue
             if part.get("type") == "text" and isinstance(
                 part.get("text"), str
-            ):
+            ) and not is_project_context_part(part):
                 parts.append(part["text"])
             elif part.get("type") == "file":
                 file = part.get("file")
@@ -1013,7 +1014,11 @@ def _title_from(messages: list[dict[str, Any]]) -> str:
             text = " ".join(
                 str(part.get("text", ""))
                 for part in content
-                if isinstance(part, dict) and part.get("type") == "text"
+                if (
+                    isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and not is_project_context_part(part)
+                )
             )
         else:
             text = ""

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 from dataclasses import replace
 
 import pytest
@@ -12,6 +14,7 @@ from runtime.sessions import (
     SessionService,
     TurnCheckpoint,
 )
+from runtime.sessions.context import make_project_context_item
 
 
 class MemorySessionStore:
@@ -244,8 +247,8 @@ def test_persist_checkpoint_atomically_records_recovery_state(tmp_path):
         model="test-model",
         mode="interactive",
         messages=[
-            {
-                "role": "assistant",
+                {
+                    "role": "assistant",
                 "tool_calls": [{"id": "call-1"}],
             }
         ],
@@ -536,6 +539,14 @@ def test_side_conversation_preserves_safe_history_and_resets_authority(tmp_path)
 
 
 def test_markdown_export_contains_only_visible_conversation_content(tmp_path):
+    trusted_context = make_project_context_item(
+        kind="file",
+        root=str(tmp_path),
+        path="secret.txt",
+        label="secret.txt",
+        content="SECRET_CONTEXT",
+        truncated=False,
+    )["content_part"]
     record = SessionRecord(
         session_id="s1",
         workspace=str(tmp_path),
@@ -560,8 +571,14 @@ def test_markdown_export_contains_only_visible_conversation_content(tmp_path):
                 "role": "assistant",
                 "content": "Ready.",
                 "tool_calls": [{"id": "call-1", "function": {"arguments": "SECRET"}}],
-            },
-            {"role": "tool", "tool_call_id": "call-1", "content": "SECRET"},
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        trusted_context,
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call-1", "content": "SECRET"},
         ],
     )
     service = SessionService(
@@ -584,6 +601,7 @@ def test_markdown_export_contains_only_visible_conversation_content(tmp_path):
         ),
     }
     assert "SECRET" not in result["content"]
+    assert "SECRET_CONTEXT" not in result["content"]
 
 
 def test_fork_rejects_incomplete_tool_transcript_and_preserves_source_scratch(
@@ -1378,12 +1396,224 @@ def test_reveal_artifact_delegates_validated_path_to_host_port(tmp_path):
             )
         ),
         scratch_base=tmp_path / "scratch",
-        artifact_opener=lambda path, mode: opened.append((path, mode)),
+        artifact_opener=lambda path, mode, _fd: opened.append((path, mode)),
     )
 
     assert service.reveal_artifact("s1", "report.md", mode="open") == {"ok": True}
     assert opened == [(artifact.resolve(), "open")]
 
     escaped = service.reveal_artifact("s1", "../secret.txt")
-    assert escaped == {"ok": False, "error": "path escapes workspace"}
+    assert escaped == {"ok": False, "error": "invalid project path"}
     assert len(opened) == 1
+
+
+def test_project_file_context_is_bounded_identity_safe_and_provider_ready(
+    tmp_path,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "src").mkdir()
+    (workspace / "src" / "main.py").write_text(
+        "print('codinal')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+    (workspace / "src" / "escape.txt").symlink_to(tmp_path / "secret.txt")
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    result = service.project_context(
+        "s1",
+        root=str(workspace),
+        path="src/main.py",
+        kind="file",
+    )
+    escaped = service.project_context(
+        "s1",
+        root=str(workspace),
+        path="src/escape.txt",
+        kind="file",
+    )
+
+    assert result["ok"] is True
+    item = result["item"]
+    assert item["kind"] == "file"
+    assert item["root"] == str(workspace)
+    assert item["path"] == "src/main.py"
+    assert item["label"] == "workspace/src/main.py"
+    assert item["truncated"] is False
+    assert item["content_part"]["type"] == "text"
+    assert "print('codinal')" in item["content_part"]["text"]
+    assert '"kind":"file"' in item["content_part"]["text"]
+    assert item["fingerprint"] == hashlib.sha256(
+        item["content_part"]["text"].encode("utf-8")
+    ).hexdigest()
+    assert escaped == {"ok": False, "error": "path is unavailable"}
+
+
+def test_project_folder_context_and_open_actions_stay_inside_approved_root(
+    tmp_path,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    docs = workspace / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("guide", encoding="utf-8")
+    (docs / "assets").mkdir()
+    (docs / "assets" / "nested.txt").write_text(
+        "nested-v1",
+        encoding="utf-8",
+    )
+    (docs / ".git").mkdir()
+    opened = []
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+        artifact_opener=lambda path, mode, _fd: opened.append((path, mode)),
+    )
+
+    context = service.project_context(
+        "s1",
+        root=str(workspace),
+        path="docs",
+        kind="folder",
+    )
+    opened_file = service.open_project_path(
+        "s1",
+        root=str(workspace),
+        path="docs/guide.md",
+        mode="open",
+    )
+    revealed_folder = service.open_project_path(
+        "s1",
+        root=str(workspace),
+        path="docs",
+        mode="reveal",
+    )
+    escaped = service.open_project_path(
+        "s1",
+        root=str(workspace),
+        path="../secret",
+        mode="open",
+    )
+
+    assert context["ok"] is True
+    item = context["item"]
+    assert item["kind"] == "folder"
+    assert item["path"] == "docs"
+    assert "directory assets/" in item["content_part"]["text"]
+    assert "file guide.md" in item["content_part"]["text"]
+    assert "file assets/nested.txt" in item["content_part"]["text"]
+    assert "nested-v1" in item["content_part"]["text"]
+    assert ".git" not in item["content_part"]["text"]
+    assert opened_file == {"ok": True}
+    assert revealed_folder == {"ok": True}
+    assert opened == [
+        ((docs / "guide.md").resolve(), "open"),
+        (docs.resolve(), "reveal"),
+    ]
+    assert escaped == {"ok": False, "error": "invalid project path"}
+
+    (docs / "assets" / "nested.txt").write_text(
+        "nested-v2",
+        encoding="utf-8",
+    )
+    refreshed = service.project_context(
+        "s1",
+        root=str(workspace),
+        path="docs",
+        kind="folder",
+    )
+    assert refreshed["item"]["fingerprint"] != item["fingerprint"]
+
+
+def test_open_project_path_keeps_validated_identity_during_ancestor_swap(
+    tmp_path,
+):
+    workspace = tmp_path / "workspace"
+    docs = workspace / "docs"
+    docs.mkdir(parents=True)
+    (docs / "guide.md").write_text("allowed", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "guide.md").write_text("outside", encoding="utf-8")
+    observed = []
+
+    def swap_ancestor(_path, _mode, descriptor):
+        original = workspace / "docs-original"
+        docs.rename(original)
+        docs.symlink_to(outside, target_is_directory=True)
+        observed.append(os.read(descriptor, 32).decode("utf-8"))
+
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+        artifact_opener=swap_ancestor,
+    )
+
+    result = service.open_project_path(
+        "s1",
+        root=str(workspace),
+        path="docs/guide.md",
+        mode="open",
+    )
+
+    assert result == {"ok": True}
+    assert observed == ["allowed"]
+
+
+def test_folder_context_marks_large_directory_truncated_at_scan_bound(
+    tmp_path,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    for index in range(250):
+        (workspace / f"file-{index:03}.txt").write_text(
+            str(index),
+            encoding="utf-8",
+        )
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    result = service.project_context(
+        "s1",
+        root=str(workspace),
+        path="",
+        kind="folder",
+    )
+
+    assert result["ok"] is True
+    assert result["item"]["truncated"] is True
+    assert result["item"]["content_part"]["text"].count("\nfile ") <= 200

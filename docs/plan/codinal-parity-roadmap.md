@@ -46,7 +46,7 @@ acceptance evidence is recorded from the real product surface.
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
 | MCP | Secure connect/runtime tools implemented; lifecycle UI/governance missing | MCP contract/service tests |
-| Multi-root and project tree | Durable add/remove root UI and bounded lazy tree implemented; explicit file/folder/Git context chips and open/reveal missing | authenticated idle-gated root routes, non-following-symlink tree tests, restart E2E |
+| Multi-root and project tree | Durable multi-root tree, exact file/folder/Git context snapshots, and native open/reveal actions implemented | recursive descriptor-relative context tests, identity-bound Git snapshots, provider payload E2E, and vnode-preserving macOS helper test |
 | Plan/question/directory prompts | Durable production callbacks, authenticated resolution routes, and resumable desktop cards implemented | restart-while-waiting E2Es for all three prompt kinds, schema v4 migration, native directory picker |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
 | Checkpoints | Automatic exact-path checkpoints cover Git and non-Git workspaces, including direct files, transactionally isolated shell changes, private content-minimized object storage, and crash-consistent composite restore journaling | Git ignored-file restore, non-Git restart reconciliation, same-path conflict-abort, uncaptured-secret exclusion, and active-turn manual-edit preservation E2Es |
@@ -123,7 +123,7 @@ Acceptance evidence:
 
 - [x] Ship bounded image/PDF attachment compose, persistence, reload, model
   switch degradation, and local PDF fallback.
-- [ ] Add project file tree, open/reveal actions, explicit file/folder/Git
+- [x] Add project file tree, open/reveal actions, explicit file/folder/Git
   context chips, and multi-root management.
 - [ ] Add fast text/symbol search, then a local semantic index respecting
   ignore files, symlinks, repository boundaries, deletion, resource budgets,
@@ -219,12 +219,11 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Add exact provider file/folder/Git context chips and open/reveal actions on
-   the durable project-tree baseline.
-2. Add parallel isolated subagents now that checkpoint and prompt recovery are
+1. Add parallel isolated subagents now that checkpoint and prompt recovery are
    proven.
-3. Add editable persisted plan artifacts and selective task approval on top of
+2. Add editable persisted plan artifacts and selective task approval on top of
    the durable plan decision card.
+3. Add fast text/symbol search, then the bounded local semantic index.
 
 ## Decisions so far
 

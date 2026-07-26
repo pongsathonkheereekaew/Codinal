@@ -1,3 +1,4 @@
+import hashlib
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -19,10 +20,55 @@ class FakeSettings:
         return {"model": "openai:gpt-test"}
 
 
+class FakeGit:
+    def __init__(self):
+        self.context_roots = []
+
+    def close(self):
+        return None
+
+    def load(self, session_id):
+        return {"session_id": session_id}
+
+    def status(self, _session_id):
+        return {
+            "ok": True,
+            "branch": "codinal/session-1",
+            "base_commit": "abc123",
+            "clean": False,
+            "porcelain": " M src/main.py\n",
+            "output_truncated": False,
+        }
+
+    def diff(self, _session_id, **_options):
+        return {
+            "ok": True,
+            "diff": "diff --git a/src/main.py b/src/main.py\n+change\n",
+            "output_truncated": False,
+        }
+
+    def context_snapshot(self, _session_id, *, root, expected_identity):
+        self.context_roots.append(root)
+        return {
+            "ok": True,
+            "content": (
+                "branch: codinal/session-1\n"
+                "base_commit: abc123\n\n"
+                "status:\n M src/main.py\n\n"
+                "unstaged diff:\n"
+                "diff --git a/src/main.py b/src/main.py\n+change\n"
+            ),
+            "truncated": False,
+            "root": root,
+            "expected_identity": expected_identity,
+        }
+
+
 class FakeTurns:
     def __init__(self):
         self.active = set()
         self.restore_pending = set()
+        self.started = []
 
     async def recover(self):
         return 0
@@ -35,6 +81,13 @@ class FakeTurns:
 
     def is_active(self, session_id):
         return session_id in self.active
+
+    async def start(self, session_id, **options):
+        resolver = options.pop("user_input_resolver", None)
+        if resolver is not None:
+            options["user_input"] = await resolver()
+        self.started.append((session_id, options))
+        return {"ok": True, "session_id": session_id}
 
     async def export_when_idle(self, exporter):
         if self.active:
@@ -61,6 +114,7 @@ class FakeSessions:
         self.side_conversations = []
         self.added_roots = []
         self.removed_roots = []
+        self.opened_project_paths = []
         self.export_too_large = False
 
     def list_sessions(self, *, workspace=None):
@@ -107,6 +161,32 @@ class FakeSessions:
     def remove_root(self, session_id, path):
         self.removed_roots.append((session_id, path))
         return {"ok": True, "roots": self.roots(session_id)}
+
+    def project_context(self, session_id, *, root, path, kind):
+        text = f"context:{kind}:{root}:{path}"
+        return {
+            "ok": True,
+            "item": {
+                "kind": kind,
+                "root": root,
+                "path": path,
+                "label": f"{session_id}/{path}",
+                "truncated": False,
+                "fingerprint": hashlib.sha256(
+                    text.encode("utf-8")
+                ).hexdigest(),
+                "content_part": {"type": "text", "text": text},
+            },
+        }
+
+    def open_project_path(self, session_id, *, root, path, mode):
+        self.opened_project_paths.append(
+            (session_id, root, path, mode)
+        )
+        return {"ok": True}
+
+    def project_root_identity(self, _session_id, _root):
+        return (17, 23)
 
     def rename(self, session_id, title):
         self.renamed.append((session_id, title))
@@ -170,7 +250,7 @@ class FakeSessions:
         }
 
 
-def make_client():
+def make_client(*, git=None):
     turns = FakeTurns()
     sessions = FakeSessions()
     services = SimpleNamespace(
@@ -182,7 +262,7 @@ def make_client():
         sessions=sessions,
         approvals=None,
         mcp=None,
-        git=None,
+        git=git,
     )
     return (
         TestClient(create_control_plane_app(token=TOKEN, services=services)),
@@ -294,6 +374,166 @@ def test_session_tree_and_root_mutations_are_bounded_and_idle_gated():
     assert sessions.removed_roots == [
         ("session-1", "/tmp/shared")
     ]
+
+
+def test_project_context_is_authenticated_and_open_actions_are_idle_gated():
+    client, sessions, turns = make_client()
+    descriptor = {
+        "kind": "file",
+        "root": "/tmp/project",
+        "path": "src/main.py",
+    }
+    with client:
+        unauthorized = client.post(
+            "/v1/sessions/session-1/context",
+            json=descriptor,
+        )
+        context = client.post(
+            "/v1/sessions/session-1/context",
+            headers=AUTH,
+            json=descriptor,
+        )
+        turns.active.add("session-1")
+        busy = client.post(
+            "/v1/sessions/session-1/project/open",
+            headers=AUTH,
+            json={**descriptor, "mode": "reveal"},
+        )
+        turns.active.clear()
+        opened = client.post(
+            "/v1/sessions/session-1/project/open",
+            headers=AUTH,
+            json={**descriptor, "mode": "open"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert context.status_code == 200
+    assert context.json()["item"]["label"] == "session-1/src/main.py"
+    assert busy.status_code == 409
+    assert opened.status_code == 200
+    assert sessions.opened_project_paths == [
+        ("session-1", "/tmp/project", "src/main.py", "open")
+    ]
+
+
+def test_turn_revalidates_context_fingerprint_and_sends_exact_resolved_part():
+    client, _sessions, turns = make_client()
+    descriptor = {
+        "kind": "file",
+        "root": "/tmp/project",
+        "path": "src/main.py",
+    }
+    with client:
+        selected = client.post(
+            "/v1/sessions/session-1/context",
+            headers=AUTH,
+            json=descriptor,
+        )
+        item = selected.json()["item"]
+        started = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={
+                "input": "Fix it",
+                "workspace": "/tmp/project",
+                "context": [
+                    {
+                        **descriptor,
+                        "fingerprint": item["fingerprint"],
+                    }
+                ],
+            },
+        )
+        stale = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={
+                "input": "Do not send",
+                "context": [{**descriptor, "fingerprint": "0" * 64}],
+            },
+        )
+
+    assert started.status_code == 202
+    assert turns.started[0][1]["user_input"] == [
+        item["content_part"],
+        {"type": "text", "text": "Fix it"},
+    ]
+    assert stale.status_code == 409
+    assert stale.json() == {
+        "detail": "project context changed; refresh it before sending"
+    }
+    assert len(turns.started) == 1
+
+
+def test_git_context_snapshot_is_exactly_the_part_sent_to_provider():
+    client, _sessions, turns = make_client(git=FakeGit())
+    descriptor = {
+        "kind": "git",
+        "root": "/tmp/project",
+        "path": "",
+    }
+    with client:
+        selected = client.post(
+            "/v1/sessions/session-1/context",
+            headers=AUTH,
+            json=descriptor,
+        )
+        item = selected.json()["item"]
+        started = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={
+                "input": "Review these changes",
+                "context": [
+                    {
+                        **descriptor,
+                        "fingerprint": item["fingerprint"],
+                    }
+                ],
+            },
+        )
+
+    assert selected.status_code == 200
+    assert item["kind"] == "git"
+    assert " M src/main.py" in item["content_part"]["text"]
+    assert "diff --git a/src/main.py" in item["content_part"]["text"]
+    assert started.status_code == 202
+    assert turns.started[0][1]["user_input"][0] == item["content_part"]
+
+
+def test_git_context_accepts_an_available_additional_root():
+    git = FakeGit()
+    client, sessions, _turns = make_client(git=git)
+    sessions.roots = lambda _session_id: [
+        {
+            "path": "/tmp/project",
+            "writable": True,
+            "primary": True,
+        },
+        {
+            "path": "/tmp/shared-repo",
+            "label": "shared-repo",
+            "writable": False,
+            "primary": False,
+            "available": True,
+        },
+    ]
+    descriptor = {
+        "kind": "git",
+        "root": "/tmp/shared-repo",
+        "path": "",
+    }
+
+    with client:
+        selected = client.post(
+            "/v1/sessions/session-1/context",
+            headers=AUTH,
+            json=descriptor,
+        )
+
+    assert selected.status_code == 200
+    assert selected.json()["item"]["label"] == "shared-repo · Git changes"
+    assert git.context_roots == ["/tmp/shared-repo"]
 
 
 def test_session_search_is_authenticated_and_bounded():

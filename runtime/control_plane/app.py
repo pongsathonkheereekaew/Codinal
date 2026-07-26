@@ -31,6 +31,7 @@ from runtime.control_plane.input_validation import (
     valid_turn_input,
 )
 from runtime.policy import ApprovalOutcome, ApprovalPersistenceError
+from runtime.sessions.context import make_project_context_item
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
     CodeCheckpointError,
@@ -99,6 +100,7 @@ class TurnControl(Protocol):
         mode: str | None = None,
         model: str | None = None,
         source: dict[str, Any] | None = None,
+        user_input_resolver: Any = None,
     ) -> dict[str, Any]: ...
 
     def interrupt(self, session_id: str) -> bool: ...
@@ -154,6 +156,30 @@ class SessionControl(Protocol):
         path: str,
         limit: int,
     ) -> dict[str, Any]: ...
+
+    def project_context(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        path: str,
+        kind: str,
+    ) -> dict[str, Any]: ...
+
+    def open_project_path(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        path: str,
+        mode: str,
+    ) -> dict[str, Any]: ...
+
+    def project_root_identity(
+        self,
+        session_id: str,
+        root: str,
+    ) -> tuple[int, int] | None: ...
 
     def add_root(
         self,
@@ -225,6 +251,14 @@ class GitControl(Protocol):
     def load(self, session_id: str) -> Any | None: ...
 
     def status(self, session_id: str) -> dict[str, object]: ...
+
+    def context_snapshot(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        expected_identity: tuple[int, int],
+    ) -> dict[str, object]: ...
 
     def diff(
         self,
@@ -509,6 +543,51 @@ def create_control_plane_app(
             raise HTTPException(status_code=status, detail=result["error"])
         return result
 
+    @app.post("/v1/sessions/{session_id}/context")
+    async def create_project_context(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        descriptor = await _read_project_context(request)
+        result = await _resolve_project_context(
+            services,
+            session_id,
+            descriptor,
+        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "project context unavailable"),
+            )
+        return result
+
+    @app.post("/v1/sessions/{session_id}/project/open")
+    async def open_project_path(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        descriptor = await _read_project_context(request, with_mode=True)
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: services.sessions.open_project_path(
+                    session_id,
+                    root=descriptor["root"],
+                    path=descriptor["path"],
+                    mode=descriptor["mode"],
+                ),
+            )
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "project path unavailable"),
+            )
+        return result
+
     @app.post("/v1/sessions/{session_id}/roots")
     async def add_session_root(
         session_id: str,
@@ -732,6 +811,30 @@ def create_control_plane_app(
             }
             if "mode" in turn:
                 options["mode"] = turn["mode"]
+            if turn.get("context"):
+                async def resolve_input() -> str | list[dict[str, Any]]:
+                    context_parts = await _resolve_turn_context(
+                        services,
+                        session_id,
+                        turn["context"],
+                    )
+                    resolved = _with_context_parts(
+                        turn["input"],
+                        context_parts,
+                    )
+                    if not valid_turn_input(
+                        resolved,
+                        allow_context=True,
+                    ):
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                "project context exceeds the turn safety limit"
+                            ),
+                        )
+                    return resolved
+
+                options["user_input_resolver"] = resolve_input
             result = await services.turns.start(session_id, **options)
         except SessionNotFoundError:
             raise HTTPException(status_code=404, detail="session not found") from None
@@ -1079,6 +1182,7 @@ def create_control_plane_app(
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _AGENT = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,31}")
+_CONTEXT_FINGERPRINT = re.compile(r"[a-f0-9]{64}")
 
 
 def _validate_public_session_id(session_id: str) -> None:
@@ -1111,6 +1215,7 @@ async def _read_turn(request: Request) -> dict[str, Any]:
             "mode",
             "model",
             "source",
+            "context",
         }
         or not valid_turn_input(body["input"])
         or (
@@ -1158,9 +1263,206 @@ async def _read_turn(request: Request) -> dict[str, Any]:
                 or len(json.dumps(body["source"]).encode("utf-8")) > 16_384
             )
         )
+        or (
+            "context" in body
+            and (
+                not isinstance(body["context"], list)
+                or not 1 <= len(body["context"]) <= 8
+                or any(
+                    not _valid_context_descriptor(
+                        descriptor,
+                        fingerprint=True,
+                    )
+                    for descriptor in body["context"]
+                )
+            )
+        )
     ):
         raise HTTPException(status_code=400, detail="invalid turn payload")
     return body
+
+
+async def _read_project_context(
+    request: Request,
+    *,
+    with_mode: bool = False,
+) -> dict[str, str]:
+    try:
+        chunks = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_ROOT_BODY_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="invalid project context",
+                )
+            chunks.append(chunk)
+        body = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid project context",
+        ) from None
+    if (
+        not _valid_context_descriptor(body, mode=with_mode)
+        or (
+            with_mode
+            and (
+                body.get("mode") not in {"open", "reveal"}
+                or body.get("kind") not in {"file", "folder"}
+            )
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid project context",
+        )
+    return body
+
+
+def _valid_context_descriptor(
+    descriptor: Any,
+    *,
+    fingerprint: bool = False,
+    mode: bool = False,
+) -> bool:
+    expected = {"kind", "root", "path"}
+    if fingerprint:
+        expected.add("fingerprint")
+    if mode:
+        expected.add("mode")
+    return bool(
+        isinstance(descriptor, dict)
+        and set(descriptor) == expected
+        and descriptor.get("kind") in {"file", "folder", "git"}
+        and isinstance(descriptor.get("root"), str)
+        and 1 <= len(descriptor["root"]) <= 4096
+        and Path(descriptor["root"]).is_absolute()
+        and isinstance(descriptor.get("path"), str)
+        and len(descriptor["path"]) <= 4096
+        and not Path(descriptor["path"]).is_absolute()
+        and ".." not in Path(descriptor["path"]).parts
+        and (
+            not fingerprint
+            or (
+                isinstance(descriptor.get("fingerprint"), str)
+                and _CONTEXT_FINGERPRINT.fullmatch(
+                    descriptor["fingerprint"]
+                )
+                is not None
+            )
+        )
+        and (not mode or isinstance(descriptor.get("mode"), str))
+    )
+
+
+async def _resolve_turn_context(
+    services: Any,
+    session_id: str,
+    descriptors: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    parts = []
+    for descriptor in descriptors:
+        result = await _resolve_project_context(
+            services,
+            session_id,
+            descriptor,
+        )
+        item = result.get("item") if result.get("ok") else None
+        if (
+            not isinstance(item, dict)
+            or item.get("fingerprint") != descriptor["fingerprint"]
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "project context changed; refresh it before sending"
+                ),
+            )
+        part = item.get("content_part")
+        if (
+            not isinstance(part, dict)
+            or part.get("type") != "text"
+            or not isinstance(part.get("text"), str)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="project context is unavailable",
+            )
+        parts.append(part)
+    return parts
+
+
+async def _resolve_project_context(
+    services: Any,
+    session_id: str,
+    descriptor: dict[str, str],
+) -> dict[str, Any]:
+    if descriptor["kind"] != "git":
+        return await asyncio.to_thread(
+            services.sessions.project_context,
+            session_id,
+            root=descriptor["root"],
+            path=descriptor["path"],
+            kind=descriptor["kind"],
+        )
+    roots = await asyncio.to_thread(services.sessions.roots, session_id)
+    selected_root = next(
+        (
+            root
+            for root in roots
+            if root.get("path") == descriptor["root"]
+            and root.get("available") is not False
+        ),
+        None,
+    )
+    if (
+        selected_root is None
+        or descriptor["path"]
+        or services.git is None
+    ):
+        return {"ok": False, "error": "Git context unavailable"}
+    expected_identity = await asyncio.to_thread(
+        services.sessions.project_root_identity,
+        session_id,
+        descriptor["root"],
+    )
+    if expected_identity is None:
+        return {"ok": False, "error": "Git context unavailable"}
+    try:
+        snapshot = await asyncio.to_thread(
+            services.git.context_snapshot,
+            session_id,
+            root=descriptor["root"],
+            expected_identity=expected_identity,
+        )
+    except GitWorkspaceError:
+        return {"ok": False, "error": "Git context unavailable"}
+    if not snapshot.get("ok"):
+        return {"ok": False, "error": "Git context unavailable"}
+    return {
+        "ok": True,
+        "item": make_project_context_item(
+            kind="git",
+            root=descriptor["root"],
+            path="",
+            label=(
+                f"{selected_root.get('label') or 'Project'} · Git changes"
+            ),
+            content=str(snapshot.get("content", "")),
+            truncated=bool(snapshot.get("truncated")),
+        ),
+    }
+
+
+def _with_context_parts(
+    user_input: str | list[dict[str, Any]],
+    context_parts: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    if isinstance(user_input, str):
+        return [*context_parts, {"type": "text", "text": user_input}]
+    return [*context_parts, *user_input]
 
 
 async def _read_approval(request: Request) -> ApprovalOutcome:

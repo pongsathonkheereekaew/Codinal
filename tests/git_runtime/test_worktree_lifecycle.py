@@ -148,6 +148,129 @@ def test_store_rejects_invalid_session_id(tmp_path: Path) -> None:
         service.load("../escape")
 
 
+def test_context_snapshot_captures_staged_unstaged_and_untracked_content(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    tracked = repo / "tracked.txt"
+    tracked.write_text("staged\n", encoding="utf-8")
+    git(repo, "add", "tracked.txt")
+    tracked.write_text("staged\nunstaged\n", encoding="utf-8")
+    (repo / "untracked.txt").write_text(
+        "untracked body\n",
+        encoding="utf-8",
+    )
+
+    snapshot = service.context_snapshot(
+        "session-extra-root",
+        root=str(repo),
+        expected_identity=(repo.stat().st_dev, repo.stat().st_ino),
+    )
+
+    assert snapshot["ok"] is True
+    assert "branch: feature" in snapshot["content"]
+    assert "staged diff:" in snapshot["content"]
+    assert "+staged" in snapshot["content"]
+    assert "unstaged diff:" in snapshot["content"]
+    assert "+unstaged" in snapshot["content"]
+    assert "file untracked.txt:" in snapshot["content"]
+    assert "untracked body" in snapshot["content"]
+
+
+def test_context_snapshot_disables_fsmonitor_and_enforces_root_identity(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    marker = tmp_path / "fsmonitor-ran"
+    monitor = tmp_path / "fsmonitor.sh"
+    monitor.write_text(
+        f"#!/bin/sh\ntouch '{marker}'\n",
+        encoding="utf-8",
+    )
+    monitor.chmod(0o700)
+    git(repo, "config", "core.fsmonitor", str(monitor))
+    service = GitWorktreeService(tmp_path / "data")
+    identity = (repo.stat().st_dev, repo.stat().st_ino)
+
+    snapshot = service.context_snapshot(
+        "safe-context",
+        root=str(repo),
+        expected_identity=identity,
+    )
+    with pytest.raises(GitWorkspaceError, match="root changed"):
+        service.context_snapshot(
+            "wrong-identity",
+            root=str(repo),
+            expected_identity=(identity[0], identity[1] + 1),
+        )
+
+    assert snapshot["ok"] is True
+    assert marker.exists() is False
+
+
+def test_context_snapshot_retries_when_repository_changes_mid_capture(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    tracked = repo / "tracked.txt"
+    tracked.write_text("first edit\n", encoding="utf-8")
+    original_probe = service._context_probe_result
+    head_probes = 0
+
+    def racing_probe(cwd, *arguments, **options):
+        nonlocal head_probes
+        if arguments == ("rev-parse", "HEAD"):
+            head_probes += 1
+            if head_probes == 3:
+                tracked.write_text("raced edit\n", encoding="utf-8")
+        return original_probe(cwd, *arguments, **options)
+
+    monkeypatch.setattr(service, "_context_probe_result", racing_probe)
+
+    snapshot = service.context_snapshot(
+        "racing-context",
+        root=str(repo),
+        expected_identity=(repo.stat().st_dev, repo.stat().st_ino),
+    )
+
+    assert head_probes >= 5
+    assert "+raced edit" in snapshot["content"]
+    assert "+first edit" not in snapshot["content"]
+
+
+@requires_seatbelt
+def test_primary_context_snapshot_disables_repository_fsmonitor(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("primary-safe-context", repo)
+    marker = tmp_path / "primary-fsmonitor-ran"
+    monitor = tmp_path / "primary-fsmonitor.sh"
+    monitor.write_text(
+        f"#!/bin/sh\ntouch '{marker}'\n",
+        encoding="utf-8",
+    )
+    monitor.chmod(0o700)
+    git(repo, "config", "core.fsmonitor", str(monitor))
+    marker.unlink(missing_ok=True)
+
+    snapshot = service.context_snapshot(
+        "primary-safe-context",
+        root=str(record.worktree_path),
+        expected_identity=(
+            record.worktree_path.stat().st_dev,
+            record.worktree_path.stat().st_ino,
+        ),
+    )
+
+    assert snapshot["ok"] is True
+    assert marker.exists() is False
+
+
 @requires_seatbelt
 def test_status_diff_stage_and_commit_stay_on_session_branch(
     tmp_path: Path,

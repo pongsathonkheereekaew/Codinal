@@ -444,8 +444,15 @@ select:focus-visible,
   margin-top: 10px;
 }
 
+.tree-root-heading {
+  display: flex;
+  align-items: center;
+}
+
 .tree-root-title {
   display: block;
+  min-width: 0;
+  flex: 1;
   padding: 3px 5px;
   color: var(--muted);
   font-size: 9px;
@@ -464,6 +471,9 @@ select:focus-visible,
 }
 
 .tree-directory > summary {
+  display: flex;
+  align-items: center;
+  gap: 3px;
   cursor: pointer;
 }
 
@@ -478,6 +488,7 @@ select:focus-visible,
 
 .tree-file {
   display: flex;
+  align-items: center;
   gap: 5px;
 }
 
@@ -487,6 +498,38 @@ select:focus-visible,
 
 .tree-file-icon {
   color: var(--faint);
+}
+
+.tree-entry-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-entry-action {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  opacity: 0;
+}
+
+.tree-root-heading > .tree-entry-action,
+.tree-directory > summary:hover .tree-entry-action,
+.tree-directory > summary:focus-within .tree-entry-action,
+.tree-file:hover .tree-entry-action,
+.tree-file:focus-within .tree-entry-action {
+  opacity: 1;
+}
+
+.tree-entry-action:hover,
+.tree-entry-action:focus-visible {
+  background: var(--surface);
+  color: var(--accent);
 }
 
 .tree-empty {
@@ -991,6 +1034,12 @@ select:focus-visible,
 .attachment-chip button {
   color: var(--muted);
   font-size: 14px;
+}
+
+.context-fingerprint {
+  color: var(--faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 8px;
 }
 
 .composer textarea {

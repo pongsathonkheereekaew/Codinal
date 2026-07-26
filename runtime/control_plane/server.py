@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -387,6 +388,7 @@ def build_services(
             approval_broker.approver if approver is deny_all else None
         ),
         delete_callbacks=(delete_git_workspace, delete_sandbox),
+        artifact_opener=_open_project_item,
         provider_secrets=secret_service,
         oauth=oauth or OAuthCoordinator(),
         mcp_manager=mcp_manager or MCPManager(),
@@ -395,6 +397,27 @@ def build_services(
         approval_broker=approval_broker,
         interaction_broker=interaction_broker,
     )
+
+
+def _open_project_item(_path: Path, mode: str, descriptor: int) -> None:
+    helper = os.environ.get("CODINAL_HOST_HELPER", "")
+    if not helper or not Path(helper).is_absolute() or not os.access(helper, os.X_OK):
+        raise OSError("native project opener is unavailable")
+    command = [helper, "--codinal-open-fd", mode, str(descriptor)]
+    try:
+        result = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            pass_fds=(descriptor,),
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise OSError("could not open project item") from exc
+    if result.returncode != 0:
+        raise OSError("could not open project item")
 
 
 def _coding_instructions() -> str:

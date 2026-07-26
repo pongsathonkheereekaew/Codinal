@@ -56,6 +56,9 @@ const state = {
   roots: [],
   treeGeneration: 0,
   rootMutationPending: false,
+  contextItems: [],
+  contextGeneration: 0,
+  contextPending: false,
 };
 
 const el = Object.fromEntries(
@@ -77,6 +80,7 @@ const el = Object.fromEntries(
     "context-roots", "project-tree", "add-context-root",
     "thread-search", "thread-search-previous", "thread-search-next",
     "export-thread", "return-to-parent",
+    "context-items",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -295,6 +299,7 @@ async function selectSession(session) {
   state.roots = [];
   state.treeGeneration += 1;
   invalidateAttachments();
+  invalidateContextItems();
   state.liveAssistant = null;
   state.activities.clear();
   el["task-title"].textContent = session.title || "New task";
@@ -378,6 +383,7 @@ function switchWorkspace(workspace) {
   state.roots = [];
   state.treeGeneration += 1;
   invalidateAttachments();
+  invalidateContextItems();
   state.liveAssistant = null;
   state.activities.clear();
   state.diff = "";
@@ -420,6 +426,13 @@ function invalidateAttachments() {
   state.attachmentReader?.abort();
   state.attachmentReader = null;
   renderAttachments();
+}
+
+function invalidateContextItems() {
+  state.contextGeneration += 1;
+  state.contextItems = [];
+  state.contextPending = false;
+  renderContextItems();
 }
 
 function connectSocket() {
@@ -550,6 +563,19 @@ async function loadRootsAndTree() {
     || state.treeGeneration !== generation
   ) return;
   state.roots = roots;
+  const availableRoots = new Set(
+    roots
+      .filter((root) => root.available !== false)
+      .map((root) => root.path)
+  );
+  const retainedContext = state.contextItems.filter(
+    (item) => availableRoots.has(item.root)
+  );
+  if (retainedContext.length !== state.contextItems.length) {
+    state.contextItems = retainedContext;
+    state.contextGeneration += 1;
+    renderContextItems();
+  }
   el["add-context-root"].disabled = (
     state.busy || state.rootMutationPending || !roots.length
   );
@@ -612,7 +638,16 @@ function renderProjectTree(generation = state.treeGeneration) {
       root.label || basename(root.path)
     );
     title.title = root.path;
-    section.append(title);
+    const heading = node("div", "tree-root-heading");
+    heading.append(title);
+    heading.append(
+      projectTreeAction("Git", "Add Git context", () => {
+        addProjectContext(root, "", "git").catch(
+          (error) => toast(error.message, "error")
+        );
+      })
+    );
+    section.append(heading);
     const entries = node("div", "tree-entries");
     section.append(entries);
     el["project-tree"].append(section);
@@ -653,7 +688,25 @@ async function loadTreeDirectory(container, root, path, generation) {
   for (const entry of result.entries || []) {
     if (entry.kind === "directory") {
       const details = node("details", "tree-directory");
-      const summary = node("summary", "", entry.name);
+      const summary = node("summary");
+      summary.append(
+        node("span", "tree-entry-label", entry.name),
+        projectTreeAction("+", "Add folder context", () => {
+          addProjectContext(root, entry.path, "folder").catch(
+            (error) => toast(error.message, "error")
+          );
+        }),
+        projectTreeAction("↗", "Open in default app", () => {
+          openProjectPath(root, entry.path, "folder", "open").catch(
+            (error) => toast(error.message, "error")
+          );
+        }),
+        projectTreeAction("⌕", "Reveal in Finder", () => {
+          openProjectPath(root, entry.path, "folder", "reveal").catch(
+            (error) => toast(error.message, "error")
+          );
+        })
+      );
       const children = node("div", "tree-children");
       details.append(summary, children);
       details.addEventListener("toggle", () => {
@@ -683,8 +736,27 @@ async function loadTreeDirectory(container, root, path, generation) {
           "tree-file-icon",
           entry.kind === "symlink" ? "↗" : "·"
         ),
-        node("span", "", entry.name)
+        node("span", "tree-entry-label", entry.name)
       );
+      if (entry.kind === "file") {
+        row.append(
+          projectTreeAction("+", "Add file context", () => {
+            addProjectContext(root, entry.path, "file").catch(
+              (error) => toast(error.message, "error")
+            );
+          }),
+          projectTreeAction("↗", "Open in default app", () => {
+            openProjectPath(root, entry.path, "file", "open").catch(
+              (error) => toast(error.message, "error")
+            );
+          }),
+          projectTreeAction("⌕", "Reveal in Finder", () => {
+            openProjectPath(root, entry.path, "file", "reveal").catch(
+              (error) => toast(error.message, "error")
+            );
+          })
+        );
+      }
       container.append(row);
     }
   }
@@ -693,6 +765,79 @@ async function loadTreeDirectory(container, root, path, generation) {
       node("p", "tree-empty", "More entries are hidden")
     );
   }
+}
+
+function projectTreeAction(text, title, action) {
+  const button = node("button", "tree-entry-action", text);
+  button.type = "button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    action();
+  });
+  return button;
+}
+
+async function addProjectContext(root, path, kind) {
+  if (
+    !state.sessionId
+    || state.busy
+    || state.contextPending
+  ) return;
+  if (state.contextItems.length >= 8) {
+    toast("Add up to 8 project context items", "error");
+    return;
+  }
+  const sessionId = state.sessionId;
+  const generation = state.contextGeneration;
+  state.contextPending = true;
+  updateComposer();
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/context`,
+      {
+        method: "POST",
+        body: JSON.stringify({ root: root.path, path, kind }),
+      }
+    );
+    if (
+      state.sessionId !== sessionId
+      || state.contextGeneration !== generation
+    ) return;
+    const item = result.item;
+    if (!item?.fingerprint || !item?.content_part) {
+      throw new Error("Project context could not be captured");
+    }
+    const existing = state.contextItems.findIndex(
+      (candidate) => (
+        candidate.kind === item.kind
+        && candidate.root === item.root
+        && candidate.path === item.path
+      )
+    );
+    if (existing >= 0) {
+      state.contextItems.splice(existing, 1, item);
+    } else {
+      state.contextItems.push(item);
+    }
+    renderContextItems();
+  } finally {
+    state.contextPending = false;
+    updateComposer();
+  }
+}
+
+async function openProjectPath(root, path, kind, mode) {
+  if (!state.sessionId || state.busy) return;
+  await api(
+    `/v1/sessions/${encodeURIComponent(state.sessionId)}/project/open`,
+    {
+      method: "POST",
+      body: JSON.stringify({ root: root.path, path, kind, mode }),
+    }
+  );
 }
 
 async function addContextRoot() {
@@ -861,7 +1006,13 @@ function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   const text = content
-    .filter((part) => part && part.type === "text")
+    .filter(
+      (part) => (
+        part
+        && part.type === "text"
+        && !part._codinal_context
+      )
+    )
     .map((part) => part.text || "")
     .join("\n");
   const files = content
@@ -1255,13 +1406,14 @@ async function sendTurn() {
   const input = el.prompt.value.trim();
   if ((!input && !state.attachments.length)
     || !state.workspace || !state.sessionId || state.busy
-    || state.attachmentsPending) return;
+    || state.attachmentsPending || state.contextPending) return;
   const attachments = state.attachments;
-  const parts = [];
-  if (input) parts.push({ "type": "text", "text": input });
+  const contexts = state.contextItems;
+  const requestParts = [];
+  if (input) requestParts.push({ "type": "text", "text": input });
   for (const attachment of attachments) {
     if (attachment.type === "application/pdf") {
-      parts.push({
+      requestParts.push({
         "type": "file",
         "file": {
           "filename": attachment.name,
@@ -1269,18 +1421,24 @@ async function sendTurn() {
         },
       });
     } else {
-      parts.push({
+      requestParts.push({
         "type": "image_url",
         "image_url": { "url": attachment.data },
       });
     }
   }
-  const turnInput = attachments.length ? parts : input;
+  const requestInput = attachments.length ? requestParts : input;
+  const displayTurnInput = contexts.length
+    ? [...contexts.map((context) => context.content_part), ...requestParts]
+    : requestInput;
   state.highlightedMessageIndex = null;
-  state.messages.push({ role: "user", content: turnInput });
+  state.messages.push({ role: "user", content: displayTurnInput });
   el.prompt.value = "";
   state.attachments = [];
+  state.contextItems = [];
+  state.contextGeneration += 1;
   renderAttachments();
+  renderContextItems();
   resizePrompt();
   renderConversation();
   setBusy(true);
@@ -1288,7 +1446,7 @@ async function sendTurn() {
     await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/turns`, {
       method: "POST",
       body: JSON.stringify({
-        input: turnInput,
+        input: requestInput,
         workspace: state.workspace,
         agent: el["agent-mode"].value,
         mode: el["agent-mode"].value === "plan"
@@ -1297,12 +1455,22 @@ async function sendTurn() {
             ? "discuss"
             : "interactive",
         model: el["model-select"].value,
+        ...(contexts.length ? {
+          context: contexts.map((context) => ({
+            kind: context.kind,
+            root: context.root,
+            path: context.path,
+            fingerprint: context.fingerprint,
+          })),
+        } : {}),
       }),
     });
   } catch (error) {
     state.messages.pop();
     state.attachments = attachments;
+    state.contextItems = contexts;
     renderAttachments();
+    renderContextItems();
     setBusy(false);
     renderConversation();
     toast(error.message, "error");
@@ -1324,7 +1492,7 @@ function updateComposer() {
   const hasInput = Boolean(el.prompt.value.trim() || state.attachments.length);
   el["send-turn"].disabled = !state.online || !state.workspace
     || !state.sessionId || !hasInput || state.busy
-    || state.attachmentsPending > 0;
+    || state.attachmentsPending > 0 || state.contextPending;
   el["attach-files"].disabled = state.busy
     || state.attachmentsPending > 0;
 }
@@ -1415,6 +1583,44 @@ function renderAttachments() {
       remove
     );
     el["attachment-list"].append(chip);
+  });
+  updateComposer();
+}
+
+function renderContextItems() {
+  el["context-items"].replaceChildren();
+  el["context-items"].classList.toggle(
+    "is-hidden",
+    !state.contextItems.length
+  );
+  state.contextItems.forEach((context, index) => {
+    const chip = node("div", "attachment-chip context-item");
+    chip.title = `${context.label}\n${context.fingerprint}`;
+    const remove = node("button", "", "×");
+    remove.type = "button";
+    remove.setAttribute("aria-label", `Remove ${context.label}`);
+    remove.addEventListener("click", () => {
+      state.contextItems.splice(index, 1);
+      state.contextGeneration += 1;
+      renderContextItems();
+    });
+    chip.append(
+      node(
+        "span",
+        "attachment-kind",
+        context.kind === "folder"
+          ? "Folder"
+          : context.kind === "git" ? "Git" : "File"
+      ),
+      node("span", "attachment-name", context.label),
+      node(
+        "span",
+        "context-fingerprint",
+        context.fingerprint.slice(0, 7)
+      ),
+      remove
+    );
+    el["context-items"].append(chip);
   });
   updateComposer();
 }
@@ -1775,6 +1981,7 @@ function wireEvents() {
         state.roots = [];
         state.treeGeneration += 1;
         invalidateAttachments();
+        invalidateContextItems();
         el["task-title"].textContent = "New task";
         updateWorkspaceLabel();
         renderConversation();

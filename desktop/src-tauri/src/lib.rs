@@ -1,6 +1,7 @@
 pub mod control_client;
 pub mod host;
 pub mod oauth;
+pub mod project_open;
 pub mod secrets;
 pub mod workspace;
 

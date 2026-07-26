@@ -405,6 +405,121 @@ def test_production_attachments_survive_restart_and_model_switch(tmp_path):
     assert "data:application/pdf;base64" not in markdown.text
 
 
+def test_production_project_context_matches_exact_provider_part(
+    tmp_path,
+    monkeypatch,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "main.py").write_text(
+        "VALUE = 17\n",
+        encoding="utf-8",
+    )
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    provider = AttachmentCaptureProvider()
+    opened_commands = []
+
+    def open_item(command, **kwargs):
+        opened_commands.append((command, kwargs))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(
+        "runtime.control_plane.server.subprocess.run",
+        open_item,
+    )
+    helper = tmp_path / "codinal-helper"
+    helper.write_text("#!/bin/sh\n", encoding="utf-8")
+    helper.chmod(0o700)
+    monkeypatch.setenv("CODINAL_HOST_HELPER", str(helper))
+    services = build_services(config, provider=provider)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/context-session",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            initialized = client.post(
+                "/v1/sessions/context-session/turns",
+                headers=AUTH,
+                json={
+                    "input": "Initialize context",
+                    "workspace": str(workspace),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+            roots = client.get(
+                "/v1/sessions/context-session/roots",
+                headers=AUTH,
+            ).json()
+            descriptor = {
+                "kind": "file",
+                "root": roots[0]["path"],
+                "path": "main.py",
+            }
+            selected = client.post(
+                "/v1/sessions/context-session/context",
+                headers=AUTH,
+                json=descriptor,
+            )
+            item = selected.json()["item"]
+            opened = client.post(
+                "/v1/sessions/context-session/project/open",
+                headers=AUTH,
+                json={**descriptor, "mode": "reveal"},
+            )
+            sent = client.post(
+                "/v1/sessions/context-session/turns",
+                headers=AUTH,
+                json={
+                    "input": "Use the selected file",
+                    "context": [
+                        {
+                            **descriptor,
+                            "fingerprint": item["fingerprint"],
+                        }
+                    ],
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+
+    assert initialized.status_code == 202
+    assert selected.status_code == 200
+    assert opened.status_code == 200
+    assert sent.status_code == 202
+    provider_users = [
+        message
+        for message in provider.calls[-1]["messages"]
+        if message["role"] == "user"
+    ]
+    assert provider_users[-1]["content"][0] == item["provider_part"]
+    assert provider_users[-1]["content"][1] == {
+        "type": "text",
+        "text": "Use the selected file",
+    }
+    assert len(opened_commands) == 1
+    command, options = opened_commands[0]
+    assert command[:3] == [
+        str(helper),
+        "--codinal-open-fd",
+        "reveal",
+    ]
+    assert options["pass_fds"] == (int(command[3]),)
+
+
 def test_production_search_fork_and_side_conversation_survive_restart(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

@@ -307,6 +307,63 @@ def test_turn_never_starts_while_checkpoint_restore_is_pending():
     assert mutated == []
 
 
+def test_context_resolution_and_turn_activation_share_snapshot_barrier():
+    class BlockingEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def run(self, user_input, *, source=None):
+            self.messages.append({"role": "user", "content": user_input})
+            yield Event(EventType.TURN_START, {"input": user_input})
+            await self.release.wait()
+            yield Event(EventType.TURN_END, {"status": "completed"})
+
+    async def scenario():
+        engine = BlockingEngine()
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+        )
+        resolver_started = asyncio.Event()
+        resolver_release = asyncio.Event()
+        mutations = []
+
+        async def resolve():
+            resolver_started.set()
+            await resolver_release.wait()
+            return "resolved context"
+
+        start_task = asyncio.create_task(
+            turns.start(
+                "session-1",
+                user_input="unresolved",
+                user_input_resolver=resolve,
+            )
+        )
+        await resolver_started.wait()
+        mutation_task = asyncio.create_task(
+            turns.mutate_when_idle(
+                "session-1",
+                lambda: mutations.append("root removed"),
+            )
+        )
+        await asyncio.sleep(0)
+        assert mutation_task.done() is False
+        resolver_release.set()
+        await start_task
+        with pytest.raises(SessionBusyError, match="active turn"):
+            await mutation_task
+        engine.release.set()
+        await turns.wait("session-1")
+        return mutations, engine.messages
+
+    mutations, messages = asyncio.run(scenario())
+
+    assert mutations == []
+    assert messages == [{"role": "user", "content": "resolved context"}]
+
+
 def test_tool_execution_is_write_ahead_checkpointed():
     class ToolEngine(ScriptedEngine):
         async def run(self, user_input, *, source=None):

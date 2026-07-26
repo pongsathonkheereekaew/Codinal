@@ -27,6 +27,7 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="attach-files"' in html
     assert 'id="attachment-input"' in html
     assert 'id="attachment-list"' in html
+    assert 'id="context-items"' in html
     assert 'id="checkpoint-select"' in html
     assert 'id="restore-scope"' in html
     assert 'id="restore-checkpoint"' in html
@@ -86,6 +87,19 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "loadRootsAndTree" in script
     assert "Root unavailable — reconnect or remove it" in script
     assert "root.available === false" in script
+    assert "/context" in script
+    assert "/project/open" in script
+    assert "contextItems" in script
+    assert "content_part" in script
+    assert "fingerprint" in script
+    assert "Add file context" in script
+    assert "Add folder context" in script
+    assert "Add Git context" in script
+    assert "Open in default app" in script
+    assert "Reveal in Finder" in script
+    assert "_codinal_context" in script
+    assert "requestInput" in script
+    assert "displayTurnInput" in script
     load_sessions = script.split(
         "async function loadSessions() {",
         1,

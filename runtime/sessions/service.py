@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import base64
 import copy
+import itertools
 import os
 import re
 import shutil
+import stat
 import time
 from uuid import uuid4
 from dataclasses import dataclass, replace
@@ -35,6 +37,7 @@ from .models import (
     TurnCheckpoint,
     TurnStatus,
 )
+from .context import is_project_context_part, make_project_context_item
 
 _ARTIFACT_SUFFIXES = {
     ".md",
@@ -66,6 +69,11 @@ _ARTIFACT_SUFFIXES = {
     ".docm",
 }
 _MAX_BINARY_PREVIEW = 25 * 1024 * 1024
+_MAX_CONTEXT_FILE_BYTES = 256 * 1024
+_MAX_CONTEXT_FOLDER_BYTES = 512 * 1024
+_MAX_CONTEXT_FOLDER_FILE_BYTES = 64 * 1024
+_MAX_CONTEXT_FOLDER_ENTRIES = 200
+_MAX_CONTEXT_FOLDER_DEPTH = 12
 _TREE_IGNORE_NAMES = {
     ".git",
     ".venv",
@@ -159,7 +167,7 @@ class SessionCleanupError(RuntimeError):
 
 
 class ArtifactOpener(Protocol):
-    def __call__(self, path: Path, mode: str) -> None: ...
+    def __call__(self, path: Path, mode: str, descriptor: int) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -1051,6 +1059,232 @@ class SessionService:
             "truncated": truncated,
         }
 
+    def project_context(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        path: str,
+        kind: str,
+    ) -> dict[str, Any]:
+        if kind == "folder":
+            descriptor, root_view, normalized, error = self._open_project_path(
+                session_id,
+                root=root,
+                path=path,
+                directory=True,
+            )
+            if descriptor is None:
+                return {"ok": False, "error": error}
+            try:
+                content, truncated = _recursive_folder_context(descriptor)
+            except OSError:
+                return {"ok": False, "error": "path is unavailable"}
+            finally:
+                os.close(descriptor)
+            root_label = str(root_view.get("label") or Path(root).name)
+            return {
+                "ok": True,
+                "item": make_project_context_item(
+                    kind="folder",
+                    root=str(Path(root).expanduser().absolute()),
+                    path=normalized,
+                    label=(
+                        f"{root_label}/{normalized}"
+                        if normalized
+                        else root_label
+                    ),
+                    content=content,
+                    truncated=truncated,
+                ),
+            }
+        if kind != "file":
+            return {"ok": False, "error": "unsupported context kind"}
+        descriptor, root_view, normalized, error = self._open_project_path(
+            session_id,
+            root=root,
+            path=path,
+            directory=False,
+        )
+        if descriptor is None:
+            return {"ok": False, "error": error}
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                return {"ok": False, "error": "path is unavailable"}
+            with os.fdopen(descriptor, "rb", closefd=True) as reader:
+                descriptor = None
+                payload = reader.read(_MAX_CONTEXT_FILE_BYTES + 1)
+        except OSError:
+            return {"ok": False, "error": "path is unavailable"}
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        truncated = len(payload) > _MAX_CONTEXT_FILE_BYTES
+        payload = payload[:_MAX_CONTEXT_FILE_BYTES]
+        try:
+            content = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return {"ok": False, "error": "binary file cannot be context"}
+        return {
+            "ok": True,
+            "item": make_project_context_item(
+                kind="file",
+                root=str(Path(root).expanduser().absolute()),
+                path=normalized,
+                label=(
+                    f"{root_view.get('label') or Path(root).name}/"
+                    f"{normalized}"
+                ),
+                content=content,
+                truncated=truncated,
+            ),
+        }
+
+    def open_project_path(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        path: str,
+        mode: str,
+    ) -> dict[str, Any]:
+        if mode not in {"open", "reveal"}:
+            return {"ok": False, "error": "mode must be open or reveal"}
+        descriptor, _root_view, normalized, error = self._open_project_path(
+            session_id,
+            root=root,
+            path=path,
+            directory=not bool(path),
+        )
+        if descriptor is None:
+            return {"ok": False, "error": error}
+        try:
+            metadata = os.fstat(descriptor)
+            if not (
+                stat.S_ISREG(metadata.st_mode)
+                or stat.S_ISDIR(metadata.st_mode)
+            ):
+                return {"ok": False, "error": "path is unavailable"}
+            if self._artifact_opener is None:
+                return {
+                    "ok": False,
+                    "error": "artifact opener is not configured",
+                }
+            target = Path(root).expanduser().absolute().joinpath(
+                *Path(normalized).parts
+            )
+            try:
+                self._artifact_opener(target, mode, descriptor)
+            except OSError as exc:
+                return {"ok": False, "error": str(exc)}
+        finally:
+            os.close(descriptor)
+        return {"ok": True}
+
+    def project_root_identity(
+        self,
+        session_id: str,
+        root: str,
+    ) -> tuple[int, int] | None:
+        selected = Path(root).expanduser()
+        if not selected.is_absolute():
+            return None
+        selected = selected.absolute()
+        if not any(
+            Path(candidate["path"]).expanduser().absolute() == selected
+            and candidate.get("available") is not False
+            for candidate in self.roots(session_id)
+        ):
+            return None
+        return self._root_identity(session_id, selected)
+
+    def _open_project_path(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        path: str,
+        directory: bool,
+    ) -> tuple[
+        Optional[int],
+        dict[str, Any],
+        str,
+        Optional[str],
+    ]:
+        if (
+            not isinstance(root, str)
+            or not root
+            or not isinstance(path, str)
+            or len(path) > 4096
+            or Path(path).is_absolute()
+            or ".." in Path(path).parts
+        ):
+            return None, {}, "", "invalid project path"
+        selected = Path(root).expanduser()
+        if not selected.is_absolute():
+            return None, {}, "", "root is unavailable"
+        selected = selected.absolute()
+        root_view = next(
+            (
+                candidate
+                for candidate in self.roots(session_id)
+                if Path(candidate["path"]).expanduser().absolute() == selected
+            ),
+            None,
+        )
+        if root_view is None or root_view.get("available") is False:
+            return None, {}, "", "root is not part of the session"
+        parts = tuple(
+            component
+            for component in Path(path).parts
+            if component not in {"", "."}
+        )
+        if (
+            (not directory and not parts)
+            or any(
+                component.casefold() in _TREE_IGNORE_CASEFOLD
+                for component in parts
+            )
+        ):
+            return None, {}, "", "invalid project path"
+        expected_identity = self._root_identity(session_id, selected)
+        if expected_identity is None:
+            return None, {}, "", "root is unavailable"
+        descriptors = []
+        try:
+            directory_flags = (
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_NOFOLLOW
+                | os.O_CLOEXEC
+            )
+            current_fd = os.open(selected, directory_flags)
+            descriptors.append(current_fd)
+            root_metadata = os.fstat(current_fd)
+            if expected_identity != (
+                int(root_metadata.st_dev),
+                int(root_metadata.st_ino),
+            ):
+                raise OSError("root identity changed")
+            for index, component in enumerate(parts):
+                final = index == len(parts) - 1
+                flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+                if not final or directory:
+                    flags |= os.O_DIRECTORY
+                current_fd = os.open(component, flags, dir_fd=current_fd)
+                descriptors.append(current_fd)
+            result = os.dup(current_fd)
+        except (OSError, ValueError):
+            return None, {}, "", "path is unavailable"
+        finally:
+            for descriptor in reversed(descriptors):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        return result, root_view, "/".join(parts), None
+
     def list_artifacts(self, session_id: str) -> list[dict[str, Any]]:
         record = self._store.load(session_id)
         if record is None or not record.workspace:
@@ -1138,15 +1372,33 @@ class SessionService:
     ) -> dict[str, Any]:
         if mode not in {"open", "reveal"}:
             return {"ok": False, "error": "mode must be open or reveal"}
-        target, error = self._artifact_target(session_id, path)
-        if target is None:
+        record = self._store.load(session_id)
+        if record is None or not record.workspace:
+            return {"ok": False, "error": "no workspace"}
+        descriptor, _root_view, normalized, error = self._open_project_path(
+            session_id,
+            root=record.workspace,
+            path=path,
+            directory=False,
+        )
+        if descriptor is None:
             return {"ok": False, "error": error}
-        if self._artifact_opener is None:
-            return {"ok": False, "error": "artifact opener is not configured"}
         try:
-            self._artifact_opener(target, mode)
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return {"ok": False, "error": "not found"}
+            if self._artifact_opener is None:
+                return {
+                    "ok": False,
+                    "error": "artifact opener is not configured",
+                }
+            target = Path(record.workspace).expanduser().absolute().joinpath(
+                *Path(normalized).parts
+            )
+            self._artifact_opener(target, mode, descriptor)
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
+        finally:
+            os.close(descriptor)
         return {"ok": True}
 
     def _remove_scratch_workspace(
@@ -1472,7 +1724,11 @@ def _visible_markdown_content(content: Any) -> tuple[str, list[str]]:
     for part in content:
         if not isinstance(part, dict):
             continue
-        if part.get("type") == "text" and isinstance(part.get("text"), str):
+        if (
+            part.get("type") == "text"
+            and isinstance(part.get("text"), str)
+            and not is_project_context_part(part)
+        ):
             text_parts.append(part["text"])
         elif part.get("type") == "file":
             file = part.get("file")
@@ -1482,6 +1738,131 @@ def _visible_markdown_content(content: Any) -> tuple[str, list[str]]:
         elif part.get("type") == "image_url":
             attachments.append("Image")
     return "\n".join(text_parts), attachments
+
+
+def _recursive_folder_context(root_descriptor: int) -> tuple[str, bool]:
+    chunks: list[bytes] = []
+    total_bytes = 0
+    entries_seen = 0
+    truncated = False
+
+    def append(value: str) -> bool:
+        nonlocal total_bytes, truncated
+        encoded = value.encode("utf-8")
+        remaining = _MAX_CONTEXT_FOLDER_BYTES - total_bytes
+        if remaining <= 0:
+            truncated = True
+            return False
+        if len(encoded) > remaining:
+            chunks.append(encoded[:remaining])
+            total_bytes += remaining
+            truncated = True
+            return False
+        chunks.append(encoded)
+        total_bytes += len(encoded)
+        return True
+
+    def walk(directory_descriptor: int, prefix: str, depth: int) -> None:
+        nonlocal entries_seen, truncated
+        if depth > _MAX_CONTEXT_FOLDER_DEPTH:
+            truncated = True
+            return
+        remaining = _MAX_CONTEXT_FOLDER_ENTRIES - entries_seen
+        with os.scandir(directory_descriptor) as iterator:
+            scanned = list(
+                itertools.islice(
+                    iterator,
+                    remaining + 1,
+                )
+            )
+        if len(scanned) > remaining:
+            truncated = True
+            scanned.pop()
+        entries = sorted(
+            scanned,
+            key=lambda entry: entry.name.casefold(),
+        )
+        for entry in entries:
+            if entries_seen >= _MAX_CONTEXT_FOLDER_ENTRIES:
+                truncated = True
+                return
+            if entry.name.casefold() in _TREE_IGNORE_CASEFOLD:
+                continue
+            entries_seen += 1
+            relative = f"{prefix}/{entry.name}" if prefix else entry.name
+            try:
+                if entry.is_symlink():
+                    if not append(f"symlink {relative} (omitted)\n"):
+                        return
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    if not append(f"directory {relative}/\n"):
+                        return
+                    child = os.open(
+                        entry.name,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        dir_fd=directory_descriptor,
+                    )
+                    try:
+                        walk(child, relative, depth + 1)
+                    finally:
+                        os.close(child)
+                    if truncated and total_bytes >= _MAX_CONTEXT_FOLDER_BYTES:
+                        return
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    if not append(f"other {relative} (omitted)\n"):
+                        return
+                    continue
+                file_descriptor = os.open(
+                    entry.name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=directory_descriptor,
+                )
+                try:
+                    payload = os.read(
+                        file_descriptor,
+                        _MAX_CONTEXT_FOLDER_FILE_BYTES + 1,
+                    )
+                finally:
+                    os.close(file_descriptor)
+                file_truncated = (
+                    len(payload) > _MAX_CONTEXT_FOLDER_FILE_BYTES
+                )
+                payload = payload[:_MAX_CONTEXT_FOLDER_FILE_BYTES]
+                try:
+                    text = payload.decode("utf-8")
+                    if "\x00" in text:
+                        raise UnicodeDecodeError(
+                            "utf-8", payload, 0, 1, "NUL byte"
+                        )
+                except UnicodeDecodeError:
+                    if not append(f"file {relative} (binary omitted)\n"):
+                        return
+                    continue
+                header = (
+                    f"file {relative}"
+                    f"{' (truncated)' if file_truncated else ''}:\n"
+                )
+                if not append(header) or not append(text):
+                    return
+                if text and not text.endswith("\n") and not append("\n"):
+                    return
+                if not append("\n"):
+                    return
+                truncated = truncated or file_truncated
+            except OSError:
+                truncated = True
+                if not append(f"unavailable {relative}\n"):
+                    return
+
+    walk(root_descriptor, "", 0)
+    if not chunks:
+        return "(empty folder)", truncated
+    return b"".join(chunks).decode("utf-8", errors="ignore").rstrip(), truncated
 
 
 def _safe_markdown_slug(title: str) -> str:

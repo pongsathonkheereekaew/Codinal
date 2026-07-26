@@ -11,11 +11,13 @@ import shlex
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
+from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from runtime.sandbox import SandboxedShell
 
@@ -37,6 +39,12 @@ _PROBE_OUTPUT_LIMIT = 1024 * 1024
 _PREIMAGE_UNSET = object()
 _MAX_CHECKPOINT_PATCH_BYTES = 32 * 1024 * 1024
 _MAX_CHECKPOINT_FILE_BYTES = 32 * 1024 * 1024
+_GIT_FD_EXEC = (
+    "import os,sys;"
+    "fd=int(sys.argv[1]);"
+    "os.fchdir(fd);"
+    "os.execv(sys.argv[2],sys.argv[2:])"
+)
 
 
 class _BoundedOutput:
@@ -210,6 +218,261 @@ class GitWorktreeService:
             "porcelain": result.stdout,
             "output_truncated": result.output_truncated,
         }
+
+    def context_snapshot(
+        self,
+        session_id: str,
+        *,
+        root: str,
+        expected_identity: tuple[int, int],
+    ) -> dict[str, object]:
+        if (
+            not isinstance(expected_identity, tuple)
+            or len(expected_identity) != 2
+            or not all(
+                isinstance(value, int) and value >= 0
+                for value in expected_identity
+            )
+        ):
+            raise GitWorkspaceError("Git context root identity is unavailable")
+        selected = Path(root).expanduser()
+        if not selected.is_absolute():
+            raise GitWorkspaceError("Git context root is unavailable")
+        selected = selected.absolute()
+        try:
+            metadata = selected.lstat()
+        except OSError:
+            raise GitWorkspaceError("Git context root is unavailable") from None
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise GitWorkspaceError("Git context root is unavailable")
+
+        root_descriptor: int | None = None
+        with self._lock, ExitStack() as descriptors:
+            record = self.load(session_id)
+            primary = (
+                record is not None
+                and record.worktree_path.absolute() == selected
+            )
+            if primary:
+                self._validate_active(record)
+
+                def run(*arguments: str) -> Any:
+                    return self._execute_worktree(
+                        record,
+                        "-c",
+                        "core.fsmonitor=false",
+                        *arguments,
+                    )
+
+                branch = record.session_branch
+                base_commit = record.base_commit
+            else:
+                root_descriptor = os.open(
+                    selected,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | os.O_NOFOLLOW
+                    | os.O_CLOEXEC,
+                )
+                descriptors.callback(os.close, root_descriptor)
+                opened = os.fstat(root_descriptor)
+                if (
+                    int(opened.st_dev),
+                    int(opened.st_ino),
+                ) != expected_identity:
+                    raise GitWorkspaceError("Git context root changed")
+                root_check = self._context_probe_result(
+                    self.data_dir,
+                    "rev-parse",
+                    "--show-cdup",
+                    descriptor=root_descriptor,
+                )
+                if root_check.returncode != 0 or root_check.stdout.strip():
+                    raise GitWorkspaceError(
+                        "Git context root must be a repository root"
+                    )
+
+                def run(*arguments: str) -> Any:
+                    assert root_descriptor is not None
+                    return self._context_probe_result(
+                        self.data_dir,
+                        *arguments,
+                        descriptor=root_descriptor,
+                    )
+
+                branch_result = run(
+                    "symbolic-ref",
+                    "--quiet",
+                    "--short",
+                    "HEAD",
+                )
+                branch = (
+                    branch_result.stdout.strip()
+                    if _result_code(branch_result) == 0
+                    else "(detached)"
+                )
+                base_result = run("rev-parse", "HEAD")
+                if _result_code(base_result) != 0:
+                    raise GitWorkspaceError("Git context unavailable")
+                base_commit = base_result.stdout.strip()
+
+            def capture() -> tuple[
+                list[Any],
+                Any,
+                Any | None,
+                Any,
+                Any,
+                Any,
+                str,
+                bool,
+            ]:
+                head = run("rev-parse", "HEAD")
+                status_result = run(
+                    "status",
+                    "--porcelain=v1",
+                    "--branch",
+                    "--untracked-files=all",
+                )
+                committed_result = (
+                    run(
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--no-color",
+                        f"{base_commit}...HEAD",
+                    )
+                    if primary
+                    else None
+                )
+                unstaged_result = run(
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-color",
+                )
+                staged_result = run(
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-color",
+                    "--cached",
+                )
+                untracked_result = run(
+                    "ls-files",
+                    "--others",
+                    "--exclude-standard",
+                    "-z",
+                )
+                captured = [
+                    result
+                    for result in (
+                        head,
+                        status_result,
+                        committed_result,
+                        unstaged_result,
+                        staged_result,
+                        untracked_result,
+                    )
+                    if result is not None
+                ]
+                if any(_result_code(result) != 0 for result in captured):
+                    raise GitWorkspaceError("Git context unavailable")
+                untracked_content, untracked_was_truncated = (
+                    _untracked_context(
+                        selected,
+                        untracked_result.stdout,
+                        root_descriptor=root_descriptor,
+                        expected_identity=expected_identity,
+                    )
+                )
+                return (
+                    captured,
+                    status_result,
+                    committed_result,
+                    unstaged_result,
+                    staged_result,
+                    untracked_result,
+                    untracked_content,
+                    untracked_was_truncated,
+                )
+
+            snapshot = None
+            for _attempt in range(2):
+                candidate = capture()
+                verification = capture()
+                candidate_values = [
+                    result.stdout for result in candidate[0]
+                ] + [candidate[6]]
+                verification_values = [
+                    result.stdout for result in verification[0]
+                ] + [verification[6]]
+                if candidate_values == verification_values:
+                    snapshot = candidate
+                    break
+            if snapshot is None:
+                raise GitWorkspaceError(
+                    "Git context changed while being captured"
+                )
+            (
+                results,
+                status,
+                committed,
+                unstaged,
+                staged,
+                untracked,
+                untracked_text,
+                untracked_truncated,
+            ) = snapshot
+            if not primary:
+                base_commit = results[0].stdout.strip()
+            sections = (
+                ("status", status.stdout.rstrip() or "(clean)", 32 * 1024),
+                (
+                    "committed diff against base",
+                    (
+                        committed.stdout.rstrip()
+                        if committed is not None
+                        else "(not tracked for additional root)"
+                    )
+                    or "(no diff)",
+                    112 * 1024,
+                ),
+                (
+                    "unstaged diff",
+                    unstaged.stdout.rstrip() or "(no diff)",
+                    112 * 1024,
+                ),
+                (
+                    "staged diff",
+                    staged.stdout.rstrip() or "(no diff)",
+                    112 * 1024,
+                ),
+                (
+                    "untracked files",
+                    untracked_text or "(none)",
+                    112 * 1024,
+                ),
+            )
+            truncated = (
+                untracked_truncated
+                or any(result.output_truncated for result in results)
+            )
+            rendered = [
+                f"branch: {branch}",
+                f"base_commit: {base_commit}",
+            ]
+            for heading, value, limit in sections:
+                bounded, section_truncated = _bounded_text(value, limit)
+                rendered.extend(("", f"{heading}:", bounded))
+                truncated = truncated or section_truncated
+            snapshot = {
+                "ok": True,
+                "branch": branch,
+                "base_commit": base_commit,
+                "content": "\n".join(rendered),
+                "truncated": truncated,
+            }
+            return snapshot
 
     def begin_checkpoint(
         self,
@@ -2675,6 +2938,57 @@ class GitWorktreeService:
             raise GitWorkspaceError("Git repository inspection exceeded limit")
         return result
 
+    def _context_probe_result(
+        self,
+        cwd: Path,
+        *arguments: str,
+        descriptor: int | None = None,
+    ) -> _ProbeResult:
+        environment = {
+            key: os.environ[key]
+            for key in ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "PATH")
+            if os.environ.get(key)
+        }
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+        try:
+            git_arguments = [
+                    str(self.git_executable),
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-C",
+                    str(cwd),
+                    *arguments,
+                ]
+            command = git_arguments
+            pass_fds: tuple[int, ...] = ()
+            if descriptor is not None:
+                git_arguments = [
+                    value
+                    for index, value in enumerate(git_arguments)
+                    if index not in {5, 6}
+                ]
+                command = [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    _GIT_FD_EXEC,
+                    str(descriptor),
+                    *git_arguments,
+                ]
+                pass_fds = (descriptor,)
+            return _run_bounded(
+                command,
+                cwd=cwd,
+                env=environment,
+                timeout=_PROBE_TIMEOUT_SECONDS,
+                output_limit=_PROBE_OUTPUT_LIMIT,
+                pass_fds=pass_fds,
+            )
+        except (OSError, subprocess.TimeoutExpired, UnicodeError):
+            raise GitWorkspaceError("Git context unavailable") from None
+
 
 def _discover_git() -> str:
     candidates = (
@@ -2700,6 +3014,94 @@ def _inside(candidate: Path, *roots: Path) -> bool:
         except ValueError:
             continue
     return False
+
+
+def _result_code(result: Any) -> int:
+    return int(getattr(result, "returncode", getattr(result, "exit_code", -1)))
+
+
+def _bounded_text(value: str, maximum: int) -> tuple[str, bool]:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= maximum:
+        return value, False
+    return (
+        encoded[:maximum].decode("utf-8", errors="ignore")
+        + "\n… section truncated",
+        True,
+    )
+
+
+def _untracked_context(
+    root: Path,
+    paths: str,
+    *,
+    root_descriptor: int | None,
+    expected_identity: tuple[int, int],
+) -> tuple[str, bool]:
+    names = [name for name in paths.split("\0") if name]
+    chunks: list[str] = []
+    truncated = len(names) > 100
+    owns_descriptor = root_descriptor is None
+    if root_descriptor is None:
+        root_descriptor = os.open(
+            root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+    try:
+        opened_root = os.fstat(root_descriptor)
+        if (int(opened_root.st_dev), int(opened_root.st_ino)) != expected_identity:
+            raise GitWorkspaceError("Git context root changed")
+        for name in names[:100]:
+            parts = Path(name).parts
+            if (
+                not parts
+                or Path(name).is_absolute()
+                or ".." in parts
+                or any(part in {"", "."} for part in parts)
+            ):
+                truncated = True
+                continue
+            descriptors = [os.dup(root_descriptor)]
+            try:
+                current = descriptors[0]
+                for index, component in enumerate(parts):
+                    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+                    if index < len(parts) - 1:
+                        flags |= os.O_DIRECTORY
+                    current = os.open(component, flags, dir_fd=current)
+                    descriptors.append(current)
+                metadata = os.fstat(current)
+                if not stat.S_ISREG(metadata.st_mode):
+                    chunks.append(f"file {name} (non-regular omitted)")
+                    truncated = True
+                    continue
+                payload = os.read(current, 32 * 1024 + 1)
+                file_truncated = len(payload) > 32 * 1024
+                payload = payload[: 32 * 1024]
+                try:
+                    text = payload.decode("utf-8")
+                    if "\x00" in text:
+                        raise UnicodeDecodeError(
+                            "utf-8", payload, 0, 1, "NUL byte"
+                        )
+                except UnicodeDecodeError:
+                    chunks.append(f"file {name} (binary omitted)")
+                    continue
+                chunks.append(
+                    f"file {name}"
+                    f"{' (truncated)' if file_truncated else ''}:\n{text}"
+                )
+                truncated = truncated or file_truncated
+            except OSError:
+                chunks.append(f"file {name} (unavailable)")
+                truncated = True
+            finally:
+                for descriptor in reversed(descriptors):
+                    os.close(descriptor)
+    finally:
+        if owns_descriptor:
+            os.close(root_descriptor)
+    return "\n\n".join(chunks), truncated
 
 
 def _pathspec(
@@ -2740,6 +3142,7 @@ def _run_bounded(
     env: dict[str, str],
     timeout: float,
     output_limit: int,
+    pass_fds: tuple[int, ...] = (),
 ) -> _ProbeResult:
     process = subprocess.Popen(
         argv,
@@ -2748,6 +3151,7 @@ def _run_bounded(
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        pass_fds=pass_fds,
         start_new_session=True,
     )
     assert process.stdout is not None
