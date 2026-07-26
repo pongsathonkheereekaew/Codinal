@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import json
 
 import pytest
 
@@ -34,6 +36,38 @@ class Decisions:
         self.values[
             (session_id, tool_call_id, kind, fingerprint)
         ] = response
+
+    def ensure_plan_artifact(
+        self,
+        session_id,
+        plan_id,
+        tool_call_id,
+        arguments,
+    ):
+        return {
+            "plan_id": plan_id,
+            "session_id": session_id,
+            "tool_call_id": tool_call_id,
+            "plan": arguments["plan"],
+            "tasks": arguments["tasks"],
+            "revision": 1,
+        }
+
+    def save_plan_interaction_decision(
+        self,
+        session_id,
+        tool_call_id,
+        fingerprint,
+        response,
+        _plan_id,
+    ):
+        self.save_interaction_decision(
+            session_id,
+            tool_call_id,
+            "plan",
+            fingerprint,
+            response,
+        )
 
 
 def test_resolved_question_is_durable_and_reused_after_restart():
@@ -82,7 +116,19 @@ def test_response_validation_and_persistence_failure_do_not_resolve():
         awaitable = broker.requester(
             "session-1",
             "plan",
-        )({"plan": "1. Build"}, "call-1")
+        )(
+            {
+                "plan": "Build",
+                "tasks": [
+                    {
+                        "id": "build",
+                        "title": "Build",
+                        "verification": "Focused test passes",
+                    }
+                ],
+            },
+            "call-1",
+        )
         interaction_id = broker.interaction_id(
             "session-1",
             "call-1",
@@ -105,5 +151,34 @@ def test_response_validation_and_persistence_failure_do_not_resolve():
             "approved": False,
             "error": "runtime stopped",
         }
+
+    asyncio.run(scenario())
+
+
+def test_legacy_plan_decision_fingerprint_replays_after_upgrade():
+    async def scenario():
+        decisions = Decisions()
+        payload = json.dumps(
+            {
+                "arguments": {"plan": "Legacy plan"},
+                "kind": "plan",
+            },
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        decisions.values[
+            ("session-1", "call-legacy", "plan", fingerprint)
+        ] = {"approved": True, "mode": "interactive"}
+
+        broker = InteractionBroker(decisions)
+        result = await broker.requester(
+            "session-1",
+            "plan",
+        )({"plan": "Legacy plan"}, "call-legacy")
+
+        assert result == {"approved": True, "mode": "interactive"}
+        assert broker.pending("session-1") == []
 
     asyncio.run(scenario())

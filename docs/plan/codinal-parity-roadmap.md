@@ -41,16 +41,18 @@ acceptance evidence is recorded from the real product surface.
 | OS shell sandbox | Implemented on macOS | sandbox negative tests and notarization spike |
 | Isolated session worktrees | Implemented | Git lifecycle E2E and Apply conflict tests |
 | Sessions/history/model swap | Durable global/in-thread search, message-position forks, Markdown export, and parent-linked side conversations implemented | authenticated search/branch/export routes, desktop match navigation and parent return, restart E2E |
-| Durable migrations/recovery/export | Implemented and verified | v0/v1/v2/v3 and v5→v6 coverage, restore-from-backup startup E2E, authenticated JSON/Markdown export safety bounds |
+| Durable migrations/recovery/export | Implemented and verified | v0/v1/v2/v3/v5/v6→v7 coverage, restore-from-backup startup E2E, authenticated JSON/Markdown export safety bounds |
 | Interrupted turn recovery | Streaming, approval, and parallel-tool baseline verified; plan/shell/apply-back pending | real SIGKILL/restart E2Es, durable approval ledger, no-replay multi-call tests |
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
 | MCP | Secure connect/runtime tools implemented; lifecycle UI/governance missing | MCP contract/service tests |
 | Multi-root and project tree | Durable multi-root tree, exact file/folder/Git context snapshots, and native open/reveal actions implemented | recursive descriptor-relative context tests, identity-bound Git snapshots, provider payload E2E, and vnode-preserving macOS helper test |
 | Plan/question/directory prompts | Durable production callbacks, authenticated resolution routes, and resumable desktop cards implemented | restart-while-waiting E2Es for all three prompt kinds, schema v4 migration, native directory picker |
+| Editable plans | Durable structured drafts, selective approval, revision history, legacy recovery, and same-conversation continuation implemented | authenticated plan API, v6→v7 restart E2E, production desktop edit/select/reload flow, and `docs/evidence/phase20-editable-plans.md` |
+| Isolated subagents | Durable bounded workers, dependency graph, steering, cancellation, notifications, and isolated worktrees implemented | worker protocol conformance, restart recovery, ownership enforcement, and Phase 19 packaged evidence |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
 | Checkpoints | Automatic exact-path checkpoints cover Git and non-Git workspaces, including direct files, transactionally isolated shell changes, private content-minimized object storage, and crash-consistent composite restore journaling | Git ignored-file restore, non-Git restart reconciliation, same-path conflict-abort, uncaptured-secret exclusion, and active-turn manual-edit preservation E2Es |
-| Semantic index, parallel subagents, PR/CI, browser | Missing | no product evidence |
+| Semantic index, PR/CI, browser | Missing | no product evidence |
 
 ## Execution map
 
@@ -145,9 +147,9 @@ Acceptance evidence:
 
 - [x] Wire `propose_plan`, `ask_user`, and `request_directory` into durable,
   resumable session UI cards.
-- [ ] Persist editable plans with verification criteria; approve selected tasks
+- [x] Persist editable plans with verification criteria; approve selected tasks
   into execution without losing conversation context.
-- [ ] Add background subagents with bounded ownership, dependency graph,
+- [x] Add background subagents with bounded ownership, dependency graph,
   status/notifications, steering, cancellation, and isolated worktrees.
 - [ ] Add plan-to-parallel-build and best-of-N comparison with explicit human
   selection before branch adoption.
@@ -219,10 +221,9 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Add parallel isolated subagents now that checkpoint and prompt recovery are
-   proven.
-2. Add editable persisted plan artifacts and selective task approval on top of
-   the durable plan decision card.
+1. Add plan-to-parallel-build and best-of-N selection on the durable plan and
+   worker foundations.
+2. Add persistent goals with budgets, continuation, and an evidence ledger.
 3. Add fast text/symbol search, then the bounded local semantic index.
 
 ## Decisions so far

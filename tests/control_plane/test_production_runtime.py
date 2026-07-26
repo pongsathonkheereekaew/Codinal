@@ -41,6 +41,58 @@ TOKEN = "test-session-token-with-at-least-32-characters"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
+def _plan(plan: str) -> dict:
+    return {
+        "plan": plan,
+        "tasks": [
+            {
+                "id": "execute",
+                "title": plan.splitlines()[0],
+                "verification": "The requested implementation test passes",
+            }
+        ],
+    }
+
+
+def _selective_plan() -> dict:
+    return {
+        "plan": "Implement and document",
+        "tasks": [
+            {
+                "id": "implement",
+                "title": "Implement feature",
+                "verification": "Focused suite passes",
+            },
+            {
+                "id": "docs",
+                "title": "Update documentation",
+                "verification": "Documentation contract passes",
+            },
+        ],
+    }
+
+
+def _selective_plan_approval() -> dict:
+    return {
+        "approved": True,
+        "mode": "interactive",
+        "plan": "Implement only",
+        "tasks": [
+            {
+                "id": "implement",
+                "title": "Implement safely",
+                "verification": "Restart E2E passes",
+            },
+            {
+                "id": "docs",
+                "title": "Update documentation",
+                "verification": "Documentation contract passes",
+            },
+        ],
+        "selected_task_ids": ["implement"],
+    }
+
+
 def _kill_crash_worker_at_durable_window(
     *,
     mode,
@@ -184,7 +236,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
     assert all(event["action"] == "preserved_corrupt_state" for event in events)
     with sqlite3.connect(data_dir / "codinal.db") as conversations:
         assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 7
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -1238,8 +1290,8 @@ def test_restart_restores_awaiting_question_and_resumes_once(tmp_path):
         (
             "plan",
             "propose_plan",
-            {"plan": "1. Test\n2. Build"},
-            {"approved": True, "mode": "interactive"},
+            _selective_plan(),
+            _selective_plan_approval(),
             "plan",
         ),
         (
@@ -1503,8 +1555,8 @@ def test_directory_replay_rejects_replaced_approved_filesystem_object(
         (
             "plan",
             "propose_plan",
-            {"plan": "1. Test\n2. Build"},
-            {"approved": True, "mode": "interactive"},
+            _selective_plan(),
+            _selective_plan_approval(),
             "plan",
         ),
         (
@@ -1545,9 +1597,11 @@ def test_graceful_restart_preserves_live_waiting_interaction(
     class RecoveryProvider(ProviderClient):
         def __init__(self):
             self.calls = 0
+            self.messages = []
 
-        def complete(self, **_kwargs):
+        def complete(self, **kwargs):
             self.calls += 1
+            self.messages = list(kwargs["messages"])
             return AssistantTurn(text=f"{kind} resumed")
 
         def capabilities(self, _model):
@@ -1651,6 +1705,169 @@ def test_graceful_restart_preserves_live_waiting_interaction(
             if message.get("role") == "tool"
         ]
     ) == 1
+    if kind == "plan":
+        reopened = ConversationStore(config.data_dir)
+        plans = reopened.list_plan_artifacts(session_id)
+        reopened.close()
+        assert plans[0]["status"] == "approved"
+        assert plans[0]["revision"] == 2
+        assert plans[0]["plan"] == "Implement only"
+        assert plans[0]["selected_task_ids"] == ["implement"]
+        tool_result = next(
+            message
+            for message in recovery_provider.messages
+            if message.get("role") == "tool"
+        )
+        result = json.loads(tool_result["content"])
+        assert result["selected_task_ids"] == ["implement"]
+        assert result["selected_tasks"][0]["verification"] == (
+            "Restart E2E passes"
+        )
+        assert sum(
+            message.get("role") == "user"
+            and message.get("content") == "request plan"
+            for message in recovery_provider.messages
+        ) == 1
+
+
+def test_v6_legacy_plan_wait_recovers_with_required_verification(
+    tmp_path,
+):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+            self.messages = []
+
+        def complete(self, **kwargs):
+            self.calls += 1
+            self.messages = list(kwargs["messages"])
+            return AssistantTurn(text="legacy plan resumed")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id="session-v6-plan",
+            workspace=str(workspace),
+            source_workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="plan",
+            messages=[
+                {"role": "user", "content": "legacy request"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "provider/v6-plan",
+                            "type": "function",
+                            "function": {
+                                "name": "propose_plan",
+                                "arguments": json.dumps(
+                                    {"plan": "Legacy implementation"}
+                                ),
+                            },
+                        }
+                    ],
+                },
+            ],
+            turn_checkpoint=TurnCheckpoint(
+                TurnStatus.AWAITING_APPROVAL
+            ),
+        )
+    )
+    store.close()
+    database = data_dir / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE plan_artifacts")
+        connection.execute("PRAGMA user_version = 6")
+    provider = RecoveryProvider()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config, provider=provider)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        pending = []
+        for _ in range(100):
+            pending = client.get(
+                "/v1/sessions/session-v6-plan/interactions",
+                headers=AUTH,
+            ).json()
+            if pending:
+                break
+            time.sleep(0.01)
+        assert len(pending) == 1
+        task = pending[0]["arguments"]["tasks"][0]
+        assert task["id"] == "legacy-plan"
+        rejected = client.post(
+            (
+                "/v1/sessions/session-v6-plan/interactions/"
+                f"{pending[0]['interaction_id']}"
+            ),
+            headers=AUTH,
+            json={
+                "approved": True,
+                "mode": "interactive",
+                "selected_task_ids": ["legacy-plan"],
+            },
+        )
+        assert rejected.status_code == 400
+        resolved = client.post(
+            (
+                "/v1/sessions/session-v6-plan/interactions/"
+                f"{pending[0]['interaction_id']}"
+            ),
+            headers=AUTH,
+            json={
+                "approved": True,
+                "mode": "interactive",
+                "plan": "Legacy implementation",
+                "tasks": [
+                    {
+                        "id": "legacy-plan",
+                        "title": "Legacy implementation",
+                        "verification": "Migration E2E passes",
+                    }
+                ],
+                "selected_task_ids": ["legacy-plan"],
+            },
+        )
+        assert resolved.status_code == 200
+        for _ in range(100):
+            if not services.turns.is_active("session-v6-plan"):
+                break
+            time.sleep(0.01)
+
+    assert provider.calls == 1
+    assert sum(
+        message.get("role") == "user"
+        and message.get("content") == "legacy request"
+        for message in provider.messages
+    ) == 1
+    assert sum(
+        message.get("role") == "tool"
+        and message.get("tool_call_id") == "provider/v6-plan"
+        for message in provider.messages
+    ) == 1
+    reopened = ConversationStore(data_dir)
+    plans = reopened.list_plan_artifacts("session-v6-plan")
+    reopened.close()
+    assert plans[0]["status"] == "approved"
+    assert plans[0]["selected_task_ids"] == ["legacy-plan"]
+    assert plans[0]["tasks"][0]["verification"] == "Migration E2E passes"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
 
 
 def test_production_question_and_directory_cards_apply_selected_root(
@@ -1796,7 +2013,7 @@ def test_production_plan_card_approves_into_interactive_mode(tmp_path):
                         ToolCall(
                             "provider/plan-1",
                             "propose_plan",
-                            {"plan": "1. Test\n2. Build"},
+                            _plan("1. Test\n2. Build"),
                         )
                     ]
                 )
@@ -1867,6 +2084,146 @@ def test_production_plan_card_approves_into_interactive_mode(tmp_path):
     )
 
 
+def test_production_plan_edits_and_selected_tasks_reach_same_turn(
+    tmp_path,
+):
+    class PlanProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+            self.follow_up_messages = []
+
+        def complete(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "provider/structured-plan",
+                            "propose_plan",
+                            {
+                                "plan": "Original plan",
+                                "tasks": [
+                                    {
+                                        "id": "tests",
+                                        "title": "Add tests",
+                                        "verification": "Focused tests pass",
+                                    },
+                                    {
+                                        "id": "build",
+                                        "title": "Build feature",
+                                        "verification": "Full suite passes",
+                                    },
+                                ],
+                            },
+                        )
+                    ]
+                )
+            self.follow_up_messages = list(kwargs["messages"])
+            return AssistantTurn(text="executing selected task")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    provider = PlanProvider()
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=provider,
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/session-structured-plan",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/session-structured-plan/turns",
+                headers=AUTH,
+                json={
+                    "input": "plan the change",
+                    "workspace": str(workspace),
+                    "agent": "plan",
+                    "mode": "plan",
+                },
+            )
+            while True:
+                event = socket.receive_json()
+                if event["type"] == "plan_proposed":
+                    pending = client.get(
+                        "/v1/sessions/session-structured-plan/interactions",
+                        headers=AUTH,
+                    ).json()[0]
+                    assert pending["arguments"]["tasks"][0][
+                        "verification"
+                    ] == "Focused tests pass"
+                    resolved = client.post(
+                        (
+                            "/v1/sessions/session-structured-plan/"
+                            f"interactions/{event['interaction_id']}"
+                        ),
+                        headers=AUTH,
+                        json={
+                            "approved": True,
+                            "mode": "interactive",
+                            "plan": "Edited plan",
+                            "tasks": [
+                                {
+                                    "id": "tests",
+                                    "title": "Add regression tests",
+                                    "verification": (
+                                        "Regression suite passes"
+                                    ),
+                                },
+                                {
+                                    "id": "build",
+                                    "title": "Build feature",
+                                    "verification": "Full suite passes",
+                                },
+                            ],
+                            "selected_task_ids": ["tests"],
+                        },
+                    )
+                    assert resolved.status_code == 200
+                if event["type"] == "turn_end":
+                    break
+        plans = client.get(
+            "/v1/sessions/session-structured-plan/plans",
+            headers=AUTH,
+        )
+
+    assert accepted.status_code == 202
+    assert plans.status_code == 200
+    artifact = plans.json()[0]
+    assert artifact["status"] == "approved"
+    assert artifact["plan"] == "Edited plan"
+    assert artifact["selected_task_ids"] == ["tests"]
+    tool_result = next(
+        message
+        for message in provider.follow_up_messages
+        if message.get("role") == "tool"
+    )
+    result = json.loads(tool_result["content"])
+    assert result["selected_task_ids"] == ["tests"]
+    assert result["selected_tasks"][0]["title"] == "Add regression tests"
+    assert any(
+        message.get("role") == "user"
+        and message.get("content") == "plan the change"
+        for message in provider.follow_up_messages
+    )
+
+
 def test_existing_task_can_switch_from_code_to_plan_mode(tmp_path):
     class PlanProvider(ProviderClient):
         def __init__(self):
@@ -1882,7 +2239,7 @@ def test_existing_task_can_switch_from_code_to_plan_mode(tmp_path):
                         ToolCall(
                             "provider/existing-plan",
                             "propose_plan",
-                            {"plan": "1. Inspect\n2. Implement"},
+                            _plan("1. Inspect\n2. Implement"),
                         )
                     ]
                 )

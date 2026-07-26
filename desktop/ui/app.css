@@ -795,6 +795,61 @@ select:focus-visible,
   font-size: 10px;
 }
 
+.plan-panel {
+  padding: 7px 16px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+
+.plan-panel > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.plan-panel > header strong {
+  font-size: 11px;
+}
+
+.plan-panel > header span,
+.saved-plan-status {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.plan-list {
+  display: flex;
+  gap: 7px;
+  margin-top: 7px;
+  overflow-x: auto;
+}
+
+.saved-plan {
+  display: grid;
+  min-width: min(420px, 85vw);
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.saved-plan > strong {
+  font-size: 11px;
+}
+
+.saved-plan-task {
+  display: grid;
+  grid-template-columns: auto minmax(80px, 1fr) minmax(100px, 1.2fr);
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.saved-plan-task.is-selected {
+  color: var(--text);
+}
+
 .conversation {
   min-height: 0;
   overflow-y: auto;
@@ -1059,6 +1114,33 @@ select:focus-visible,
   border: 1px solid var(--line);
   border-radius: 8px;
   font: inherit;
+}
+
+.plan-editor {
+  min-height: 112px;
+}
+
+.plan-task {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.plan-task .interaction-input {
+  min-height: 36px;
+  margin-top: 0;
+}
+
+.plan-task-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .composer-wrap {

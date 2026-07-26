@@ -61,7 +61,7 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://127.0.0.1:1420",
 )
 MAX_CHECKPOINT_RESTORE_BODY_BYTES = 1024
-MAX_INTERACTION_BODY_BYTES = 32 * 1024
+MAX_INTERACTION_BODY_BYTES = 128 * 1024
 MAX_SESSION_FORK_BODY_BYTES = 1024
 MAX_ROOT_BODY_BYTES = 8 * 1024
 MAX_WORKER_BODY_BYTES = 64 * 1024
@@ -329,6 +329,13 @@ class InteractionControl(Protocol):
     def close(self) -> None: ...
 
 
+class PlanControl(Protocol):
+    def list_plan_artifacts(
+        self,
+        session_id: str,
+    ) -> list[dict[str, Any]]: ...
+
+
 class RestoreControl(Protocol):
     def restore(
         self,
@@ -352,6 +359,7 @@ class ControlPlaneServices(Protocol):
     restores: RestoreControl | None
     approvals: ApprovalControl | None
     interactions: InteractionControl | None
+    plans: PlanControl | None
     workers: Any | None
 
 
@@ -1048,6 +1056,16 @@ def create_control_plane_app(
         if interactions is None:
             return []
         return interactions.pending(session_id)
+
+    @app.get("/v1/sessions/{session_id}/plans")
+    async def list_plans(
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        plans = getattr(services, "plans", None)
+        if plans is None:
+            return []
+        return plans.list_plan_artifacts(session_id)
 
     @app.post(
         "/v1/sessions/{session_id}/interactions/{interaction_id}"

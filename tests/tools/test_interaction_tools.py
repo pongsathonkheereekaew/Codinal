@@ -33,3 +33,30 @@ def test_interaction_tools_are_manifest_bound_with_intrinsic_risk(tmp_path):
             ]
             is False
         )
+
+
+def test_plan_tool_exposes_editable_tasks_with_verification_criteria(
+    tmp_path,
+):
+    registry = build_core_registry(
+        [RootDir(tmp_path, writable=True)]
+    )
+    register_interaction_tools(registry)
+
+    plan = registry.get("propose_plan")
+    assert plan is not None
+    parameters = plan.schema["function"]["parameters"]
+    tasks = parameters["properties"]["tasks"]
+
+    assert tasks["type"] == "array"
+    assert tasks["minItems"] == 1
+    assert tasks["maxItems"] == 20
+    assert tasks["items"]["required"] == [
+        "id",
+        "title",
+        "verification",
+    ]
+    assert tasks["items"]["additionalProperties"] is False
+    assert tasks["items"]["properties"]["id"]["pattern"].startswith("^")
+    assert tasks["items"]["properties"]["verification"]["maxLength"] == 2048
+    assert parameters["required"] == ["plan", "tasks"]

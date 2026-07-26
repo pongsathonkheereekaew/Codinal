@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from runtime.plans import PlanApproval, PlanArtifact, PlanContent
 from runtime.sessions import (
     SessionRecord,
     SessionSearchHit,
@@ -32,8 +33,10 @@ from .migrations import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
+MAX_PLAN_RESPONSE_BYTES = 128 * 1024
+MAX_LISTED_PLAN_ARTIFACTS = 100
 
 
 def _migrate_to_v1(connection: sqlite3.Connection) -> None:
@@ -175,6 +178,28 @@ def _migrate_to_v6(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v7(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS plan_artifacts (
+            session_id TEXT NOT NULL,
+            plan_id TEXT NOT NULL,
+            tool_call_id TEXT NOT NULL,
+            plan TEXT NOT NULL,
+            tasks TEXT NOT NULL DEFAULT '[]',
+            selected_task_ids TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'draft',
+            revision INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL DEFAULT ({_NOW}),
+            PRIMARY KEY (session_id, plan_id),
+            UNIQUE (session_id, tool_call_id),
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
@@ -182,6 +207,7 @@ _MIGRATIONS = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
     6: _migrate_to_v6,
+    7: _migrate_to_v7,
 }
 
 
@@ -536,6 +562,166 @@ class ConversationStore:
                 ),
             )
 
+    def ensure_plan_artifact(
+        self,
+        session_id: str,
+        plan_id: str,
+        tool_call_id: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        _validate_session_id(session_id)
+        _validate_plan_id(plan_id)
+        _validate_tool_call_id(tool_call_id)
+        content = PlanContent.parse(arguments)
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                """
+                SELECT * FROM plan_artifacts
+                WHERE session_id = ? AND plan_id = ?
+                """,
+                (session_id, plan_id),
+            ).fetchone()
+            if existing is None:
+                self._connection.execute(
+                    f"""
+                    INSERT INTO plan_artifacts (
+                        session_id, plan_id, tool_call_id, plan, tasks,
+                        selected_task_ids, status, revision, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, '[]', 'draft', 1, {_NOW})
+                    """,
+                    (
+                        session_id,
+                        plan_id,
+                        tool_call_id,
+                        content.plan,
+                        _encode_json(content.to_dict()["tasks"]),
+                    ),
+                )
+                existing = self._connection.execute(
+                    """
+                    SELECT * FROM plan_artifacts
+                    WHERE session_id = ? AND plan_id = ?
+                    """,
+                    (session_id, plan_id),
+                ).fetchone()
+        if existing is None:
+            raise RuntimeError("plan artifact was not saved")
+        if (
+            str(existing["tool_call_id"]) != tool_call_id
+            or str(existing["status"]) != "draft"
+        ):
+            raise ValueError("plan artifact identity is unavailable")
+        return _plan_from_row(existing)
+
+    def save_plan_interaction_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        request_fingerprint: str,
+        response: dict[str, Any],
+        plan_id: str,
+    ) -> None:
+        _validate_session_id(session_id)
+        _validate_tool_call_id(tool_call_id)
+        _validate_request_fingerprint(request_fingerprint)
+        _validate_plan_id(plan_id)
+        encoded_response = _encode_json(response)
+        if len(encoded_response.encode("utf-8")) > MAX_PLAN_RESPONSE_BYTES:
+            raise ValueError("interaction response exceeds limit")
+        approved = response.get("approved")
+        if not isinstance(approved, bool):
+            raise ValueError("invalid plan response")
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT * FROM plan_artifacts
+                WHERE session_id = ? AND plan_id = ?
+                    AND tool_call_id = ?
+                """,
+                (session_id, plan_id, tool_call_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("plan artifact is unavailable")
+            if str(row["status"]) != "draft":
+                raise ValueError("plan artifact is already resolved")
+            if approved:
+                approval = PlanApproval.parse(
+                    response,
+                    {
+                        "plan": str(row["plan"]),
+                        "tasks": _decode_json(
+                            row["tasks"],
+                            expected=list,
+                        ),
+                    },
+                )
+                plan = approval.content.plan
+                tasks = approval.content.to_dict()["tasks"]
+                selected = list(approval.selected_task_ids)
+                status = "approved"
+            else:
+                plan = str(row["plan"])
+                tasks = _decode_json(row["tasks"], expected=list)
+                selected = []
+                status = "revision_requested"
+            self._connection.execute(
+                f"""
+                INSERT INTO interaction_decisions (
+                    session_id, tool_call_id, kind,
+                    request_fingerprint, response, updated_at
+                )
+                VALUES (?, ?, 'plan', ?, ?, {_NOW})
+                ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
+                    kind = excluded.kind,
+                    request_fingerprint = excluded.request_fingerprint,
+                    response = excluded.response,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    session_id,
+                    tool_call_id,
+                    request_fingerprint,
+                    encoded_response,
+                ),
+            )
+            self._connection.execute(
+                f"""
+                UPDATE plan_artifacts
+                SET plan = ?, tasks = ?, selected_task_ids = ?,
+                    status = ?, revision = revision + 1,
+                    updated_at = {_NOW}
+                WHERE session_id = ? AND plan_id = ?
+                    AND tool_call_id = ?
+                """,
+                (
+                    plan,
+                    _encode_json(tasks),
+                    _encode_json(selected),
+                    status,
+                    session_id,
+                    plan_id,
+                    tool_call_id,
+                ),
+            )
+
+    def list_plan_artifacts(
+        self,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_session_id(session_id)
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM plan_artifacts
+                WHERE session_id = ?
+                ORDER BY updated_at DESC, plan_id
+                LIMIT ?
+                """,
+                (session_id, MAX_LISTED_PLAN_ARTIFACTS),
+            ).fetchall()
+        return [_plan_from_row(row) for row in rows]
+
     def list(
         self,
         *,
@@ -886,6 +1072,14 @@ def _validate_tool_call_id(tool_call_id: str) -> None:
         raise ValueError("invalid tool call id")
 
 
+def _validate_plan_id(plan_id: str) -> None:
+    if (
+        not isinstance(plan_id, str)
+        or re.fullmatch(r"[a-f0-9]{32}", plan_id) is None
+    ):
+        raise ValueError("invalid plan id")
+
+
 def _validate_request_fingerprint(request_fingerprint: str) -> None:
     if (
         not isinstance(request_fingerprint, str)
@@ -938,6 +1132,31 @@ def _validate_record(record: SessionRecord) -> None:
         raise ValueError("invalid session data")
     if record.origin_session_id is not None:
         _validate_session_id(record.origin_session_id)
+
+
+def _plan_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    content = PlanContent.parse(
+        {
+            "plan": str(row["plan"]),
+            "tasks": _decode_json(row["tasks"], expected=list),
+        }
+    )
+    selected = _decode_json(
+        row["selected_task_ids"],
+        expected=list,
+    )
+    if any(not isinstance(task_id, str) for task_id in selected):
+        raise ValueError("corrupt conversation store")
+    return PlanArtifact(
+        plan_id=str(row["plan_id"]),
+        session_id=str(row["session_id"]),
+        tool_call_id=str(row["tool_call_id"]),
+        content=content,
+        selected_task_ids=tuple(selected),
+        status=str(row["status"]),
+        revision=int(row["revision"]),
+        updated_at=str(row["updated_at"]),
+    ).to_dict()
 
 
 def _encode_json(value: Any) -> str:

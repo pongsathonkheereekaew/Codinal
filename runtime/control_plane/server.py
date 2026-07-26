@@ -427,6 +427,7 @@ def build_services(
         git_service=git_service,
         approval_broker=approval_broker,
         interaction_broker=interaction_broker,
+        plan_store=store,
         worker_store=worker_store,
     )
 

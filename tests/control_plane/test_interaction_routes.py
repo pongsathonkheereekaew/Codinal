@@ -24,6 +24,38 @@ class Decisions:
         *key, response = values
         self.values[tuple(key)] = response
 
+    def ensure_plan_artifact(
+        self,
+        session_id,
+        plan_id,
+        tool_call_id,
+        arguments,
+    ):
+        return {
+            "plan_id": plan_id,
+            "session_id": session_id,
+            "tool_call_id": tool_call_id,
+            "plan": arguments["plan"],
+            "tasks": arguments["tasks"],
+            "revision": 1,
+        }
+
+    def save_plan_interaction_decision(
+        self,
+        session_id,
+        tool_call_id,
+        fingerprint,
+        response,
+        _plan_id,
+    ):
+        self.save_interaction_decision(
+            session_id,
+            tool_call_id,
+            "plan",
+            fingerprint,
+            response,
+        )
+
 
 class FakeTurns:
     async def recover(self):
@@ -36,7 +68,7 @@ class FakeTurns:
         return False
 
 
-def make_client(broker):
+def make_client(broker, plans=None):
     services = SimpleNamespace(
         events=EventHub(),
         settings=SimpleNamespace(
@@ -46,6 +78,7 @@ def make_client(broker):
         oauth=OAuthCoordinator(),
         turns=FakeTurns(),
         interactions=broker,
+        plans=plans,
         approvals=None,
         mcp=None,
         git=None,
@@ -53,6 +86,40 @@ def make_client(broker):
     return TestClient(
         create_control_plane_app(token=TOKEN, services=services)
     )
+
+
+def test_plan_route_lists_durable_session_artifacts():
+    artifact = {
+        "plan_id": "a" * 32,
+        "session_id": "session-1",
+        "tool_call_id": "call-1",
+        "plan": "Ship it",
+        "tasks": [
+            {
+                "id": "ship",
+                "title": "Ship it",
+                "verification": "Release smoke passes",
+            }
+        ],
+        "selected_task_ids": [],
+        "status": "draft",
+        "revision": 1,
+        "updated_at": "2026-07-26T00:00:00Z",
+    }
+    plans = SimpleNamespace(
+        list_plan_artifacts=lambda session_id: (
+            [artifact] if session_id == "session-1" else []
+        )
+    )
+
+    with make_client(InteractionBroker(Decisions()), plans) as client:
+        response = client.get(
+            "/v1/sessions/session-1/plans",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == [artifact]
 
 
 def test_interaction_routes_list_and_resolve_question():
@@ -108,7 +175,19 @@ def test_interaction_route_rejects_invalid_response_and_body_limit():
         awaitable = broker.requester(
             "session-1",
             "plan",
-        )({"plan": "1. Test"}, "call-1")
+        )(
+            {
+                "plan": "Test",
+                "tasks": [
+                    {
+                        "id": "test",
+                        "title": "Test",
+                        "verification": "Focused test passes",
+                    }
+                ],
+            },
+            "call-1",
+        )
         interaction_id = broker.interaction_id(
             "session-1",
             "call-1",
@@ -123,7 +202,7 @@ def test_interaction_route_rejects_invalid_response_and_body_limit():
             oversized = client.post(
                 f"/v1/sessions/session-1/interactions/{interaction_id}",
                 headers=AUTH,
-                content=b"x" * (32 * 1024 + 1),
+                content=b"x" * (128 * 1024 + 1),
             )
             resolved = client.post(
                 f"/v1/sessions/session-1/interactions/{interaction_id}",
@@ -140,4 +219,99 @@ def test_interaction_route_rejects_invalid_response_and_body_limit():
     assert response == {
         "approved": False,
         "feedback": "Revise step 1",
+    }
+
+
+def test_plan_interaction_approves_only_selected_edited_tasks():
+    async def scenario():
+        broker = InteractionBroker(Decisions())
+        awaitable = broker.requester(
+            "session-1",
+            "plan",
+        )(
+            {
+                "plan": "Original plan",
+                "tasks": [
+                    {
+                        "id": "tests",
+                        "title": "Add tests",
+                        "verification": "Focused test passes",
+                    },
+                    {
+                        "id": "build",
+                        "title": "Build feature",
+                        "verification": "Full suite passes",
+                    },
+                ],
+            },
+            "call-1",
+        )
+        interaction_id = broker.interaction_id(
+            "session-1",
+            "call-1",
+            "plan",
+        )
+        with make_client(broker) as client:
+            unknown = client.post(
+                f"/v1/sessions/session-1/interactions/{interaction_id}",
+                headers=AUTH,
+                json={
+                    "approved": True,
+                    "mode": "interactive",
+                    "plan": "Edited plan",
+                    "selected_task_ids": ["missing"],
+                },
+            )
+            resolved = client.post(
+                f"/v1/sessions/session-1/interactions/{interaction_id}",
+                headers=AUTH,
+                json={
+                    "approved": True,
+                    "mode": "interactive",
+                    "plan": "Edited plan",
+                    "tasks": [
+                        {
+                            "id": "tests",
+                            "title": "Add regression tests",
+                            "verification": "Regression test passes",
+                        },
+                        {
+                            "id": "build",
+                            "title": "Build feature",
+                            "verification": "Full suite passes",
+                        },
+                    ],
+                    "selected_task_ids": ["tests"],
+                },
+            )
+        return unknown, resolved, await awaitable
+
+    unknown, resolved, response = asyncio.run(scenario())
+
+    assert unknown.status_code == 400
+    assert resolved.status_code == 200
+    assert response == {
+        "approved": True,
+        "mode": "interactive",
+        "plan": "Edited plan",
+        "tasks": [
+            {
+                "id": "tests",
+                "title": "Add regression tests",
+                "verification": "Regression test passes",
+            },
+            {
+                "id": "build",
+                "title": "Build feature",
+                "verification": "Full suite passes",
+            },
+        ],
+        "selected_task_ids": ["tests"],
+        "selected_tasks": [
+            {
+                "id": "tests",
+                "title": "Add regression tests",
+                "verification": "Regression test passes",
+            }
+        ],
     }

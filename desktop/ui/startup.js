@@ -61,6 +61,7 @@ const state = {
   contextPending: false,
   workers: [],
   workerGeneration: 0,
+  plans: [],
 };
 
 const el = Object.fromEntries(
@@ -86,6 +87,7 @@ const el = Object.fromEntries(
     "worker-panel", "worker-summary", "worker-list", "new-worker",
     "worker-dialog", "worker-task", "worker-ownership", "create-worker",
     "worker-dependencies",
+    "plan-panel", "plan-summary", "plan-list",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -447,6 +449,7 @@ async function selectSession(session) {
   state.checkpoints = [];
   state.workers = [];
   state.workerGeneration += 1;
+  state.plans = [];
   state.roots = [];
   state.treeGeneration += 1;
   invalidateAttachments();
@@ -463,6 +466,7 @@ async function selectSession(session) {
   renderContextRoots();
   renderProjectTree();
   renderWorkers();
+  renderPlans();
   updateThreadSearchControls();
   try {
     const messages = await api(
@@ -481,6 +485,7 @@ async function selectSession(session) {
       loadDiff(false),
       loadRootsAndTree(),
       loadWorkers(),
+      loadPlans(),
     ]);
     if (
       state.sessionId !== sessionId
@@ -661,8 +666,13 @@ function handleEvent(event) {
     case "permission_required":
       renderApproval(event);
       break;
-    case "directory_requested":
     case "plan_proposed":
+      loadPlans().catch((error) => toast(error.message, "error"));
+      loadPendingInteractions().catch((error) => {
+        toast(error.message, "error");
+      });
+      break;
+    case "directory_requested":
     case "question_requested":
       loadPendingInteractions().catch((error) => {
         toast(error.message, "error");
@@ -699,6 +709,7 @@ async function finishTurn() {
       loadDiff(false),
       loadRootsAndTree(),
       loadWorkers(),
+      loadPlans(),
     ]);
   } catch (error) {
     toast(error.message, "error");
@@ -1441,6 +1452,57 @@ async function loadPendingInteractions() {
   }
 }
 
+async function loadPlans() {
+  const sessionId = state.sessionId;
+  if (!sessionId) {
+    state.plans = [];
+    renderPlans();
+    return;
+  }
+  const plans = await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/plans`
+  );
+  if (state.sessionId !== sessionId) return;
+  state.plans = Array.isArray(plans) ? plans : [];
+  renderPlans();
+}
+
+function renderPlans() {
+  el["plan-list"].replaceChildren();
+  el["plan-panel"].classList.toggle("is-hidden", !state.plans.length);
+  if (!state.plans.length) {
+    el["plan-summary"].textContent = "No saved plan";
+    return;
+  }
+  const latest = state.plans[0];
+  el["plan-summary"].textContent = latest.status.replace("_", " ");
+  for (const plan of state.plans) {
+    const card = node("article", "saved-plan");
+    const selected = new Set(plan.selected_task_ids || []);
+    card.append(
+      node("strong", "", plan.plan),
+      node(
+        "span",
+        "saved-plan-status",
+        `${plan.status.replace("_", " ")} · revision ${plan.revision}`
+      )
+    );
+    for (const task of Array.isArray(plan.tasks) ? plan.tasks : []) {
+      const item = node(
+        "div",
+        `saved-plan-task ${selected.has(task.id) ? "is-selected" : ""}`
+      );
+      item.append(
+        node("span", "", selected.has(task.id) ? "✓" : "○"),
+        node("strong", "", task.title),
+        node("small", "", task.verification)
+      );
+      card.append(item);
+    }
+    el["plan-list"].append(card);
+  }
+}
+
 function renderInteraction(interaction, sessionId) {
   const id = interaction.interaction_id;
   if (!id || document.querySelector(`[data-interaction-id="${id}"]`)) return;
@@ -1463,7 +1525,53 @@ function renderInteraction(interaction, sessionId) {
   const actions = node("div", "approval-actions");
 
   if (interaction.kind === "plan") {
-    content.append(node("pre", "approval-arguments", args.plan || ""));
+    const planEditor = node("textarea", "interaction-input plan-editor");
+    planEditor.value = args.plan || "";
+    planEditor.maxLength = 32768;
+    planEditor.setAttribute("aria-label", "Editable plan summary");
+    content.append(planEditor);
+    const taskEditors = [];
+    for (const task of Array.isArray(args.tasks) ? args.tasks : []) {
+      const row = node("fieldset", "plan-task");
+      const select = node("input", "plan-task-select");
+      select.type = "checkbox";
+      select.checked = true;
+      select.setAttribute(
+        "aria-label",
+        `Select task ${task.title || task.id}`
+      );
+      const titleInput = node("input", "interaction-input");
+      titleInput.value = task.title || "";
+      titleInput.maxLength = 512;
+      titleInput.setAttribute("aria-label", `Task ${task.id} title`);
+      const description = node("textarea", "interaction-input");
+      description.value = task.description || "";
+      description.maxLength = 4096;
+      description.placeholder = "Task description";
+      description.setAttribute(
+        "aria-label",
+        `Task ${task.id} description`
+      );
+      const verification = node("input", "interaction-input");
+      verification.value = task.verification || "";
+      verification.maxLength = 2048;
+      verification.placeholder = "Verification criterion";
+      verification.setAttribute(
+        "aria-label",
+        `Task ${task.id} verification criterion`
+      );
+      const legend = node("legend", "plan-task-heading");
+      legend.append(select, node("span", "", task.id));
+      row.append(legend, titleInput, description, verification);
+      content.append(row);
+      taskEditors.push({
+        id: task.id,
+        select,
+        titleInput,
+        description,
+        verification,
+      });
+    }
     const feedback = node("textarea", "interaction-input");
     feedback.placeholder = "Optional revision feedback";
     feedback.setAttribute("aria-label", "Plan revision feedback");
@@ -1476,11 +1584,41 @@ function renderInteraction(interaction, sessionId) {
       interaction,
       { approved: false, feedback: feedback.value }
     ));
-    approve.addEventListener("click", () => resolveInteraction(
-      card,
-      interaction,
-      { approved: true, mode: "interactive" }
-    ));
+    approve.addEventListener("click", () => {
+      const tasks = taskEditors.map((editor) => ({
+        id: editor.id,
+        title: editor.titleInput.value.trim(),
+        ...(editor.description.value.trim()
+          ? { description: editor.description.value.trim() }
+          : {}),
+        verification: editor.verification.value.trim(),
+      }));
+      const selected_task_ids = taskEditors
+        .filter((editor) => editor.select.checked)
+        .map((editor) => editor.id);
+      if (
+        !planEditor.value.trim()
+        || tasks.some((task) => !task.title || !task.verification)
+      ) {
+        toast("Plan tasks need a title and verification criterion", "error");
+        return;
+      }
+      if (tasks.length && !selected_task_ids.length) {
+        toast("Select at least one plan task", "error");
+        return;
+      }
+      resolveInteraction(
+        card,
+        interaction,
+        {
+          approved: true,
+          mode: "interactive",
+          plan: planEditor.value.trim(),
+          tasks,
+          selected_task_ids,
+        }
+      );
+    });
     actions.append(revise, approve);
   } else if (interaction.kind === "question") {
     content.append(node("p", "", args.question || "Input required"));

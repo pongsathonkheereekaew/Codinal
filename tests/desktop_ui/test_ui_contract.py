@@ -45,12 +45,19 @@ def test_desktop_ui_has_native_three_pane_product_structure():
 
 
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
+    html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
 
     assert "/approvals/" in script
     assert "/interactions" in script
     assert "question_requested" in script
     assert "plan_proposed" in script
+    assert "plan-editor" in script
+    assert "plan-task-select" in script
+    assert "selected_task_ids" in script
+    assert "verification" in script
+    assert 'id="plan-panel"' in html
+    assert "/plans" in script
     assert "directory_requested" in script
     assert "always_tool" in script
     assert "always_command" in script

@@ -80,6 +80,113 @@ def test_save_reopen_and_load_preserves_complete_session(tmp_path):
     )
 
 
+def test_plan_artifact_and_approval_are_persisted_atomically(tmp_path):
+    store = ConversationStore(tmp_path)
+    store.save(record(mode="plan"))
+    arguments = {
+        "plan": "Ship the feature",
+        "tasks": [
+            {
+                "id": "tests",
+                "title": "Add tests",
+                "verification": "Focused suite passes",
+            },
+            {
+                "id": "build",
+                "title": "Build it",
+                "verification": "Full suite passes",
+            },
+        ],
+    }
+
+    draft = store.ensure_plan_artifact(
+        "session-1",
+        "a" * 32,
+        "call-1",
+        arguments,
+    )
+    replayed = store.ensure_plan_artifact(
+        "session-1",
+        "a" * 32,
+        "call-1",
+        {
+            "plan": "stale replay",
+            "tasks": [
+                {
+                    "id": "stale",
+                    "title": "Stale task",
+                    "verification": "Must not replace the draft",
+                }
+            ],
+        },
+    )
+    response = {
+        "approved": True,
+        "mode": "interactive",
+        "plan": "Ship only tests",
+        "tasks": arguments["tasks"],
+        "selected_task_ids": ["tests"],
+        "selected_tasks": [arguments["tasks"][0]],
+    }
+    store.save_plan_interaction_decision(
+        "session-1",
+        "call-1",
+        "b" * 64,
+        response,
+        "a" * 32,
+    )
+    store.close()
+
+    reopened = ConversationStore(tmp_path)
+    plans = reopened.list_plan_artifacts("session-1")
+
+    assert draft["status"] == "draft"
+    assert draft["revision"] == 1
+    assert replayed == draft
+    assert plans == [
+        {
+            "plan_id": "a" * 32,
+            "session_id": "session-1",
+            "tool_call_id": "call-1",
+            "plan": "Ship only tests",
+            "tasks": arguments["tasks"],
+            "selected_task_ids": ["tests"],
+            "status": "approved",
+            "revision": 2,
+            "updated_at": plans[0]["updated_at"],
+        }
+    ]
+    assert reopened.load_interaction_decision(
+        "session-1",
+        "call-1",
+        "plan",
+        "b" * 64,
+    ) == response
+
+
+def test_plan_artifact_listing_is_bounded(tmp_path):
+    store = ConversationStore(tmp_path)
+    store.save(record(mode="plan"))
+    for index in range(105):
+        store.ensure_plan_artifact(
+            "session-1",
+            f"{index:032x}",
+            f"call-{index}",
+            {
+                "plan": f"Plan {index}",
+                "tasks": [
+                    {
+                        "id": "task",
+                        "title": "Task",
+                        "verification": "Test passes",
+                    }
+                ],
+            },
+        )
+
+    assert len(store.list_plan_artifacts("session-1")) == 100
+
+
 def test_v5_store_migrates_side_conversation_parent_column(tmp_path):
     store = ConversationStore(tmp_path)
     store.save(record())
@@ -102,7 +209,45 @@ def test_v5_store_migrates_side_conversation_parent_column(tmp_path):
     assert loaded is not None
     assert loaded.origin_session_id is None
     assert "origin_session_id" in columns
-    assert version == 6
+    assert version == 7
+
+
+def test_v6_store_migrates_durable_plan_artifacts(tmp_path):
+    store = ConversationStore(tmp_path)
+    store.save(record())
+    store.close()
+    database = tmp_path / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE plan_artifacts")
+        connection.execute("PRAGMA user_version = 6")
+
+    migrated = ConversationStore(tmp_path)
+    draft = migrated.ensure_plan_artifact(
+        "session-1",
+        "a" * 32,
+        "call-1",
+        {
+            "plan": "Retained plan",
+            "tasks": [
+                {
+                    "id": "retain",
+                    "title": "Retain plan",
+                    "verification": "Migration test passes",
+                }
+            ],
+        },
+    )
+
+    assert draft["plan"] == "Retained plan"
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert len(
+        list(
+            (tmp_path / "backups").glob(
+                "codinal.db.pre-v6-to-v7-*.bak"
+            )
+        )
+    ) == 1
 
 
 def test_approval_decision_survives_restart_until_tool_finishes(tmp_path):
@@ -573,8 +718,8 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
         "/Users/example/project"
     )
     with sqlite3.connect(store.db_path) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 6
-    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v6-*.bak"))
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 7
+    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v7-*.bak"))
     assert len(backups) == 1
     assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o700
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
@@ -639,11 +784,11 @@ def test_v1_conversation_schema_migrates_to_v4_without_losing_data(tmp_path):
     ]
     assert restored.source_workspace is None
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 7
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v1-to-v6-*.bak"
+                "codinal.db.pre-v1-to-v7-*.bak"
             )
         )
     ) == 1
@@ -698,11 +843,11 @@ def test_v2_conversation_schema_adds_idle_recovery_state(tmp_path):
         TurnStatus.IDLE
     )
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 7
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v2-to-v6-*.bak"
+                "codinal.db.pre-v2-to-v7-*.bak"
             )
         )
     ) == 1
@@ -741,11 +886,11 @@ def test_v3_conversation_schema_adds_interaction_decisions(tmp_path):
         "a" * 64,
     ) == {"approved": True, "mode": "interactive"}
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v3-to-v6-*.bak"
+                "codinal.db.pre-v3-to-v7-*.bak"
             )
         )
     ) == 1
@@ -772,7 +917,7 @@ def test_corrupt_database_is_preserved_before_empty_recovery(tmp_path):
     assert database.read_bytes() != corrupt
     with sqlite3.connect(database) as recovered:
         assert recovered.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 7
 
 
 def test_corrupt_database_restores_latest_valid_backup(tmp_path):

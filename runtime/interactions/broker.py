@@ -9,6 +9,12 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Protocol
 
+from runtime.plans import (
+    LEGACY_VERIFICATION_PLACEHOLDER,
+    PlanApproval,
+    PlanContent,
+)
+
 _KINDS = {"directory", "plan", "question"}
 
 
@@ -28,6 +34,23 @@ class InteractionDecisionStore(Protocol):
         kind: str,
         request_fingerprint: str,
         response: dict[str, Any],
+    ) -> None: ...
+
+    def ensure_plan_artifact(
+        self,
+        session_id: str,
+        plan_id: str,
+        tool_call_id: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    def save_plan_interaction_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        request_fingerprint: str,
+        response: dict[str, Any],
+        plan_id: str,
     ) -> None: ...
 
 
@@ -121,6 +144,19 @@ class InteractionBroker:
                 tool_call_id,
                 kind,
             )
+            if kind == "plan":
+                artifact = self._decisions.ensure_plan_artifact(
+                    session_id,
+                    interaction_id,
+                    tool_call_id,
+                    normalized,
+                )
+                normalized = {
+                    "plan": artifact["plan"],
+                    "tasks": artifact["tasks"],
+                    "plan_id": artifact["plan_id"],
+                    "revision": artifact["revision"],
+                }
             loop = asyncio.get_running_loop()
             pending = _Pending(
                 session_id=session_id,
@@ -181,20 +217,33 @@ class InteractionBroker:
             pending = self._pending.get(key)
             if pending is None or pending.resolved:
                 return False
-            normalized = _normalize_response(pending.kind, response)
+            normalized = _normalize_response(
+                pending.kind,
+                response,
+                pending.arguments,
+            )
             if pending.response_normalizer is not None:
                 normalized = pending.response_normalizer(
                     normalized,
                     False,
                 )
             try:
-                self._decisions.save_interaction_decision(
-                    session_id,
-                    pending.tool_call_id,
-                    pending.kind,
-                    pending.fingerprint,
-                    normalized,
-                )
+                if pending.kind == "plan":
+                    self._decisions.save_plan_interaction_decision(
+                        session_id,
+                        pending.tool_call_id,
+                        pending.fingerprint,
+                        normalized,
+                        pending.interaction_id,
+                    )
+                else:
+                    self._decisions.save_interaction_decision(
+                        session_id,
+                        pending.tool_call_id,
+                        pending.kind,
+                        pending.fingerprint,
+                        normalized,
+                    )
             except Exception:
                 raise InteractionPersistenceError(
                     "interaction response persistence failed"
@@ -246,9 +295,6 @@ def _normalize_arguments(
     normalized = json.loads(
         json.dumps(arguments, allow_nan=False, sort_keys=True)
     )
-    encoded = json.dumps(normalized, separators=(",", ":")).encode("utf-8")
-    if len(encoded) > 64 * 1024:
-        raise ValueError("interaction arguments exceed limit")
     if kind == "question":
         question = str(normalized.get("question", "")).strip()
         if not question:
@@ -259,12 +305,36 @@ def _normalize_arguments(
         if not plan:
             raise ValueError("plan is required")
         normalized["plan"] = plan
+        if "tasks" not in normalized:
+            title = next(
+                (
+                    line.strip()
+                    for line in plan.splitlines()
+                    if line.strip()
+                ),
+                "Legacy plan",
+            )
+            normalized["tasks"] = [
+                {
+                    "id": "legacy-plan",
+                    "title": title[:512],
+                    "verification": (
+                        LEGACY_VERIFICATION_PLACEHOLDER
+                    ),
+                }
+            ]
+            normalized["_legacy_plan"] = True
+        normalized.update(PlanContent.parse(normalized).to_dict())
+    encoded = json.dumps(normalized, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > 64 * 1024:
+        raise ValueError("interaction arguments exceed limit")
     return normalized
 
 
 def _normalize_response(
     kind: str,
     response: dict[str, Any],
+    arguments: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(response, dict):
         raise ValueError("invalid interaction response")
@@ -278,10 +348,10 @@ def _normalize_response(
         if not isinstance(approved, bool):
             raise ValueError("invalid plan response")
         if approved:
-            mode = response.get("mode", "interactive")
-            if mode not in {"interactive", "auto"}:
-                raise ValueError("invalid plan mode")
-            return {"approved": True, "mode": mode}
+            return PlanApproval.parse(
+                response,
+                arguments or {},
+            ).to_response()
         feedback = response.get("feedback", "")
         if not isinstance(feedback, str) or len(feedback) > 16_384:
             raise ValueError("invalid plan feedback")
@@ -313,8 +383,11 @@ def _declined(kind: str, error: str) -> dict[str, Any]:
 
 
 def _fingerprint(kind: str, arguments: dict[str, Any]) -> str:
+    fingerprint_arguments = dict(arguments)
+    if fingerprint_arguments.pop("_legacy_plan", False):
+        fingerprint_arguments.pop("tasks", None)
     payload = json.dumps(
-        {"arguments": arguments, "kind": kind},
+        {"arguments": fingerprint_arguments, "kind": kind},
         allow_nan=False,
         separators=(",", ":"),
         sort_keys=True,

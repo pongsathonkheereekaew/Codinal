@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from runtime.plans import plan_tasks_schema
 from runtime.policy import RiskClass
 from runtime.policy.manifest import ToolSpec as ManifestToolSpec
 
@@ -43,7 +44,10 @@ def register_interaction_tools(registry: ToolRegistry) -> None:
     ) -> dict[str, Any]:
         return {"error": "interactive tool was not intercepted"}
 
-    def propose_plan(plan: str) -> dict[str, Any]:
+    def propose_plan(
+        plan: str,
+        tasks: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         return {"error": "interactive tool was not intercepted"}
 
     def request_directory(
@@ -73,9 +77,20 @@ def register_interaction_tools(registry: ToolRegistry) -> None:
         propose_plan,
         schema=_schema(
             "propose_plan",
-            "Present a complete plan for explicit approval.",
-            {"plan": {"type": "string"}},
-            ["plan"],
+            (
+                "Present an editable plan for explicit approval. Include "
+                "independently selectable tasks with concrete verification "
+                "criteria."
+            ),
+            {
+                "plan": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32768,
+                },
+                "tasks": plan_tasks_schema(),
+            },
+            ["plan", "tasks"],
         ),
     )
     registry.register(
