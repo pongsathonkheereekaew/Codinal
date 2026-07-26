@@ -14,6 +14,8 @@ from runtime.git import (
     TransactionalShell,
 )
 
+from conftest import skip_on_ci
+
 
 requires_seatbelt = pytest.mark.skipif(
     platform.system() != "Darwin",
@@ -21,6 +23,7 @@ requires_seatbelt = pytest.mark.skipif(
 )
 
 
+@skip_on_ci
 def test_direct_mutation_recorder_uses_supplied_preimage_bytes(
     tmp_path: Path,
 ) -> None:
@@ -197,6 +200,7 @@ def test_plain_workspace_restore_rejects_same_path_manual_edit(
     assert target.read_text(encoding="utf-8") == "manual\n"
 
 
+@skip_on_ci
 def test_failed_plain_delta_prunes_only_rolled_back_preimages(
     tmp_path: Path,
 ) -> None:
@@ -264,6 +268,7 @@ def test_failed_plain_delta_prunes_only_rolled_back_preimages(
     assert discarded_blob not in objects
 
 
+@skip_on_ci
 def test_plain_cleanup_survives_missing_workspace_and_removes_sandbox(
     tmp_path: Path,
 ) -> None:

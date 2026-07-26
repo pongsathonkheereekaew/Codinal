@@ -1180,6 +1180,14 @@ def test_tree_lists_one_bounded_level_without_following_symlinks(tmp_path):
     (workspace / "README.md").write_text("read me")
     (workspace / ".GIT").mkdir()
     (workspace / ".GIT" / "config").write_text("also secret")
+    # On case-sensitive filesystems (Linux CI) `.git` and `.GIT` are distinct;
+    # create the lowercase one too so the reserved-root assertions below hold.
+    # On case-insensitive filesystems (macOS default) this is a no-op.
+    try:
+        (workspace / ".git").mkdir()
+        (workspace / ".git" / "config").write_text("also secret")
+    except FileExistsError:
+        pass
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("secret")

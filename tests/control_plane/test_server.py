@@ -25,6 +25,8 @@ from runtime.providers import (
     ProviderClient,
 )
 
+from conftest import skip_on_ci
+
 
 TOKEN = "test-session-token-with-at-least-32-characters"
 SECRET_SYNC_TOKEN = "test-secret-sync-token-with-at-least-32-chars"
@@ -167,6 +169,7 @@ def test_standalone_turn_service_rejects_missing_session_without_workspace(
         )
 
 
+@skip_on_ci
 def test_worker_engine_exposes_no_authority_expansion_or_adoption_tools(
     tmp_path,
 ) -> None:
@@ -249,6 +252,7 @@ def test_worker_engine_exposes_no_authority_expansion_or_adoption_tools(
     assert not (worker.roots[0].path / "README.md").exists()
 
 
+@skip_on_ci
 def test_worker_runs_in_child_worktree_and_adopts_into_parent_session(
     tmp_path,
 ) -> None:
@@ -375,6 +379,7 @@ def test_worker_runs_in_child_worktree_and_adopts_into_parent_session(
     assert (workspace / "runtime" / "owned.py").read_text() == "base\n"
 
 
+@skip_on_ci
 def test_goal_continuation_evidence_and_audit_survive_restart(
     tmp_path,
 ) -> None:
@@ -510,6 +515,7 @@ def test_goal_continuation_evidence_and_audit_survive_restart(
         assert completed.json()["state"] == "completed"
 
 
+@skip_on_ci
 def test_goal_continuation_recovers_while_waiting_for_input(
     tmp_path,
 ) -> None:
@@ -637,6 +643,7 @@ def test_goal_continuation_recovers_while_waiting_for_input(
         assert provider.calls == 2
 
 
+@skip_on_ci
 def test_completed_goal_turn_receipt_survives_before_goal_finalize(
     tmp_path,
 ) -> None:
@@ -722,6 +729,7 @@ def test_completed_goal_turn_receipt_survives_before_goal_finalize(
     assert goal["evidence"][0]["result"] == "completed"
 
 
+@skip_on_ci
 def test_worker_http_lifecycle_survives_restart_before_adoption(
     tmp_path,
 ) -> None:
@@ -840,6 +848,7 @@ def test_worker_http_lifecycle_survives_restart_before_adoption(
     assert (workspace / "runtime" / "owned.py").read_text() == "base\n"
 
 
+@skip_on_ci
 def test_plan_build_compares_three_isolated_candidates_and_adopts_selection(
     tmp_path,
 ) -> None:

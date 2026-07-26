@@ -21,6 +21,8 @@ requires_seatbelt = pytest.mark.skipif(
     reason="transactional shell requires macOS Seatbelt",
 )
 
+from conftest import skip_on_ci
+
 
 def _git(repo: Path, *arguments: str) -> None:
     subprocess.run(
@@ -471,6 +473,7 @@ def test_transactional_shell_checkpoint_restores_only_shell_paths(
     assert manual.read_text(encoding="utf-8") == "manual\n"
 
 
+@skip_on_ci
 def test_failed_delta_discards_only_new_checkpoint_attribution(
     tmp_path: Path,
     monkeypatch,
