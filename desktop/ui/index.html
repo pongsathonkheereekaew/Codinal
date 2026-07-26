@@ -51,6 +51,23 @@
           </div>
           <div id="context-roots" class="context-roots"
             aria-label="Approved project folders"></div>
+          <div class="project-search-controls" role="search">
+            <label class="search-box">
+              <span aria-hidden="true">⌕</span>
+              <span class="sr-only">Search project files</span>
+              <input id="project-search" type="search"
+                placeholder="Search project" disabled />
+            </label>
+            <select id="project-search-mode" aria-label="Project search mode"
+              disabled>
+              <option value="text">Text</option>
+              <option value="symbol">Symbols</option>
+            </select>
+          </div>
+          <div id="project-search-status" class="project-search-status"
+            aria-live="polite"></div>
+          <div id="project-search-results" class="project-search-results"
+            aria-label="Project search results"></div>
           <div id="project-tree" class="project-tree"
             aria-label="Project files"></div>
         </section>

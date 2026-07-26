@@ -127,9 +127,10 @@ Acceptance evidence:
   switch degradation, and local PDF fallback.
 - [x] Add project file tree, open/reveal actions, explicit file/folder/Git
   context chips, and multi-root management.
-- [ ] Add fast text/symbol search, then a local semantic index respecting
-  ignore files, symlinks, repository boundaries, deletion, resource budgets,
-  and index-schema migration.
+- [x] Add fast text/symbol search respecting ignore files, symlinks,
+  repository boundaries, cancellation, and strict time/file/byte budgets.
+- [ ] Add a local semantic index respecting ignore files, symlinks, repository
+  boundaries, deletion, resource budgets, and index-schema migration.
 - [x] Add durable global session search, in-thread search, fork from message,
   Markdown export, and side conversations.
 - [ ] Add model routing profiles and capability-aware selection without hiding
@@ -221,10 +222,9 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Add plan-to-parallel-build and best-of-N selection on the durable plan and
-   worker foundations.
-2. Add persistent goals with budgets, continuation, and an evidence ledger.
-3. Add fast text/symbol search, then the bounded local semantic index.
+1. Add the bounded local semantic index and relevance/latency corpus.
+2. Add transparent model-routing profiles with capability and cost visibility.
+3. Complete the audited MCP lifecycle UI and restart coverage.
 
 ## Decisions so far
 

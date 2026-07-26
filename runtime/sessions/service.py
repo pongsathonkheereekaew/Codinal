@@ -29,6 +29,7 @@ from typing import (
 
 from runtime.events import Event
 from runtime.policy import Mode
+from runtime.search import RepositorySearchCoordinator
 
 from .models import (
     RootDir,
@@ -207,6 +208,7 @@ class SessionService:
         self._default_model_provider = default_model_provider
         self._default_mode = default_mode
         self._engines: dict[str, SessionEngine] = {}
+        self._project_search = RepositorySearchCoordinator()
 
     def attach_engine(self, session_id: str, engine: SessionEngine) -> None:
         self._engines[session_id] = engine
@@ -1148,6 +1150,42 @@ class SessionService:
             "entries": entries[:limit],
             "truncated": truncated,
         }
+
+    def project_search(
+        self,
+        session_id: str,
+        *,
+        query: str,
+        mode: str = "text",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        roots = []
+        for root in self.roots(session_id):
+            if root.get("available") is False:
+                continue
+            selected = Path(str(root["path"])).expanduser().absolute()
+            identity = self._root_identity(session_id, selected)
+            if identity is None:
+                continue
+            roots.append(
+                {
+                    **root,
+                    "_device": identity[0],
+                    "_inode": identity[1],
+                }
+            )
+        if not roots:
+            return {"ok": False, "error": "project roots unavailable"}
+        return self._project_search.search(
+            session_id,
+            roots,
+            query=query,
+            mode=mode,
+            limit=limit,
+        )
+
+    def cancel_project_search(self, session_id: str) -> bool:
+        return self._project_search.cancel(session_id)
 
     def project_context(
         self,

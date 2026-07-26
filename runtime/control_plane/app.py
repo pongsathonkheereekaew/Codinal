@@ -167,6 +167,17 @@ class SessionControl(Protocol):
         limit: int,
     ) -> dict[str, Any]: ...
 
+    def project_search(
+        self,
+        session_id: str,
+        *,
+        query: str,
+        mode: str,
+        limit: int,
+    ) -> dict[str, Any]: ...
+
+    def cancel_project_search(self, session_id: str) -> bool: ...
+
     def project_context(
         self,
         session_id: str,
@@ -657,6 +668,49 @@ def create_control_plane_app(
                 detail=result.get("error", "project context unavailable"),
             )
         return result
+
+    @app.get("/v1/sessions/{session_id}/project/search")
+    async def search_project(
+        session_id: str,
+        q: str,
+        mode: str = "text",
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if (
+            not 1 <= len(q.encode("utf-8")) <= 256
+            or "\x00" in q
+            or mode not in {"text", "symbol"}
+            or not 1 <= limit <= 100
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid project search",
+            )
+        result = await asyncio.to_thread(
+            services.sessions.project_search,
+            session_id,
+            query=q,
+            mode=mode,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            status = (
+                404
+                if result.get("error") == "project roots unavailable"
+                else 400
+            )
+            raise HTTPException(status_code=status, detail=result["error"])
+        return result
+
+    @app.delete("/v1/sessions/{session_id}/project/search")
+    async def cancel_project_search(
+        session_id: str,
+    ) -> dict[str, bool]:
+        _validate_public_session_id(session_id)
+        return {
+            "ok": services.sessions.cancel_project_search(session_id)
+        }
 
     @app.post("/v1/sessions/{session_id}/project/open")
     async def open_project_path(

@@ -115,6 +115,7 @@ class FakeSessions:
         self.added_roots = []
         self.removed_roots = []
         self.opened_project_paths = []
+        self.cancelled_project_searches = []
         self.export_too_large = False
 
     def list_sessions(self, *, workspace=None):
@@ -153,6 +154,31 @@ class FakeSessions:
             ][:limit],
             "truncated": False,
         }
+
+    def project_search(self, session_id, *, query, mode, limit):
+        return {
+            "ok": True,
+            "query": query,
+            "mode": mode,
+            "count": 1,
+            "matches": [
+                {
+                    "root": "/tmp/project",
+                    "root_label": "project",
+                    "path": "src/main.py",
+                    "line": 7,
+                    "column": 5,
+                    "text": f"{session_id}:{query}",
+                }
+            ][:limit],
+            "files_scanned": 1,
+            "duration_ms": 1,
+            "truncated": False,
+        }
+
+    def cancel_project_search(self, session_id):
+        self.cancelled_project_searches.append(session_id)
+        return True
 
     def add_root(self, session_id, path, *, writable=False):
         self.added_roots.append((session_id, path, writable))
@@ -374,6 +400,29 @@ def test_session_tree_and_root_mutations_are_bounded_and_idle_gated():
     assert sessions.removed_roots == [
         ("session-1", "/tmp/shared")
     ]
+
+
+def test_project_search_route_is_bounded():
+    with make_client()[0] as client:
+        searched = client.get(
+            "/v1/sessions/session-1/project/search",
+            headers=AUTH,
+            params={"q": "GoalCoordinator", "mode": "symbol", "limit": 20},
+        )
+        invalid = client.get(
+            "/v1/sessions/session-1/project/search",
+            headers=AUTH,
+            params={"q": "", "mode": "regex", "limit": 101},
+        )
+        cancelled = client.delete(
+            "/v1/sessions/session-1/project/search",
+            headers=AUTH,
+        )
+
+    assert searched.status_code == 200
+    assert searched.json()["matches"][0]["line"] == 7
+    assert invalid.status_code == 400
+    assert cancelled.json() == {"ok": True}
 
 
 def test_project_context_is_authenticated_and_open_actions_are_idle_gated():

@@ -16,6 +16,9 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="session-dialog"' in html
     assert 'id="context-roots"' in html
     assert 'id="project-tree"' in html
+    assert 'id="project-search"' in html
+    assert 'id="project-search-mode"' in html
+    assert 'id="project-search-results"' in html
     assert 'id="add-context-root"' in html
     assert 'id="thread-search"' in html
     assert 'id="thread-search-next"' in html
@@ -102,6 +105,16 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "state.highlightedMessageIndex = null" in script
     assert "sessionSelectionGeneration" in script
     assert "/tree?" in script
+    assert "/project/search?" in script
+    assert "renderProjectSearchResults" in script
+    assert "cancelProjectSearch" in script
+    scheduled_search = script.split(
+        "function scheduleProjectSearch()",
+        1,
+    )[1].split("async function loadProjectSearch()", 1)[0]
+    assert "cancelProjectSearch()" not in scheduled_search
+    assert "projectSearchController?.abort()" in scheduled_search
+    assert "Search unavailable" in script
     assert "/roots" in script
     assert "loadRootsAndTree" in script
     assert "Root unavailable — reconnect or remove it" in script

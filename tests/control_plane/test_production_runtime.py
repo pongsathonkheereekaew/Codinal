@@ -677,7 +677,10 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
     workspace.mkdir()
     shared.mkdir()
     (shared / "docs").mkdir()
-    (shared / "docs" / "guide.md").write_text("guide")
+    (shared / "docs" / "guide.md").write_text(
+        "class DurableGuide:\n    pass\n",
+        encoding="utf-8",
+    )
     data_dir = tmp_path / "data"
     store = ConversationStore(data_dir)
     store.save(
@@ -714,6 +717,11 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
             headers=AUTH,
             params={"root": str(shared), "path": "docs"},
         )
+        search = client.get(
+            "/v1/sessions/context-session/project/search",
+            headers=AUTH,
+            params={"q": "DurableGuide", "mode": "symbol"},
+        )
 
     assert added.status_code == 200
     assert added.json()["roots"][1]["writable"] is False
@@ -721,6 +729,9 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
     assert tree.json()["entries"] == [
         {"name": "guide.md", "path": "docs/guide.md", "kind": "file"}
     ]
+    assert search.status_code == 200
+    assert search.json()["matches"][0]["path"] == "docs/guide.md"
+    assert search.json()["matches"][0]["kind"] == "class"
 
     restarted = build_services(
         config,
@@ -733,6 +744,11 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
             "/v1/sessions/context-session/roots",
             headers=AUTH,
         )
+        persisted_search = client.get(
+            "/v1/sessions/context-session/project/search",
+            headers=AUTH,
+            params={"q": "DurableGuide", "mode": "text"},
+        )
         removed = client.request(
             "DELETE",
             "/v1/sessions/context-session/roots",
@@ -742,6 +758,8 @@ def test_production_project_roots_and_tree_survive_restart(tmp_path):
 
     assert roots.status_code == 200
     assert roots.json()[1]["path"] == str(shared.resolve())
+    assert persisted_search.status_code == 200
+    assert persisted_search.json()["count"] == 1
     assert removed.status_code == 200
     assert len(removed.json()["roots"]) == 1
 

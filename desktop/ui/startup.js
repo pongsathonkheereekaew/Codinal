@@ -55,6 +55,10 @@ const state = {
   sessionSelectionGeneration: 0,
   roots: [],
   treeGeneration: 0,
+  projectSearchGeneration: 0,
+  projectSearchTimer: null,
+  projectSearchController: null,
+  projectSearchResults: null,
   rootMutationPending: false,
   contextItems: [],
   contextGeneration: 0,
@@ -88,6 +92,8 @@ const el = Object.fromEntries(
     "session-dialog", "session-title-input", "rename-session",
     "pin-session", "archive-session", "delete-session",
     "context-roots", "project-tree", "add-context-root",
+    "project-search", "project-search-mode", "project-search-status",
+    "project-search-results",
     "thread-search", "thread-search-previous", "thread-search-next",
     "export-thread", "return-to-parent",
     "context-items",
@@ -1034,6 +1040,7 @@ async function selectSession(session) {
   const selectionGeneration = ++state.sessionSelectionGeneration;
   const sessionId = session.session_id;
   disconnectSocket();
+  cancelProjectSearch(state.sessionId);
   el["thread-search"].value = "";
   state.threadSearchMatches = [];
   state.threadSearchCursor = -1;
@@ -1056,6 +1063,7 @@ async function selectSession(session) {
   state.goalGeneration += 1;
   state.roots = [];
   state.treeGeneration += 1;
+  invalidateProjectSearch();
   invalidateAttachments();
   invalidateContextItems();
   state.liveAssistant = null;
@@ -1136,6 +1144,7 @@ function switchWorkspace(workspace) {
     return false;
   }
   disconnectSocket();
+  cancelProjectSearch(state.sessionId);
   state.sessionId = `session-${crypto.randomUUID()}`;
   state.parentSessionId = null;
   el["return-to-parent"].classList.add("is-hidden");
@@ -1148,6 +1157,7 @@ function switchWorkspace(workspace) {
   state.threadSearchCursor = -1;
   state.roots = [];
   state.treeGeneration += 1;
+  invalidateProjectSearch();
   invalidateAttachments();
   invalidateContextItems();
   state.liveAssistant = null;
@@ -1248,6 +1258,8 @@ function setBusy(busy) {
   el["add-context-root"].disabled = (
     busy || state.rootMutationPending || !state.roots.length
   );
+  el["project-search"].disabled = busy || !state.roots.length;
+  el["project-search-mode"].disabled = busy || !state.roots.length;
   el["restore-checkpoint"].disabled = (
     busy || !el["checkpoint-select"].value
   );
@@ -1349,6 +1361,7 @@ async function loadRootsAndTree() {
   if (!sessionId) {
     state.roots = [];
     renderContextRoots();
+    renderProjectSearchResults();
     renderProjectTree();
     return;
   }
@@ -1377,6 +1390,10 @@ async function loadRootsAndTree() {
     state.busy || state.rootMutationPending || !roots.length
   );
   renderContextRoots();
+  el["project-search"].disabled = state.busy || !availableRoots.size;
+  el["project-search-mode"].disabled = state.busy || !availableRoots.size;
+  if (el["project-search"].value.trim()) scheduleProjectSearch();
+  else renderProjectSearchResults();
   renderProjectTree(generation);
 }
 
@@ -1416,6 +1433,136 @@ function renderContextRoots() {
       chip.append(remove);
     }
     el["context-roots"].append(chip);
+  }
+}
+
+function invalidateProjectSearch() {
+  window.clearTimeout(state.projectSearchTimer);
+  state.projectSearchController?.abort();
+  state.projectSearchController = null;
+  state.projectSearchGeneration += 1;
+  state.projectSearchResults = null;
+  el["project-search"].value = "";
+  el["project-search-status"].textContent = "";
+  el["project-search-results"].replaceChildren();
+  el["project-search"].disabled = true;
+  el["project-search-mode"].disabled = true;
+}
+
+function cancelProjectSearch(sessionId = state.sessionId) {
+  state.projectSearchController?.abort();
+  state.projectSearchController = null;
+  if (!sessionId) return;
+  api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/project/search`,
+    { method: "DELETE" }
+  ).catch(() => {});
+}
+
+function scheduleProjectSearch() {
+  window.clearTimeout(state.projectSearchTimer);
+  state.projectSearchController?.abort();
+  state.projectSearchController = null;
+  state.projectSearchGeneration += 1;
+  if (!el["project-search"].value.trim()) {
+    state.projectSearchResults = null;
+    renderProjectSearchResults();
+    return;
+  }
+  state.projectSearchTimer = window.setTimeout(() => {
+    loadProjectSearch().catch((error) => {
+      if (error.name !== "AbortError") toast(error.message, "error");
+    });
+  }, 180);
+}
+
+async function loadProjectSearch() {
+  const sessionId = state.sessionId;
+  const query = el["project-search"].value.trim();
+  const mode = el["project-search-mode"].value;
+  if (!sessionId || !query || !state.roots.length) return;
+  const generation = ++state.projectSearchGeneration;
+  state.projectSearchController?.abort();
+  const controller = new AbortController();
+  state.projectSearchController = controller;
+  el["project-search-status"].textContent = "Searching…";
+  const parameters = new URLSearchParams({
+    q: query,
+    mode,
+    limit: "50",
+  });
+  let result;
+  try {
+    result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/project/search?${parameters}`,
+      { signal: controller.signal }
+    );
+  } catch (error) {
+    if (
+      error.name !== "AbortError"
+      && state.sessionId === sessionId
+      && state.projectSearchGeneration === generation
+    ) {
+      state.projectSearchController = null;
+      state.projectSearchResults = null;
+      el["project-search-results"].replaceChildren();
+      el["project-search-status"].textContent = "Search unavailable";
+    }
+    throw error;
+  }
+  if (
+    state.sessionId !== sessionId
+    || state.projectSearchGeneration !== generation
+  ) return;
+  state.projectSearchController = null;
+  state.projectSearchResults = result;
+  renderProjectSearchResults();
+}
+
+function renderProjectSearchResults() {
+  const query = el["project-search"].value.trim();
+  const result = state.projectSearchResults;
+  el["project-search-results"].replaceChildren();
+  if (!query) {
+    el["project-search-status"].textContent = "";
+    return;
+  }
+  if (!result) return;
+  el["project-search-status"].textContent = (
+    `${result.count} match${result.count === 1 ? "" : "es"} · `
+    + `${result.files_scanned} files · ${result.duration_ms} ms`
+    + `${result.truncated ? " · limited" : ""}`
+  );
+  for (const match of result.matches || []) {
+    const root = state.roots.find(
+      (candidate) => candidate.path === match.root
+    );
+    const button = node("button", "project-search-result");
+    button.type = "button";
+    button.disabled = !root;
+    button.setAttribute(
+      "aria-label",
+      `Add ${match.path} to project context`
+    );
+    button.append(
+      node(
+        "strong",
+        "",
+        `${match.root_label}/${match.path}:${match.line}`
+      ),
+      node(
+        "small",
+        "",
+        `${match.kind ? `${match.kind} · ` : ""}${match.text}`
+      )
+    );
+    button.addEventListener("click", () => {
+      if (!root) return;
+      addProjectContext(root, match.path, "file").catch(
+        (error) => toast(error.message, "error")
+      );
+    });
+    el["project-search-results"].append(button);
   }
 }
 
@@ -2878,6 +3025,11 @@ function wireEvents() {
     saveGoalEvidence().catch((error) => toast(error.message, "error"));
   });
   el["session-search"].addEventListener("input", scheduleSessionSearch);
+  el["project-search"].addEventListener("input", scheduleProjectSearch);
+  el["project-search-mode"].addEventListener(
+    "change",
+    scheduleProjectSearch
+  );
   el["thread-search"].addEventListener("input", () => findThreadMatches());
   el["thread-search-previous"].addEventListener(
     "click",
@@ -2929,6 +3081,7 @@ function wireEvents() {
       });
       if (state.sessionId === session.session_id) {
         disconnectSocket();
+        cancelProjectSearch(state.sessionId);
         state.sessionId = null;
         state.workspace = null;
         state.messages = [];
@@ -2936,6 +3089,7 @@ function wireEvents() {
         state.goalGeneration += 1;
         state.roots = [];
         state.treeGeneration += 1;
+        invalidateProjectSearch();
         invalidateAttachments();
         invalidateContextItems();
         el["task-title"].textContent = "New task";
