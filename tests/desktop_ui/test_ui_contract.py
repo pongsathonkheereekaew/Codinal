@@ -38,6 +38,19 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="plan-build-tasks"' in html
     assert 'id="plan-build-models"' in html
     assert 'id="new-task"' in html
+    assert 'id="mcp-server-list"' in html
+    assert 'id="mcp-server-name"' in html
+    assert 'id="mcp-transport"' in html
+    assert 'id="mcp-url"' in html
+    assert 'id="mcp-command"' in html
+    assert 'id="mcp-args"' in html
+    assert 'id="mcp-include-tools"' in html
+    assert 'id="mcp-exclude-tools"' in html
+    assert 'id="connect-mcp-server"' in html
+    assert 'id="artifact-list"' in html
+    assert 'id="artifact-empty"' in html
+    assert 'id="artifact-preview"' in html
+    assert 'id="artifact-preview-path"' in html
     assert 'id="send-turn"' in html
     assert 'id="attach-files"' in html
     assert 'id="attachment-input"' in html
@@ -46,6 +59,12 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="checkpoint-select"' in html
     assert 'id="restore-scope"' in html
     assert 'id="restore-checkpoint"' in html
+    assert 'id="terminal-command"' in html
+    assert 'id="terminal-timeout"' in html
+    assert 'id="terminal-run"' in html
+    assert 'id="terminal-stop"' in html
+    assert 'id="terminal-clear"' in html
+    assert 'id="terminal-output"' in html
     assert 'accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"' in html
     assert 'data-tauri-drag-region' in html
     assert "<style" not in html
@@ -127,6 +146,17 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert 'id="routing-resolution"' in html
     assert 'id="model-catalog"' in html
     assert "/v1/settings/routing" in script
+    assert "/v1/sessions/" in script
+    assert "/terminal/interrupt" in script
+    assert "/mcp/servers" in script
+    assert "/artifacts" in script
+    assert "loadArtifacts" in script
+    assert "renderArtifacts" in script
+    assert "readArtifact" in script
+    assert "revealArtifact" in script
+    assert "renderMcpServers" in script
+    assert "connectMcpServer" in script
+    assert "disconnectMcpServer" in script
     assert "routing_profile" in script
     assert "started.routing.selected_model" in script
     assert "message.source?.routing" in script
@@ -139,7 +169,10 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert ".message-routing" in css
     assert ".message-routing.has-degradation" in css
     assert "58px repeat(4, auto) minmax(0, 1fr) auto" in css
-    assert ".composer-wrap { grid-row: 7; }" in css
+    assert ".terminal-panel { grid-row: 7; }" in css
+    assert "#terminal-stop," in css
+    assert "grid-template-columns: minmax(0, 1fr) 130px auto auto auto;" in css
+    assert ".composer-wrap { grid-row: 8; }" in css
     workspace_css = css.split(".workspace {", 1)[1].split("}", 1)[0]
     assert "min-height: 0" in workspace_css
     assert "overflow: hidden" in workspace_css

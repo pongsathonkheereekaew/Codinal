@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import threading
+from typing import Any
 from types import SimpleNamespace
 
 import httpx
@@ -10,8 +11,14 @@ from runtime.control_plane import create_control_plane_app
 from runtime.events import EventHub
 from runtime.oauth import OAuthCoordinator
 from runtime.secrets import ProviderSecretService
+from runtime.policy import (
+    ApprovalOutcome,
+    ApprovalPersistenceError,
+    Decision,
+)
 from runtime.storage import ExportTooLargeError
 from runtime.turns import ExportBusyError, SessionBusyError
+from runtime.sandbox import InvalidCommandError, SandboxUnavailableError
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
@@ -158,6 +165,114 @@ class FakeTurns:
         return mutation()
 
 
+class FakeShellResult(dict):
+    def __init__(self, values: dict[str, object]):
+        self._values = values
+
+    def as_dict(self) -> dict[str, object]:
+        return dict(self._values)
+
+
+class FakeShell:
+    def __init__(
+        self,
+        result: object | None = None,
+        error: Exception | None = None,
+        interrupted: bool = True,
+    ):
+        self.calls: list[tuple[str, float | None]] = []
+        self.interrupted = interrupted
+        self.interrupt_calls: list[str] = []
+        self.result = (
+            result
+            if result is not None
+            else FakeShellResult({"exit_code": 0, "stdout": "ok"})
+        )
+        self.error = error
+
+    def run(self, command: str, *, timeout_seconds: float | None = None):
+        self.calls.append((command, timeout_seconds))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    def interrupt(self):
+        self.interrupt_calls.append("called")
+        return self.interrupted
+
+
+class FakeLegacyShell:
+    def __init__(self, result: object | None = None, error: Exception | None = None):
+        self.calls: list[tuple[str, float | None]] = []
+        self.result = (
+            result
+            if result is not None
+            else FakeShellResult({"exit_code": 0, "stdout": "ok"})
+        )
+        self.error = error
+
+    def run(self, command: str, *, timeout_seconds: float | None = None):
+        self.calls.append((command, timeout_seconds))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+class FakePermissions:
+    def __init__(self, decision: Decision):
+        self.decision = decision
+        self.allowed = []
+
+    def evaluate(self, tool_name: str, arguments: dict[str, object]):
+        self.last_tool = (tool_name, arguments)
+        return self.decision
+
+    def allow_command_for_session(self, command: str) -> None:
+        self.allowed.append(command)
+
+
+class FakeEngine:
+    def __init__(self, shell: object, permissions: FakePermissions):
+        self._terminal_shell = shell
+        self.permissions = permissions
+
+
+class FakeTerminalSessions:
+    def __init__(self):
+        self._engine: FakeEngine | None = None
+        self.get_engine_calls: list[str] = []
+
+    def set_engine(self, engine: FakeEngine | None) -> None:
+        self._engine = engine
+
+    def get_engine(
+        self,
+        session_id: str,
+        *,
+        workspace: str | None = None,
+        agent: str = "code",
+        mode: str | None = None,
+        model: str | None = None,
+    ):
+        self.get_engine_calls.append(session_id)
+        return self._engine
+
+
+class FakeApprovalBroker:
+    def __init__(self, outcome: ApprovalOutcome | Exception):
+        self.outcome = outcome
+        self.calls = []
+
+    def approver(self, session_id: str):
+        async def _approve(request):
+            self.calls.append((session_id, request))
+            if isinstance(self.outcome, Exception):
+                raise self.outcome
+            return self.outcome
+
+        return _approve
+
+
 class FakeSessions:
     def __init__(self):
         self.renamed = []
@@ -165,6 +280,9 @@ class FakeSessions:
         self.models = []
         self.deleted = []
         self.forked = []
+        self.artifacts_listed = []
+        self.artifact_reads = []
+        self.artifact_reveals = []
         self.side_conversations = []
         self.added_roots = []
         self.removed_roots = []
@@ -318,6 +436,43 @@ class FakeSessions:
     def project_root_identity(self, _session_id, _root):
         return (17, 23)
 
+    def list_artifacts(self, session_id: str) -> list[dict[str, Any]]:
+        self.artifacts_listed.append(session_id)
+        return [
+            {
+                "path": "notes.md",
+                "abs_path": "/tmp/project/notes.md",
+                "name": "notes.md",
+                "kind": "markdown",
+                "size": 24,
+                "modified_at": 1_700_000_000.0,
+            }
+        ]
+
+    def read_artifact(self, session_id: str, path: str) -> dict[str, Any]:
+        self.artifact_reads.append((session_id, path))
+        if path == "notes.md":
+            return {
+                "ok": True,
+                "path": path,
+                "kind": "markdown",
+                "content": "# Notes\n\nalpha\n",
+                "truncated": False,
+            }
+        return {"ok": False, "error": "not found"}
+
+    def reveal_artifact(
+        self,
+        session_id: str,
+        path: str,
+        *,
+        mode: str = "reveal",
+    ) -> dict[str, Any]:
+        self.artifact_reveals.append((session_id, path, mode))
+        if path == "notes.md":
+            return {"ok": True}
+        return {"ok": False, "error": "not found"}
+
     def rename(self, session_id, title):
         self.renamed.append((session_id, title))
         return {"ok": True, "session_id": session_id, "title": title}
@@ -380,9 +535,18 @@ class FakeSessions:
         }
 
 
-def make_client(*, git=None, routing=None):
-    turns = FakeTurns()
-    sessions = FakeSessions()
+def make_client(
+    *,
+    git=None,
+    routing=None,
+    turns: FakeTurns | None = None,
+    sessions: FakeSessions | FakeTerminalSessions | None = None,
+    approvals=None,
+):
+    if turns is None:
+        turns = FakeTurns()
+    if sessions is None:
+        sessions = FakeSessions()
     services = SimpleNamespace(
         events=EventHub(),
         settings=FakeSettings(),
@@ -391,7 +555,7 @@ def make_client(*, git=None, routing=None):
         oauth=OAuthCoordinator(),
         turns=turns,
         sessions=sessions,
-        approvals=None,
+        approvals=approvals,
         mcp=None,
         git=git,
     )
@@ -631,6 +795,54 @@ def test_session_routes_list_messages_and_roots():
         {"role": "user", "content": "session-1"}
     ]
     assert roots.json()[0]["primary"] is True
+
+
+def test_session_artifact_routes_are_authenticated_and_bounded():
+    client, sessions, _turns = make_client()
+    with client:
+        unauthorized = client.get("/v1/sessions/session-1/artifacts")
+        artifacts = client.get(
+            "/v1/sessions/session-1/artifacts",
+            headers=AUTH,
+        )
+        read = client.get(
+            "/v1/sessions/session-1/artifacts/read",
+            headers=AUTH,
+            params={"path": "notes.md"},
+        )
+        read_unknown = client.get(
+            "/v1/sessions/session-1/artifacts/read",
+            headers=AUTH,
+            params={"path": "does-not-exist.md"},
+        )
+        read_escape = client.get(
+            "/v1/sessions/session-1/artifacts/read",
+            headers=AUTH,
+            params={"path": "../secret.md"},
+        )
+        reveal = client.post(
+            "/v1/sessions/session-1/artifacts/reveal",
+            headers=AUTH,
+            json={"path": "notes.md", "mode": "open"},
+        )
+        reveal_bad = client.post(
+            "/v1/sessions/session-1/artifacts/reveal",
+            headers=AUTH,
+            json={"path": "../secret.md", "mode": "open"},
+        )
+
+    assert unauthorized.status_code == 401
+    assert artifacts.status_code == 200
+    assert artifacts.json()[0]["path"] == "notes.md"
+    assert sessions.artifacts_listed == ["session-1"]
+    assert read.status_code == 200
+    assert read.json()["kind"] == "markdown"
+    assert read_unknown.status_code == 404
+    assert read_escape.status_code == 400
+    assert reveal.status_code == 200
+    assert reveal.json() == {"ok": True}
+    assert sessions.artifact_reveals == [("session-1", "notes.md", "open")]
+    assert reveal_bad.status_code == 400
 
 
 def test_session_tree_and_root_mutations_are_bounded_and_idle_gated():
@@ -1120,3 +1332,291 @@ def test_session_delete_refuses_pending_checkpoint_restore():
         "session has a pending checkpoint restore"
     )
     assert sessions.deleted == []
+
+
+def test_terminal_route_executes_auto_allowed_command():
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=FakeShell(result=FakeShellResult(
+                {
+                    "exit_code": 0,
+                    "stdout": "ok",
+                    "stderr": "",
+                    "timed_out": False,
+                }
+            )),
+            permissions=FakePermissions(
+                Decision(True, reason="auto allow")
+            ),
+        )
+    )
+    client, _sessions, turns = make_client(
+        sessions=sessions,
+        turns=FakeTurns(),
+    )
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"command": "git status", "timeout_seconds": 12.5},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["exit_code"] == 0
+    assert sessions.get_engine_calls == ["session-1"]
+
+
+def test_terminal_route_accepts_once_then_denies_new_command():
+    decision = Decision(False, reason="requires approval", needs_user=True)
+    permissions = FakePermissions(decision)
+    shell = FakeShell()
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=shell,
+            permissions=permissions,
+        )
+    )
+    approvals = FakeApprovalBroker(ApprovalOutcome.DENY)
+    client, _sessions, _turns = make_client(
+        sessions=sessions,
+        approvals=approvals,
+    )
+
+    with client:
+        denied = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"command": "pytest -q"},
+        )
+
+    assert denied.status_code == 409
+    assert denied.json() == {"detail": "command denied by user"}
+    assert shell.calls == []
+
+
+def test_terminal_route_respects_approval_outcome_always_command():
+    decision = Decision(False, reason="requires approval", needs_user=True)
+    permissions = FakePermissions(decision)
+    shell = FakeShell(result=FakeShellResult({"exit_code": 0, "stdout": "ok"}))
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=shell,
+            permissions=permissions,
+        )
+    )
+    approvals = FakeApprovalBroker(ApprovalOutcome.ALWAYS_COMMAND)
+    client, _sessions, _turns = make_client(
+        sessions=sessions,
+        approvals=approvals,
+    )
+
+    with client:
+        allowed = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"command": "pytest -q"},
+        )
+
+    assert allowed.status_code == 200
+    assert permissions.allowed == ["pytest -q"]
+    assert shell.calls == [("pytest -q", None)]
+
+
+def test_terminal_route_rejects_busy_session_or_invalid_request():
+    turns = FakeTurns()
+    turns.active.add("session-1")
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=FakeShell(),
+            permissions=FakePermissions(Decision(True)),
+        )
+    )
+    client, _sessions, _ = make_client(
+        sessions=sessions,
+        turns=turns,
+    )
+    with client:
+        blocked = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"command": "echo hi"},
+        )
+
+    assert blocked.status_code == 409
+    assert blocked.json() == {
+        "detail": "session already has an active turn"
+    }
+
+    turns.active.clear()
+    with client:
+        malformed = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"timeout_seconds": 1},
+        )
+
+    assert malformed.status_code == 400
+    assert malformed.json() == {"detail": "invalid terminal payload"}
+
+
+def test_terminal_route_maps_shell_and_approval_errors():
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=FakeShell(error=InvalidCommandError("bad")),
+            permissions=FakePermissions(Decision(True)),
+        )
+    )
+    client, _sessions, _turns = make_client(sessions=sessions)
+    with client:
+        invalid = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"command": "bad syntax"},
+        )
+    assert invalid.status_code == 400
+
+    sessions.set_engine(
+        FakeEngine(
+            shell=FakeShell(error=SandboxUnavailableError("missing")),
+            permissions=FakePermissions(Decision(True)),
+        )
+    )
+    with client:
+        unavailable = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"command": "echo ready"},
+        )
+    assert unavailable.status_code == 503
+
+    sessions.set_engine(
+        FakeEngine(
+            shell=FakeShell(),
+            permissions=FakePermissions(
+                Decision(False, reason="x", needs_user=True)
+            ),
+        )
+    )
+    approvals = FakeApprovalBroker(
+        ApprovalPersistenceError("approval write failed"),
+    )
+    client, _sessions, _turns = make_client(
+        sessions=sessions,
+        approvals=approvals,
+    )
+    with client:
+        persistence = client.post(
+            "/v1/sessions/session-1/terminal/run",
+            headers=AUTH,
+            json={"command": "echo ready"},
+        )
+
+    assert persistence.status_code == 503
+    assert persistence.json() == {
+        "detail": "approval decision could not be saved"
+    }
+
+
+def test_terminal_interrupt_route_stops_active_terminal_command():
+    shell = FakeShell(interrupted=True)
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=shell,
+            permissions=FakePermissions(Decision(True)),
+        )
+    )
+    client, _sessions, _turns = make_client(sessions=sessions)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/terminal/interrupt",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "session_id": "session-1",
+    }
+    assert shell.interrupt_calls == ["called"]
+
+
+def test_terminal_interrupt_route_reports_no_running_command():
+    shell = FakeShell(interrupted=False)
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=shell,
+            permissions=FakePermissions(Decision(True)),
+        )
+    )
+    client, _sessions, _turns = make_client(sessions=sessions)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/terminal/interrupt",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": False,
+        "session_id": "session-1",
+    }
+
+
+def test_terminal_interrupt_route_reports_unavailable_when_no_interrupt_hook():
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(
+        FakeEngine(
+            shell=FakeLegacyShell(),
+            permissions=FakePermissions(Decision(True)),
+        )
+    )
+    client, _sessions, _turns = make_client(sessions=sessions)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/terminal/interrupt",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "terminal interrupt unavailable"
+
+
+def test_terminal_interrupt_route_404s_when_session_engine_is_missing():
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(None)
+    client, _sessions, _turns = make_client(sessions=sessions)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/missing-session/terminal/interrupt",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session not found"
+
+
+def test_terminal_route_404s_when_session_engine_is_missing():
+    sessions = FakeTerminalSessions()
+    sessions.set_engine(None)
+    client, _sessions, _turns = make_client(sessions=sessions)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/missing-session/terminal/run",
+            headers=AUTH,
+            json={"command": "echo hi"},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "session not found"

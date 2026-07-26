@@ -3508,3 +3508,131 @@ def test_explicit_mcp_connect_registers_policy_gated_session_tool(
     ]
     assert second_events[-1]["type"] == "turn_end"
     assert manager.closed is True
+
+
+def test_mcp_server_lifecycle_routes_expose_list_and_disconnect(
+    tmp_path,
+):
+    class FakeMCPManager:
+        def __init__(self):
+            self.connected = []
+            self.disconnected = []
+            self.listed: list[list[str]] = []
+            self.called = []
+            self.closed = False
+
+        async def connect(self, server, *, approved):
+            self.connected.append((server.name, approved))
+            return [
+                SimpleNamespace(
+                    name="search",
+                    description="Search remote docs",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"}
+                        },
+                        "required": ["query"],
+                    },
+                )
+            ]
+
+        async def call(self, _server, _tool, _arguments):
+            self.called.append((_server, _tool, _arguments))
+            return {"matches": ["policy.md"]}
+
+        async def disconnect(self, server_name):
+            self.disconnected.append(server_name)
+            return True
+
+        async def list(self):
+            self.listed.append(list(self.connected))
+            return sorted({name for name, approved in self.connected})
+
+        async def aclose(self):
+            self.closed = True
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    from runtime.sessions import SessionRecord, TurnCheckpoint
+
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config, mcp_manager=FakeMCPManager())
+    services.sessions._store.save(
+        SessionRecord(
+            session_id="session-lifecycle",
+            workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            turn_checkpoint=TurnCheckpoint(),
+        )
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        list_initial = client.get(
+            "/v1/sessions/session-lifecycle/mcp/servers",
+            headers=AUTH,
+        )
+        assert list_initial.status_code == 200
+        assert list_initial.json() == []
+
+        connected = client.post(
+            "/v1/sessions/session-lifecycle/mcp/connect",
+            headers=AUTH,
+            json={
+                "server": {
+                    "name": "docs",
+                    "transport": "http",
+                    "url": "https://mcp.example.com/v1",
+                }
+            },
+        )
+        assert connected.status_code == 200
+
+        listed = client.get(
+            "/v1/sessions/session-lifecycle/mcp/servers",
+            headers=AUTH,
+        )
+        rows = listed.json()
+        assert listed.status_code == 200
+        assert rows == [
+            {
+                "name": "docs",
+                "transport": "http",
+                "url": "https://mcp.example.com/v1",
+                "command": None,
+                "cwd": None,
+                "tools": [connected.json()["tools"][0]],
+                "include_tools": None,
+                "exclude_tools": [],
+            }
+        ]
+
+        removed = client.delete(
+            "/v1/sessions/session-lifecycle/mcp/servers/docs",
+            headers=AUTH,
+        )
+        assert removed.status_code == 200
+        assert removed.json()["server"] == "docs"
+        assert removed.json()["tools"] == [connected.json()["tools"][0]]
+        assert services.mcp is not None
+        assert services.mcp._manager.disconnected == ["docs"]
+
+        final = client.get(
+            "/v1/sessions/session-lifecycle/mcp/servers",
+            headers=AUTH,
+        )
+        assert final.json() == []
+
+        missing = client.delete(
+            "/v1/sessions/session-lifecycle/mcp/servers/docs",
+            headers=AUTH,
+        )
+        assert missing.status_code == 404

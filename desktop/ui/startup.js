@@ -78,6 +78,11 @@ const state = {
   managedGoal: null,
   routingResolution: null,
   routingPending: false,
+  terminalRunning: false,
+  mcpServers: [],
+  mcpLoadGeneration: 0,
+  artifacts: [],
+  artifactLoadGeneration: 0,
 };
 
 const el = Object.fromEntries(
@@ -91,11 +96,19 @@ const el = Object.fromEntries(
     "workspace-label", "agent-mode", "routing-profile", "model-select",
     "routing-resolution", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
+    "terminal-panel", "terminal-status", "terminal-command",
+    "terminal-timeout", "terminal-run", "terminal-clear", "terminal-output",
+    "terminal-stop",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
     "checkpoint-select", "restore-scope", "restore-checkpoint",
     "model-summary", "model-catalog", "update-status", "check-update",
     "install-update",
     "provider-list", "toast-region",
+    "mcp-server-list", "mcp-server-name", "mcp-transport", "mcp-url",
+    "mcp-command", "mcp-args", "mcp-cwd", "mcp-include-tools",
+    "mcp-exclude-tools", "connect-mcp-server",
+    "artifact-list", "artifact-empty", "artifact-preview",
+    "artifact-preview-path",
     "session-dialog", "session-title-input", "rename-session",
     "pin-session", "archive-session", "delete-session",
     "context-roots", "project-tree", "add-context-root",
@@ -273,6 +286,359 @@ function renderRoutingResolution() {
     : profile === "manual"
       ? `Manual → ${model || "selected model"}`
       : `${profile} routing · exact provider, model, cost, and fallback appear here`;
+}
+
+function parseCommaList(value) {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function validateName(name) {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(name);
+}
+
+function renderMcpServers() {
+  el["mcp-server-list"].replaceChildren();
+  if (!state.sessionId) {
+    el["mcp-server-list"].append(
+      node("p", "settings-copy", "Open a task to view MCP servers.")
+    );
+    return;
+  }
+  if (!state.mcpServers.length) {
+    el["mcp-server-list"].append(
+      node("p", "settings-copy", "No MCP servers connected for this task.")
+    );
+    return;
+  }
+  for (const server of state.mcpServers) {
+    const row = node("div", "mcp-server-row");
+    const tools = server.tools || [];
+    const included = (server.include_tools || []).join(", ") || "all";
+    const excluded = (server.exclude_tools || []).join(", ") || "none";
+    const details = node("details", "mcp-server-details");
+    const summary = node("summary", "", "Tools");
+    const toolList = node("div", "mcp-tool-list");
+    if (tools.length) {
+      for (const tool of tools) {
+        toolList.append(node("span", "mcp-tool", tool));
+      }
+    } else {
+      toolList.append(node("span", "mcp-tool", "No tools discovered"));
+    }
+    details.append(summary, toolList);
+    row.append(
+      node("strong", "", server.name),
+      node(
+        "small",
+        "mcp-server-meta",
+        `${server.transport}${server.transport === "http"
+          ? ` · ${server.url || ""}`
+          : ` · ${server.command || ""}`}`
+      ),
+      node("small", "mcp-server-meta", `${tools.length} tools`),
+      node("small", "mcp-server-meta", `Includes: ${included}`),
+      node("small", "mcp-server-meta", `Excludes: ${excluded}`),
+      details,
+      node(
+        "div",
+        "mcp-server-actions",
+        node(
+          "button",
+          "",
+          "Disconnect"
+        )
+      )
+    );
+    const button = row.querySelector(".mcp-server-actions > button");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      disconnectMcpServer(server.name).catch((error) => {
+        toast(error.message, "error");
+      });
+    });
+    el["mcp-server-list"].append(row);
+  }
+}
+
+function toggleMcpConnectorFields() {
+  const transport = el["mcp-transport"].value;
+  el["mcp-url"].parentElement.hidden = transport !== "http";
+  el["mcp-command"].parentElement.hidden = transport !== "stdio";
+  el["mcp-args"].parentElement.hidden = transport !== "stdio";
+  el["mcp-cwd"].parentElement.hidden = transport !== "stdio";
+}
+
+function normalizeMcpPayload() {
+  const name = el["mcp-server-name"].value.trim();
+  const transport = el["mcp-transport"].value;
+  const includeTools = parseCommaList(el["mcp-include-tools"].value);
+  const excludeTools = parseCommaList(el["mcp-exclude-tools"].value);
+  if (!name) {
+    throw new Error("MCP server name is required");
+  }
+  if (!validateName(name)) {
+    throw new Error("Server name must be 1-64 chars: letters, numbers, _, -");
+  }
+  if (transport !== "http" && transport !== "stdio") {
+    throw new Error("Transport must be http or stdio");
+  }
+  const server = {
+    name,
+    transport,
+    ...(includeTools.length ? { include_tools: includeTools } : {}),
+    ...(excludeTools.length ? { exclude_tools: excludeTools } : {}),
+  };
+  if (transport === "http") {
+    const url = el["mcp-url"].value.trim();
+    if (!url) {
+      throw new Error("HTTP MCP requires URL");
+    }
+    if (!/^https?:\/\/[^\s/$.?#].[^\s]*$/.test(url)) {
+      throw new Error("Invalid MCP URL");
+    }
+    server.url = url;
+    return server;
+  }
+  const command = el["mcp-command"].value.trim();
+  if (!command) {
+    throw new Error("stdio MCP requires command");
+  }
+  if (/\s/.test(command)) {
+    throw new Error("std io command must not contain spaces");
+  }
+  const args = parseCommaList(el["mcp-args"].value);
+  server.command = command;
+  server.args = args;
+  const cwd = el["mcp-cwd"].value.trim();
+  if (cwd) server.cwd = cwd;
+  return server;
+}
+
+async function loadMcpServers(sessionId = state.sessionId) {
+  if (!sessionId) {
+    state.mcpServers = [];
+    renderMcpServers();
+    return;
+  }
+  const generation = ++state.mcpLoadGeneration;
+  try {
+    const servers = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/mcp/servers`
+    );
+    if (sessionId !== state.sessionId || generation !== state.mcpLoadGeneration) return;
+    state.mcpServers = servers;
+    renderMcpServers();
+  } catch (error) {
+    if (sessionId === state.sessionId && generation === state.mcpLoadGeneration) {
+      state.mcpServers = [];
+      renderMcpServers();
+      throw error;
+    }
+  }
+}
+
+function formatArtifactSize(size) {
+  const units = ["B", "KB", "MB", "GB"];
+  let value = Number(size);
+  let unit = 0;
+  while (Number.isFinite(value) && value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  if (!Number.isFinite(value)) return "unknown size";
+  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function renderArtifacts() {
+  el["artifact-list"].replaceChildren();
+  el["artifact-preview"].textContent = "";
+  el["artifact-preview-path"].textContent = "";
+  if (!state.sessionId) {
+    el["artifact-empty"].textContent = "Open settings with an active task to load artifacts.";
+    return;
+  }
+  if (!state.artifacts.length) {
+    el["artifact-empty"].textContent = "No artifacts discovered for this task.";
+    return;
+  }
+  el["artifact-empty"].textContent = "";
+  for (const artifact of state.artifacts) {
+    const row = node("div", "artifact-row");
+    const kind = artifact.kind || "file";
+    const size = artifact.size;
+    const modified = artifact.modified_at
+      ? formatAge(artifact.modified_at * 1000)
+      : "";
+    const path = artifact.path || "";
+    const previewButton = node("button", "", "Preview");
+    const openButton = node("button", "", "Open");
+    const revealButton = node("button", "", "Reveal");
+    const actions = node("div", "artifact-actions");
+    previewButton.type = "button";
+    openButton.type = "button";
+    revealButton.type = "button";
+    previewButton.addEventListener("click", () => {
+      readArtifact(path).catch((error) => {
+        toast(error.message, "error");
+      });
+    });
+    openButton.addEventListener("click", () => {
+      revealArtifact(path, "open").catch((error) => {
+        toast(error.message, "error");
+      });
+    });
+    revealButton.addEventListener("click", () => {
+      revealArtifact(path, "reveal").catch((error) => {
+        toast(error.message, "error");
+      });
+    });
+    actions.append(previewButton, openButton, revealButton);
+    row.append(
+      node("strong", "", artifact.name || path || "artifact"),
+      node(
+        "small",
+        "artifact-meta",
+        `${kind} · ${formatArtifactSize(size)}`
+          + `${modified ? ` · ${modified}` : ""}`
+      ),
+      node("small", "artifact-meta", path),
+      actions
+    );
+    el["artifact-list"].append(row);
+  }
+}
+
+function clearArtifactPreview() {
+  el["artifact-preview"].textContent = "";
+  el["artifact-preview-path"].textContent = "";
+}
+
+async function loadArtifacts(sessionId = state.sessionId) {
+  if (!sessionId) {
+    state.artifacts = [];
+    renderArtifacts();
+    return;
+  }
+  const generation = ++state.artifactLoadGeneration;
+  try {
+    const artifacts = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`
+    );
+    if (sessionId !== state.sessionId || generation !== state.artifactLoadGeneration) {
+      return;
+    }
+    state.artifacts = artifacts;
+    renderArtifacts();
+  } catch (error) {
+    if (
+      sessionId === state.sessionId
+      && generation === state.artifactLoadGeneration
+    ) {
+      state.artifacts = [];
+      renderArtifacts();
+      throw error;
+    }
+  }
+}
+
+async function readArtifact(path) {
+  if (!state.sessionId || state.busy) return;
+  const query = new URLSearchParams({ path }).toString();
+  const result = await api(
+    `/v1/sessions/${encodeURIComponent(state.sessionId)}/artifacts/read?${query}`
+  );
+  el["artifact-preview-path"].textContent = `${result.path} (${result.kind})`;
+  if (result.kind === "image" || result.kind === "pdf" || result.kind === "sheet") {
+    if (result.data_url) {
+      el["artifact-preview"].textContent = (
+        result.data_url.startsWith("data:")
+          ? "(binary artifact, opening in preview is not yet supported)"
+          : result.data_url
+      );
+      return;
+    }
+    el["artifact-preview"].textContent = "(binary artifact available, open to inspect)";
+    return;
+  }
+  if (result.kind === "office") {
+    el["artifact-preview"].textContent = "(office artifact available, open to inspect)";
+    return;
+  }
+  if (typeof result.content !== "string") {
+    el["artifact-preview"].textContent = "(artifact content unavailable)";
+    return;
+  }
+  el["artifact-preview"].textContent = result.truncated
+    ? `${result.content}\n[truncated for preview]`
+    : result.content;
+}
+
+async function revealArtifact(path, mode) {
+  if (!state.sessionId || state.busy) return;
+  await api(
+    `/v1/sessions/${encodeURIComponent(state.sessionId)}/artifacts/reveal`,
+    {
+      method: "POST",
+      body: JSON.stringify({ path, mode }),
+    }
+  );
+  if (mode === "open") {
+    el["artifact-preview"].textContent = `Opened ${path} in default app.`;
+  } else {
+    el["artifact-preview"].textContent = `Revealed ${path} in Finder.`;
+  }
+  el["artifact-preview-path"].textContent = path;
+}
+
+async function connectMcpServer() {
+  const sessionId = state.sessionId;
+  if (!sessionId) {
+    toast("Select a task before connecting MCP");
+    return;
+  }
+  let server;
+  try {
+    server = normalizeMcpPayload();
+  } catch (error) {
+    toast(error.message, "error");
+    return;
+  }
+  try {
+    el["connect-mcp-server"].disabled = true;
+    await api(`/v1/sessions/${encodeURIComponent(sessionId)}/mcp/connect`, {
+      method: "POST",
+      body: JSON.stringify({ server }),
+    });
+    await loadMcpServers(sessionId);
+    el["mcp-server-name"].value = "";
+    el["mcp-url"].value = "";
+    el["mcp-command"].value = "";
+    el["mcp-args"].value = "";
+    el["mcp-cwd"].value = "";
+    el["mcp-include-tools"].value = "";
+    el["mcp-exclude-tools"].value = "";
+    toast(`Connected ${server.name}`);
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    el["connect-mcp-server"].disabled = false;
+  }
+}
+
+async function disconnectMcpServer(name) {
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
+  if (!window.confirm(`Disconnect MCP server ${name}?`)) return;
+  await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/mcp/servers/`
+      + encodeURIComponent(name),
+    { method: "DELETE" }
+  );
+  await loadMcpServers(sessionId);
+  toast(`Disconnected ${name}`);
 }
 
 async function loadSessions() {
@@ -1133,6 +1499,10 @@ async function selectSession(session) {
   state.planBuilds = [];
   state.planBuildGeneration += 1;
   state.candidateDiffs.clear();
+  state.mcpServers = [];
+  state.mcpLoadGeneration += 1;
+  state.artifacts = [];
+  state.artifactLoadGeneration += 1;
   state.goals = [];
   state.goalGeneration += 1;
   state.roots = [];
@@ -1144,9 +1514,13 @@ async function selectSession(session) {
   state.activities.clear();
   state.routingResolution = null;
   el["task-title"].textContent = session.title || "New task";
+  el["terminal-command"].value = "";
+  clearTerminalOutput();
+  clearArtifactPreview();
   syncAgentMode(session);
   selectModel(session.model);
   updateWorkspaceLabel();
+  setTerminalBusy(false);
   renderSessions();
   renderConversation();
   renderCheckpoints();
@@ -1177,6 +1551,8 @@ async function selectSession(session) {
       loadPlans(),
       loadPlanBuilds(),
       loadGoals(),
+      loadMcpServers(sessionId),
+      loadArtifacts(sessionId),
     ]);
     if (
       state.sessionId !== sessionId
@@ -1246,10 +1622,18 @@ function switchWorkspace(workspace) {
   state.planBuilds = [];
   state.planBuildGeneration += 1;
   state.candidateDiffs.clear();
+  state.mcpServers = [];
+  state.mcpLoadGeneration += 1;
+  state.artifacts = [];
+  state.artifactLoadGeneration += 1;
   state.goals = [];
   state.goalGeneration += 1;
   el["task-title"].textContent = "New task";
+  el["terminal-command"].value = "";
+  clearTerminalOutput();
+  clearArtifactPreview();
   updateWorkspaceLabel();
+  setTerminalBusy(false);
   renderSessions();
   renderConversation();
   renderDiff();
@@ -1332,6 +1716,15 @@ function setBusy(busy) {
   el["agent-mode"].disabled = busy;
   el["new-task"].disabled = busy;
   el["choose-workspace"].disabled = busy;
+  el["terminal-run"].disabled = (
+    busy || state.terminalRunning || !state.workspace || !state.sessionId
+  );
+  el["terminal-stop"].disabled = (
+    busy || !state.terminalRunning || !state.workspace || !state.sessionId
+  );
+  el["terminal-clear"].disabled = busy || state.terminalRunning;
+  el["terminal-command"].disabled = busy;
+  el["terminal-timeout"].disabled = busy;
   el["add-context-root"].disabled = (
     busy || state.rootMutationPending || !state.roots.length
   );
@@ -2816,6 +3209,130 @@ async function stopTurn() {
   }
 }
 
+function setTerminalBusy(running) {
+  state.terminalRunning = running;
+  el["terminal-run"].disabled = (
+    running
+    || state.busy
+    || !state.workspace
+    || !state.sessionId
+  );
+  el["terminal-stop"].disabled = (
+    !running || state.busy || !state.workspace || !state.sessionId
+  );
+  el["terminal-clear"].disabled = running;
+  el["terminal-command"].disabled = running || state.busy;
+  el["terminal-timeout"].disabled = running || state.busy;
+  el["terminal-status"].textContent = running
+    ? "Running…"
+    : "Ready";
+}
+
+function updateTerminalStatus(status) {
+  el["terminal-status"].textContent = status;
+}
+
+function formatTerminalResult(result, command) {
+  const lines = [`$ ${command}`];
+  const exitCode = result.exit_code;
+  if (exitCode !== undefined) {
+    lines.push(`exit_code: ${exitCode}`);
+  }
+  if (typeof result.timed_out === "boolean") {
+    lines.push(`timed_out: ${result.timed_out}`);
+  }
+  if (typeof result.interrupted === "boolean") {
+    lines.push(`interrupted: ${result.interrupted}`);
+  }
+  if (typeof result.output_truncated === "boolean") {
+    lines.push(`output_truncated: ${result.output_truncated}`);
+  }
+  if (result.stdout) {
+    lines.push("");
+    lines.push("stdout:");
+    lines.push(String(result.stdout));
+  }
+  if (result.stderr) {
+    lines.push("");
+    lines.push("stderr:");
+    lines.push(String(result.stderr));
+  }
+  if (result.stdout == null && result.stderr == null) {
+    lines.push("no output");
+  }
+  return lines.join("\n");
+}
+
+async function runTerminalCommand() {
+  if (state.terminalRunning || state.busy || !state.sessionId || !state.workspace) return;
+  const command = el["terminal-command"].value.trim();
+  const timeoutInput = el["terminal-timeout"].value.trim();
+  const timeoutSeconds = timeoutInput ? Number(timeoutInput) : null;
+  if (state.sessionId === null || !command) {
+    toast("Enter a command to run", "error");
+    return;
+  }
+  if (
+    timeoutInput && (
+      !Number.isFinite(timeoutSeconds)
+      || timeoutSeconds <= 0
+      || timeoutSeconds > 600
+    )
+  ) {
+    toast("Timeout must be 1 to 600 seconds", "error");
+    return;
+  }
+  setTerminalBusy(true);
+  updateTerminalStatus("Running");
+  try {
+    const payload = {
+      command,
+      ...(timeoutSeconds ? { timeout_seconds: timeoutSeconds } : {}),
+    };
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/terminal/run`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }
+    );
+    el["terminal-output"].textContent = formatTerminalResult(result, command);
+    updateTerminalStatus(`Exit ${result.exit_code ?? "n/a"}`);
+  } catch (error) {
+    updateTerminalStatus("Failed");
+    el["terminal-output"].textContent = `Error running: ${error.message}`;
+    toast(error.message, "error");
+  } finally {
+    setTerminalBusy(false);
+  }
+}
+
+async function stopTerminalCommand() {
+  if (!state.terminalRunning || !state.sessionId) return;
+  el["terminal-stop"].disabled = true;
+  updateTerminalStatus("Stopping");
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/terminal/interrupt`,
+      { method: "POST" }
+    );
+    if (!result.ok) {
+      updateTerminalStatus("No active command");
+      return;
+    }
+  } catch (error) {
+    updateTerminalStatus("Failed");
+    toast(error.message, "error");
+    return;
+  }
+  updateTerminalStatus("Stop requested");
+}
+
+function clearTerminalOutput() {
+  el["terminal-output"].textContent = "";
+  updateTerminalStatus("Ready");
+}
+
 function updateComposer() {
   const hasInput = Boolean(el.prompt.value.trim() || state.attachments.length);
   el["send-turn"].disabled = !state.online || !state.workspace
@@ -3128,8 +3645,13 @@ function toggleTheme() {
 async function openSettings() {
   el["settings-dialog"].showModal();
   try {
+    toggleMcpConnectorFields();
     await loadSettings();
-    await renderProviders();
+    await Promise.all([
+      renderProviders(),
+      loadMcpServers(),
+      loadArtifacts(),
+    ]);
   } catch (error) {
     toast(error.message, "error");
   }
@@ -3298,6 +3820,10 @@ function wireEvents() {
   });
   el["theme-toggle"].addEventListener("click", toggleTheme);
   el["open-settings"].addEventListener("click", openSettings);
+  el["mcp-transport"].addEventListener("change", toggleMcpConnectorFields);
+  el["connect-mcp-server"].addEventListener("click", () => {
+    connectMcpServer().catch((error) => toast(error.message, "error"));
+  });
   el["check-update"].addEventListener("click", checkForUpdate);
   el["install-update"].addEventListener("click", installUpdate);
   el["rename-session"].addEventListener("click", async () => {
@@ -3336,6 +3862,10 @@ function wireEvents() {
         state.sessionId = null;
         state.workspace = null;
         state.messages = [];
+        state.mcpServers = [];
+        state.artifacts = [];
+        state.mcpLoadGeneration += 1;
+        state.artifactLoadGeneration += 1;
         state.goals = [];
         state.goalGeneration += 1;
         state.roots = [];
@@ -3343,6 +3873,7 @@ function wireEvents() {
         invalidateProjectSearch();
         invalidateAttachments();
         invalidateContextItems();
+        clearArtifactPreview();
         el["task-title"].textContent = "New task";
         updateWorkspaceLabel();
         renderConversation();
@@ -3420,6 +3951,25 @@ function wireEvents() {
   el["attach-files"].addEventListener("click", () => {
     el["attachment-input"].click();
   });
+  el["terminal-run"].addEventListener("click", () => {
+    runTerminalCommand().catch((error) => toast(error.message, "error"));
+  });
+  el["terminal-stop"].addEventListener("click", () => {
+    stopTerminalCommand().catch((error) => toast(error.message, "error"));
+  });
+  el["terminal-clear"].addEventListener("click", clearTerminalOutput);
+  el["terminal-command"].addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.metaKey) {
+      event.preventDefault();
+      runTerminalCommand().catch((error) => toast(error.message, "error"));
+      return;
+    }
+    if (event.key === "Escape" && state.terminalRunning) {
+      event.preventDefault();
+      stopTerminalCommand().catch((error) => toast(error.message, "error"));
+      return;
+    }
+  });
   el["attachment-input"].addEventListener("change", (event) => {
     queueAttachments(event.target.files);
   });
@@ -3495,6 +4045,7 @@ async function boot() {
   try {
     await connect();
     await Promise.all([loadSettings(), loadSessions()]);
+    setTerminalBusy(false);
     el.startup.classList.add("is-hidden");
     el.app.classList.remove("is-hidden");
     const first = state.sessions.find((session) => !session.archived);

@@ -301,14 +301,15 @@ class SandboxedShell:
             output_truncated=capture.truncated,
         )
 
-    def interrupt(self) -> None:
+    def interrupt(self) -> bool:
         """Kill the active command and all descendants, if any."""
         with self._active_lock:
             process = self._active
             self._interrupted = True
             if process is None:
-                return
+                return False
             self._terminate(process)
+            return True
 
     def begin_turn(self) -> None:
         with self._active_lock:

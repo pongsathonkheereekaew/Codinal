@@ -121,6 +121,30 @@ def test_runtime_secrets_reject_unknown_bootstrap_channel(
         )
 
 
+def test_runtime_secrets_marked_channel_is_one_shot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    stream = io.StringIO(
+        '{"sync_token":"' + SECRET_SYNC_TOKEN + '",'
+        '"profiles":{"provider:openai":{"api_key":"secret-value"}}}'
+    )
+    monkeypatch.setenv("CODINAL_SECRET_BOOTSTRAP", "stdin-v1")
+
+    first = load_runtime_secrets(stream)
+    assert first.get("provider:openai") == {"api_key": "secret-value"}
+    assert first.authorize_sync(SECRET_SYNC_TOKEN)
+    assert "CODINAL_SECRET_BOOTSTRAP" not in os.environ
+
+    second = load_runtime_secrets(io.StringIO("unexpected-secret-bytes"))
+    assert second.status() == [
+        {"provider": "anthropic", "configured": False},
+        {"provider": "gemini", "configured": False},
+        {"provider": "openai", "configured": False},
+    ]
+
+
 def test_standalone_turn_service_rejects_missing_session_without_workspace(
     tmp_path,
 ) -> None:

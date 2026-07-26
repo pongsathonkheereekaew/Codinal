@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any, Protocol
@@ -32,6 +33,8 @@ from runtime.control_plane.input_validation import (
     valid_turn_input,
 )
 from runtime.policy import ApprovalOutcome, ApprovalPersistenceError
+from runtime.policy import PermissionRequest
+from runtime.sandbox import InvalidCommandError, SandboxUnavailableError
 from runtime.path_scope import scopes_overlap
 from runtime.sessions.context import make_project_context_item
 from runtime.storage import ExportTooLargeError
@@ -63,12 +66,17 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:1420",
     "http://127.0.0.1:1420",
 )
+MAX_ARTIFACT_BODY_BYTES = 1024
+MAX_ARTIFACT_PATH_BYTES = 4096
 MAX_CHECKPOINT_RESTORE_BODY_BYTES = 1024
 MAX_INTERACTION_BODY_BYTES = 128 * 1024
 MAX_SESSION_FORK_BODY_BYTES = 1024
 MAX_ROOT_BODY_BYTES = 8 * 1024
 MAX_WORKER_BODY_BYTES = 64 * 1024
 MAX_PLAN_BUILD_BODY_BYTES = 256 * 1024
+MAX_TERMINAL_COMMAND_BYTES = 32 * 1024
+MAX_TERMINAL_TIMEOUT_SECONDS = 600.0
+MCP_SERVER_NAME = r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}"
 
 
 class SettingsView(Protocol):
@@ -156,6 +164,18 @@ class SessionControl(Protocol):
     def export(self) -> dict[str, Any]: ...
 
     def export_markdown(self, session_id: str) -> dict[str, Any]: ...
+
+    def list_artifacts(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def read_artifact(self, session_id: str, path: str) -> dict[str, Any]: ...
+
+    def reveal_artifact(
+        self,
+        session_id: str,
+        path: str,
+        *,
+        mode: str = "reveal",
+    ) -> dict[str, Any]: ...
 
     def roots(self, session_id: str) -> list[dict[str, Any]]: ...
 
@@ -257,6 +277,16 @@ class SessionControl(Protocol):
         message_index: int,
     ) -> dict[str, Any]: ...
 
+    def get_engine(
+        self,
+        session_id: str,
+        *,
+        workspace: str | None = None,
+        agent: str = "code",
+        mode: str | None = None,
+        model: str | None = None,
+    ) -> object | None: ...
+
     def restore_conversation(
         self,
         session_id: str,
@@ -272,6 +302,14 @@ class MCPControl(Protocol):
         server: MCPServerDef,
         *,
         approved: bool,
+    ) -> dict[str, Any]: ...
+
+    def list_connected(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    async def disconnect(
+        self,
+        session_id: str,
+        name: str,
     ) -> dict[str, Any]: ...
 
     async def aclose(self) -> None: ...
@@ -483,10 +521,18 @@ def create_control_plane_app(
                     git.close()
                 approvals = getattr(services, "approvals", None)
                 if approvals is not None:
-                    approvals.close()
+                    close_approvals = getattr(approvals, "close", None)
+                    if close_approvals is not None:
+                        awaitable = close_approvals()
+                        if hasattr(awaitable, "__await__"):
+                            await awaitable
                 interactions = getattr(services, "interactions", None)
                 if interactions is not None:
-                    interactions.close()
+                    close_interactions = getattr(interactions, "close", None)
+                    if close_interactions is not None:
+                        awaitable = close_interactions()
+                        if hasattr(awaitable, "__await__"):
+                            await awaitable
                 if workers is not None:
                     workers.store.close()
                 if builds is not None:
@@ -1193,6 +1239,150 @@ def create_control_plane_app(
             result = {**result, "routing": routing_resolution}
         return JSONResponse(result, status_code=202)
 
+    @app.post("/v1/sessions/{session_id}/terminal/run")
+    async def run_terminal_command(
+        session_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _validate_public_session_id(session_id)
+        if services.turns.is_active(session_id):
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            ) from None
+        payload = await _read_terminal_command(request)
+        command = payload["command"]
+        timeout_seconds = payload["timeout_seconds"]
+        try:
+            engine = services.sessions.get_engine(session_id)
+        except Exception as error:
+            raise HTTPException(
+                status_code=404,
+                detail="session not found",
+            ) from error
+        if engine is None:
+            raise HTTPException(
+                status_code=404,
+                detail="session not found",
+            )
+        shell = getattr(engine, "_terminal_shell", None)
+        permissions = getattr(engine, "permissions", None)
+        if shell is None or permissions is None:
+            raise HTTPException(
+                status_code=409,
+                detail="terminal is unavailable for this session",
+            )
+        decision = permissions.evaluate(
+            "run_shell",
+            {"command": command},
+        )
+        if not decision.allowed:
+            if not decision.needs_user:
+                raise HTTPException(
+                    status_code=403,
+                    detail=decision.reason or "command blocked",
+                )
+            approvals = getattr(services, "approvals", None)
+            if approvals is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail="session requires command approval",
+                )
+            approver = approvals.approver(session_id)
+            tool_call_id = f"terminal-{uuid.uuid4().hex}"
+            permission_request = PermissionRequest(
+                tool_name="run_shell",
+                arguments={"command": command},
+                reason=decision.reason,
+                risk="exec",
+                command=command,
+                tool_call_id=tool_call_id,
+            )
+            try:
+                outcome = await approver(permission_request)
+            except ApprovalPersistenceError:
+                raise HTTPException(
+                    status_code=503,
+                    detail="approval decision could not be saved",
+                ) from None
+            if outcome is ApprovalOutcome.DENY:
+                raise HTTPException(
+                    status_code=409,
+                    detail="command denied by user",
+                )
+            if outcome is ApprovalOutcome.ALWAYS_COMMAND:
+                permissions.allow_command_for_session(command)
+        try:
+            result = await asyncio.to_thread(
+                shell.run,
+                command,
+                timeout_seconds=timeout_seconds,
+            )
+        except (InvalidCommandError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid command",
+            ) from None
+        except SandboxUnavailableError:
+            raise HTTPException(
+                status_code=503,
+                detail="sandbox execution unavailable",
+            ) from None
+        except (OSError, RuntimeError):
+            raise HTTPException(
+                status_code=502,
+                detail="terminal execution failed",
+            ) from None
+        result_dict = (
+            result.as_dict() if hasattr(result, "as_dict") else result
+        )
+        if not isinstance(result_dict, dict):
+            raise HTTPException(
+                status_code=502,
+                detail="terminal execution failed",
+            )
+        return JSONResponse(result_dict)
+
+
+    @app.post("/v1/sessions/{session_id}/terminal/interrupt")
+    async def interrupt_terminal(session_id: str) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        try:
+            engine = services.sessions.get_engine(session_id)
+        except Exception as error:
+            raise HTTPException(
+                status_code=404,
+                detail="session not found",
+            ) from error
+        if engine is None:
+            raise HTTPException(
+                status_code=404,
+                detail="session not found",
+            )
+        shell = getattr(engine, "_terminal_shell", None)
+        if shell is None:
+            raise HTTPException(
+                status_code=409,
+                detail="terminal is unavailable for this session",
+            )
+        interrupt = getattr(shell, "interrupt", None)
+        if not callable(interrupt):
+            raise HTTPException(
+                status_code=503,
+                detail="terminal interrupt unavailable",
+            )
+        try:
+            interrupted = bool(interrupt())
+        except Exception as error:
+            raise HTTPException(
+                status_code=502,
+                detail="terminal stop failed",
+            ) from error
+        return {
+            "ok": interrupted,
+            "session_id": session_id,
+        }
+
     @app.get("/v1/sessions/{session_id}/workers")
     async def list_workers(session_id: str) -> list[dict[str, object]]:
         _validate_public_session_id(session_id)
@@ -1578,6 +1768,38 @@ def create_control_plane_app(
             return []
         return plans.list_plan_artifacts(session_id)
 
+    @app.get("/v1/sessions/{session_id}/artifacts")
+    async def list_artifacts(session_id: str) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        return await asyncio.to_thread(
+            services.sessions.list_artifacts,
+            session_id,
+        )
+
+    @app.get("/v1/sessions/{session_id}/artifacts/read")
+    async def read_artifact(
+        session_id: str,
+        path: str,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        _validate_artifact_path(path)
+        result = await asyncio.to_thread(
+            services.sessions.read_artifact,
+            session_id,
+            path,
+        )
+        if not result.get("ok"):
+            error = result.get("error", "artifact unavailable")
+            if error == "path escapes workspace":
+                raise HTTPException(status_code=400, detail=error)
+            if error == "file too large to preview":
+                raise HTTPException(status_code=413, detail=error)
+            raise HTTPException(
+                status_code=404 if error == "not found" else 400,
+                detail=error,
+            )
+        return result
+
     @app.post(
         "/v1/sessions/{session_id}/interactions/{interaction_id}"
     )
@@ -1622,6 +1844,34 @@ def create_control_plane_app(
             )
         return {"ok": True}
 
+    @app.post("/v1/sessions/{session_id}/artifacts/reveal")
+    async def reveal_artifact(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        body = await _read_artifact_action(request)
+        result = await asyncio.to_thread(
+            services.sessions.reveal_artifact,
+            session_id,
+            body["path"],
+            mode=body["mode"],
+        )
+        if not result.get("ok"):
+            error = result.get("error", "artifact unavailable")
+            if error == "artifact opener is not configured":
+                raise HTTPException(
+                    status_code=503,
+                    detail=error,
+                )
+            if error == "path escapes workspace":
+                raise HTTPException(status_code=400, detail=error)
+            raise HTTPException(
+                status_code=404 if error == "not found" else 400,
+                detail=error,
+            )
+        return {"ok": True}
+
     @app.post("/v1/sessions/{session_id}/mcp/connect")
     async def connect_mcp(
         session_id: str,
@@ -1658,6 +1908,50 @@ def create_control_plane_app(
             raise HTTPException(
                 status_code=502,
                 detail="MCP connection failed",
+            ) from None
+
+    @app.get("/v1/sessions/{session_id}/mcp/servers")
+    async def list_mcp_servers(session_id: str) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        if services.mcp is None:
+            raise HTTPException(status_code=503, detail="MCP unavailable")
+        try:
+            return services.mcp.list_connected(session_id)
+        except SessionNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail="session not found",
+            ) from None
+
+    @app.delete("/v1/sessions/{session_id}/mcp/servers/{server_name}")
+    async def disconnect_mcp(
+        session_id: str,
+        server_name: str,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if not re.fullmatch(MCP_SERVER_NAME, server_name):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid MCP server name",
+            )
+        if services.mcp is None:
+            raise HTTPException(status_code=503, detail="MCP unavailable")
+        try:
+            return await services.mcp.disconnect(session_id, server_name)
+        except SessionNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail="session not found",
+            ) from None
+        except SessionBusyError:
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            ) from None
+        except ValueError:
+            raise HTTPException(
+                status_code=404,
+                detail="MCP server not connected",
             ) from None
 
     @app.get("/v1/sessions/{session_id}/git/status")
@@ -1919,6 +2213,47 @@ async def _read_worker_steer(request: Request) -> str:
     ):
         raise HTTPException(status_code=400, detail="invalid worker steering")
     return text.strip()
+
+
+async def _read_terminal_command(request: Request) -> dict[str, Any]:
+    body = await _read_bounded_object(
+        request,
+        limit=MAX_TERMINAL_COMMAND_BYTES,
+        detail="invalid terminal payload",
+    )
+    timeout_seconds = body.get("timeout_seconds", None)
+    command = body.get("command")
+    if isinstance(command, str):
+        command = command.strip()
+    if (
+        set(body) not in ({"command"}, {"command", "timeout_seconds"})
+        or not _valid_utf8_text(
+            command,
+            minimum=1,
+            maximum=MAX_TERMINAL_COMMAND_BYTES,
+        )
+        or (
+            timeout_seconds is not None
+            and (
+                not isinstance(timeout_seconds, (int, float))
+                or isinstance(timeout_seconds, bool)
+                or not (
+                    0 < timeout_seconds <= MAX_TERMINAL_TIMEOUT_SECONDS
+                )
+            )
+        )
+        or not command
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid terminal payload",
+        )
+    return {
+        "command": command,
+        "timeout_seconds": float(timeout_seconds)
+        if timeout_seconds is not None
+        else None,
+    }
 
 
 async def _read_plan_build_create(request: Request) -> dict[str, Any]:
@@ -2237,6 +2572,36 @@ def _valid_utf8_text(
     except UnicodeEncodeError:
         return False
     return minimum <= size <= maximum
+
+
+def _validate_artifact_path(path: Any) -> str:
+    if (
+        not isinstance(path, str)
+        or not _valid_utf8_text(path, minimum=1, maximum=MAX_ARTIFACT_PATH_BYTES)
+        or "\x00" in path
+        or "\\" in path
+        or Path(path).is_absolute()
+        or ".." in Path(path).parts
+    ):
+        raise HTTPException(status_code=400, detail="invalid artifact path")
+    return path
+
+
+async def _read_artifact_action(request: Request) -> dict[str, Any]:
+    body = await _read_bounded_object(
+        request,
+        limit=MAX_ARTIFACT_BODY_BYTES,
+        detail="invalid artifact payload",
+    )
+    path = body.get("path")
+    mode = body.get("mode", "reveal")
+    if (
+        set(body) not in ({"path"}, {"path", "mode"})
+        or path is None
+        or mode not in {"open", "reveal"}
+    ):
+        raise HTTPException(status_code=400, detail="invalid artifact payload")
+    return {"path": _validate_artifact_path(path), "mode": mode}
 
 
 async def _read_turn(request: Request) -> dict[str, Any]:

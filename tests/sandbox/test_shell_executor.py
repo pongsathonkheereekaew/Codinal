@@ -124,7 +124,7 @@ def test_interrupt_kills_the_active_command(shell: SandboxedShell) -> None:
 def test_interrupt_before_start_cancels_next_command(
     shell: SandboxedShell,
 ) -> None:
-    shell.interrupt()
+    assert shell.interrupt() is False
 
     result = shell.run("/bin/echo must-not-run")
 

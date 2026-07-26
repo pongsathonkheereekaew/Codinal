@@ -27,7 +27,18 @@ def test_release_builder_pins_and_verifies_embedded_python():
     assert "notarytool submit" in script
     assert "stapler staple" in script
     assert "TAURI_SIGNING_PRIVATE_KEY_PATH" in script
+    assert "TAURI_SIGNING_PUBLIC_KEY" in script
+    assert "TAURI_SIGNING_PUBLIC_KEY_PATH" in script
     assert 'UPDATER_SOURCE_SIGNATURE="$UPDATER_SOURCE.sig"' in script
+    assert 'shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"' in script
+    assert (
+        'shasum -a 256 "$UPDATER_ARTIFACT" > "$UPDATER_ARTIFACT.sha256"'
+        in script
+    )
+    assert "CODINAL_UPDATE_MANIFEST_URL" in script
+    assert "CODINAL_UPDATE_MANIFEST_PATH" in script
+    assert "CODINAL_UPDATE_MANIFEST_NOTES" in script
+    assert "CODINAL_UPDATE_MANIFEST_PUB_DATE" in script
     assert '"$TAURI_ROOT/Cargo.toml"' in script
     assert '"$TAURI_ROOT/tauri.conf.json" "$APP_VERSION"' in script
     assert 'if [ "$TAURI_VERSION" != "tauri-cli 2.11.4" ]' in script
@@ -60,6 +71,8 @@ def test_packaged_smoke_rechecks_signature_after_launch():
 
     assert script.count("codesign --verify --deep --strict") == 2
     assert "-B -m runtime.control_plane" in script
+    assert "/v1/sessions/.*/mcp/connect" in script
+    assert "/v1/sessions/.*/mcp/servers" in script
 
 
 def test_gatekeeper_smoke_uses_transported_quarantined_archive():
@@ -69,5 +82,15 @@ def test_gatekeeper_smoke_uses_transported_quarantined_archive():
 
     assert "ditto -x -k" in script
     assert "com.apple.quarantine" in script
-    assert "stapler validate" in script
-    assert "spctl --assess --type execute" in script
+    assert "CODINAL_REQUIRE_NOTARIZATION" in script
+    assert 'CODINAL_SKIP_APP_LAUNCH=1' in script
+    assert 'CODINAL_SKIP_EMBEDDED_IMPORTS=1' in script
+
+def test_smoke_release_script_controls_resource_and_launch_checks():
+    script = (ROOT / "scripts" / "smoke-macos-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "CODINAL_SKIP_EMBEDDED_IMPORTS" in script
+    assert "CODINAL_SKIP_APP_LAUNCH" in script
+    assert "-B -m runtime.control_plane" in script

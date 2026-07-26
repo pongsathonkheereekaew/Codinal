@@ -337,6 +337,7 @@ def build_services(
             ],
             turn_start_hooks=[shell.begin_turn],
         )
+        engine._terminal_shell = shell
         engine.agent = context.request.agent
         engine.source_workspace = context.request.workspace
         return engine

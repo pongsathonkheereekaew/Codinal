@@ -56,13 +56,63 @@ bash scripts/build-macos-release.sh
 CI instead uses the Apple and updater secrets listed above. Do not reuse an
 old credential profile after its password has been exposed or revoked.
 
-Success requires all of these checks to pass:
+## Local smoke and validation helpers
+
+For local checks without signing/notarization, use:
+
+```bash
+CODINAL_REQUIRE_SIGNING=0 \
+CODINAL_REQUIRE_NOTARIZATION=0 \
+TAURI_SIGNING_PUBLIC_KEY_PATH=/tmp/codinal-tmp/tauri.keys.pub \
+TAURI_SIGNING_PRIVATE_KEY_PATH=/tmp/codinal-tmp/tauri.keys \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD=codinal-temp-pass \
+bash scripts/build-macos-release.sh
+
+bash scripts/smoke-macos-release.sh
+CODINAL_REQUIRE_NOTARIZATION=0 \
+CODINAL_SKIP_APP_LAUNCH=1 \
+CODINAL_SKIP_EMBEDDED_IMPORTS=1 \
+CODINAL_SKIP_CODESIGN_CHECK=1 \
+bash scripts/smoke-macos-gatekeeper.sh
+```
+
+To generate a release manifest locally, set:
+
+```bash
+CODINAL_REQUIRE_SIGNING=0 \
+CODINAL_REQUIRE_NOTARIZATION=0 \
+CODINAL_UPDATE_MANIFEST_URL="https://example.com/releases/v0.1.0/Codinal-0.1.0-macos-arm64.app.tar.gz" \
+CODINAL_UPDATE_MANIFEST_PATH=desktop/src-tauri/target/release/bundle/latest.json \
+CODINAL_UPDATE_MANIFEST_NOTES="Codinal 0.1.0" \
+CODINAL_UPDATE_MANIFEST_PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+TAURI_SIGNING_PUBLIC_KEY_PATH=/tmp/codinal-tmp/tauri.keys.pub \
+TAURI_SIGNING_PRIVATE_KEY_PATH=/tmp/codinal-tmp/tauri.keys \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD=codinal-temp-pass \
+bash scripts/build-macos-release.sh
+```
+
+`TAURI_SIGNING_PUBLIC_KEY_PATH` is optional when your updater public key already
+matches `desktop/src-tauri/tauri.conf.json`; use it when you are validating a
+local temporary keypair.
+
+For a full local release run with matching artifacts and local signing checks, ensure:
 
 - `codesign --verify --deep --strict`
-- `xcrun stapler validate`
-- `spctl --assess --type execute`
 - embedded Python and runtime resources are present
 - updater `.app.tar.gz`, `.sig`, and SHA-256 files are present
+
+### Checks by mode
+
+| Mode | Signing | Notary/staple | Expected command gates |
+| --- | --- | --- | --- |
+| Local smoke | optional | disabled | `smoke-macos-release.sh`, `smoke-macos-gatekeeper.sh` with `CODINAL_REQUIRE_NOTARIZATION=0` |
+| Release candidate (CI) | required | required | `smoke-macos-gatekeeper.sh` with default `CODINAL_REQUIRE_NOTARIZATION=1` |
+| Public release | required | required | `.github/workflows/release.yml` + release workflow smoke |
+
+For full notarized release validation (required for public shipping), also require:
+
+- `xcrun stapler validate`
+- `spctl --assess --type execute`
 
 The release workflow is the source of truth for public artifacts. A locally
 signed but unstapled build is not releasable.

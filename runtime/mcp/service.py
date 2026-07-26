@@ -86,5 +86,52 @@ class MCPService:
             "tools": list(names),
         }
 
+    def list_connected(self, session_id: str) -> list[dict[str, Any]]:
+        engine = self._sessions.get_engine(session_id)
+        if engine is None:
+            raise SessionNotFoundError(session_id)
+        entries: list[dict[str, Any]] = []
+        for (session, name), (server, tools) in self._attached.items():
+            if session != session_id:
+                continue
+            entries.append(
+                {
+                    "name": server.name,
+                    "transport": server.transport,
+                    "url": server.url,
+                    "command": server.command,
+                    "cwd": server.cwd,
+                    "tools": list(tools),
+                    "include_tools": server.include_tools,
+                    "exclude_tools": server.exclude_tools,
+                }
+            )
+        entries.sort(key=lambda item: item["name"])
+        return entries
+
+    async def disconnect(self, session_id: str, name: str) -> dict[str, Any]:
+        if self._turns.is_active(session_id):
+            raise SessionBusyError("session already has an active turn")
+        engine = self._sessions.get_engine(session_id)
+        if engine is None:
+            raise SessionNotFoundError(session_id)
+        key = (session_id, name)
+        existing = self._attached.pop(key, None)
+        if existing is None:
+            raise ValueError("MCP server not connected")
+        server, names = existing
+        for tool_name in names:
+            engine.registry.unregister(tool_name)
+        if not any(
+            attached_name == name and attached_session != session_id
+            for attached_session, attached_name in self._attached
+        ):
+            await self._manager.disconnect(server.name)
+        return {
+            "ok": True,
+            "server": server.name,
+            "tools": list(names),
+        }
+
     async def aclose(self) -> None:
         await self._manager.aclose()

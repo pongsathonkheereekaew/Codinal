@@ -202,6 +202,33 @@
           <div id="message-list" class="message-list"></div>
         </section>
 
+        <section id="terminal-panel" class="terminal-panel"
+          aria-label="Terminal runner">
+          <header class="terminal-header">
+            <strong>Terminal</strong>
+            <span id="terminal-status" class="terminal-status">Ready</span>
+          </header>
+          <div class="terminal-toolbar">
+            <textarea id="terminal-command" rows="1"
+              placeholder="Run shell command (e.g. ls, git status)"
+              aria-label="Terminal command"></textarea>
+            <label class="terminal-timeout">
+              <span>Timeout (sec)</span>
+              <input id="terminal-timeout" type="number" min="1" max="600"
+                step="1" value="30" inputmode="numeric"
+                aria-label="Terminal timeout in seconds" />
+            </label>
+            <button id="terminal-run" class="secondary-button" type="button">
+              Run
+            </button>
+            <button id="terminal-stop" class="icon-button" type="button"
+              aria-label="Stop terminal command">■</button>
+            <button id="terminal-clear" class="icon-button" type="button"
+              aria-label="Clear terminal output">×</button>
+          </div>
+          <pre id="terminal-output" class="terminal-output" aria-live="polite"></pre>
+        </section>
+
         <section class="composer-wrap" aria-label="Message composer">
           <div id="drop-hint" class="drop-hint">
             Drop a project folder, image, or PDF
@@ -304,6 +331,75 @@
           <h3>Models</h3>
           <p id="model-summary" class="settings-copy">Loading model configuration…</p>
           <div id="model-catalog" class="model-catalog"></div>
+        </section>
+        <section>
+          <div class="settings-section-title">
+            <div>
+              <h3>MCP servers</h3>
+              <p>Connect per-task MCP servers and review attached tools.</p>
+            </div>
+          </div>
+          <div id="mcp-server-list" class="mcp-server-list"></div>
+          <div class="settings-section-subtitle">
+            <h4>Connect new MCP server</h4>
+          </div>
+          <div class="mcp-connector">
+            <label>
+              Name
+              <input id="mcp-server-name" placeholder="docs" maxlength="64" />
+            </label>
+            <label>
+              Transport
+              <select id="mcp-transport">
+                <option value="http">http</option>
+                <option value="stdio">stdio</option>
+              </select>
+            </label>
+            <label>
+              URL
+              <input id="mcp-url" placeholder="https://example.com/mcp" />
+            </label>
+            <label>
+              Command
+              <input id="mcp-command"
+                placeholder="my-mcp-server-bin" autocomplete="off" />
+            </label>
+            <label>
+              Arguments (comma-separated)
+              <input id="mcp-args"
+                placeholder="arg1, arg2"
+                autocomplete="off" />
+            </label>
+            <label>
+              Working directory (optional)
+              <input id="mcp-cwd" placeholder="/path/to/project" />
+            </label>
+            <label>
+              Include tools (optional, comma-separated)
+              <input id="mcp-include-tools"
+                placeholder="search, fetch"
+                autocomplete="off" />
+            </label>
+            <label>
+              Exclude tools (optional, comma-separated)
+              <input id="mcp-exclude-tools"
+                placeholder="legacy_*"
+                autocomplete="off" />
+            </label>
+            <button id="connect-mcp-server" type="button">Connect</button>
+          </div>
+        </section>
+        <section>
+          <div class="settings-section-title">
+            <div>
+              <h3>Session artifacts</h3>
+              <p>Read, open, and reveal generated or tracked files for this task.</p>
+            </div>
+          </div>
+          <div id="artifact-list" class="artifact-list"></div>
+          <p id="artifact-empty" class="settings-copy">Open settings with an active task to load artifacts.</p>
+          <p id="artifact-preview-path" class="settings-copy"></p>
+          <pre id="artifact-preview" class="artifact-preview" aria-live="polite"></pre>
         </section>
         <section>
           <div class="settings-section-title update-row">

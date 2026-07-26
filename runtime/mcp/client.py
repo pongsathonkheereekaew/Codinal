@@ -70,16 +70,31 @@ class MCPManager:
         )
         return _result_payload(result)
 
+    async def disconnect(self, server_name: str) -> bool:
+        async with self._lock:
+            connection = self._connections.pop(server_name, None)
+            self._definitions.pop(server_name, None)
+            task = self._tasks.pop(server_name, None)
+        if connection is None:
+            return False
+        connection.shutdown.set()
+        if task is None:
+            return True
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        except asyncio.TimeoutError:
+            task.cancel()
+        except Exception:
+            pass
+        return True
+
+    async def list(self) -> list[str]:
+        return sorted(self._definitions)
+
     async def aclose(self) -> None:
-        for connection in tuple(self._connections.values()):
-            connection.shutdown.set()
-        for task in tuple(self._tasks.values()):
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=5)
-            except asyncio.TimeoutError:
-                task.cancel()
-            except Exception:
-                pass
+        names = await self.list()
+        for name in names:
+            await self.disconnect(name)
         self._connections.clear()
         self._definitions.clear()
         self._tasks.clear()

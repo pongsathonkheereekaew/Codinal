@@ -101,11 +101,63 @@ if [ -n "$SIGNING_IDENTITY" ]; then
   done < <(find "$RESOURCES/python" -type f -print0)
 fi
 
+TAURI_BUILD_CONFIG="$TAURI_ROOT/tauri.release.conf.json"
+if [ -n "${TAURI_SIGNING_PUBLIC_KEY:-}" ] && [ -n "${TAURI_SIGNING_PUBLIC_KEY_PATH:-}" ]; then
+  echo "TAURI_SIGNING_PUBLIC_KEY and TAURI_SIGNING_PUBLIC_KEY_PATH cannot both be set" >&2
+  exit 1
+fi
+
+TAURI_SIGNING_PUBLIC_KEY_FROM_PATH="${TAURI_SIGNING_PUBLIC_KEY:-}"
+if [ -z "${TAURI_SIGNING_PUBLIC_KEY_FROM_PATH}" ] && [ -n "${TAURI_SIGNING_PUBLIC_KEY_PATH:-}" ]; then
+  if [ ! -f "$TAURI_SIGNING_PUBLIC_KEY_PATH" ]; then
+    echo "TAURI_SIGNING_PUBLIC_KEY_PATH does not exist" >&2
+    exit 1
+  fi
+
+  TAURI_SIGNING_PUBLIC_KEY_FROM_PATH="$(
+    "$BUILD_DIR/python/bin/python3" - "$TAURI_SIGNING_PUBLIC_KEY_PATH" <<'PY'
+import base64
+import binascii
+import sys
+
+value = open(sys.argv[1], "r", encoding="utf-8").read().strip()
+try:
+    raw = base64.b64decode(value, validate=True)
+except binascii.Error:
+    raw = value.encode()
+
+if not raw.startswith(b"untrusted comment: "):
+    raw = value.encode()
+
+print(base64.b64encode(raw).decode())
+PY
+  )"
+fi
+
+if [ -n "${TAURI_SIGNING_PUBLIC_KEY_FROM_PATH}" ]; then
+  TAURI_BUILD_CONFIG="$BUILD_DIR/tauri.release.config.with-overrides.json"
+  "$BUILD_DIR/python/bin/python3" - \
+    "$TAURI_ROOT/tauri.release.conf.json" \
+    "$TAURI_BUILD_CONFIG" \
+    "$TAURI_SIGNING_PUBLIC_KEY_FROM_PATH" <<'PY'
+import json
+import sys
+
+base = json.loads(open(sys.argv[1], "r", encoding="utf-8").read())
+base.setdefault("plugins", {})["updater"] = {
+    "pubkey": sys.argv[3].strip()
+}
+open(sys.argv[2], "w", encoding="utf-8").write(
+    json.dumps(base, indent=2) + "\n"
+)
+PY
+fi
+
 BUILD_LOG="$BUILD_DIR/tauri-build.log"
 (
   cd "$TAURI_ROOT"
   cargo tauri build \
-    --config "$TAURI_ROOT/tauri.release.conf.json" \
+    --config "$TAURI_BUILD_CONFIG" \
     --bundles app 2>&1 | tee "$BUILD_LOG"
 )
 if grep -q "updater secret key.*does not match" "$BUILD_LOG"; then
@@ -118,6 +170,11 @@ test -x "$APP/Contents/MacOS/codinal"
 test -x "$APP/Contents/Resources/python/bin/python3"
 test -f "$APP/Contents/Resources/runtime/runtime/control_plane/__main__.py"
 test -f "$APP/Contents/Resources/runtime/python-sbom.cdx.json"
+
+if [ -z "$SIGNING_IDENTITY" ]; then
+  codesign --force --sign - "$APP"
+fi
+
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
@@ -156,6 +213,19 @@ test -s "$UPDATER_SOURCE_SIGNATURE"
 cp "$UPDATER_SOURCE" "$UPDATER_ARTIFACT"
 cp "$UPDATER_SOURCE_SIGNATURE" "$UPDATER_ARTIFACT.sig"
 shasum -a 256 "$UPDATER_ARTIFACT" > "$UPDATER_ARTIFACT.sha256"
+
+if [ -n "${CODINAL_UPDATE_MANIFEST_URL:-}" ] && [ -n "${CODINAL_UPDATE_MANIFEST_PATH:-}" ]; then
+  CODINAL_UPDATE_MANIFEST_NOTES="${CODINAL_UPDATE_MANIFEST_NOTES:-Codinal ${APP_VERSION}}"
+  CODINAL_UPDATE_MANIFEST_PUB_DATE="${CODINAL_UPDATE_MANIFEST_PUB_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+  "$BUILD_DIR/python/bin/python3" "$ROOT/scripts/generate_update_manifest.py" \
+    --version "$APP_VERSION" \
+    --url "$CODINAL_UPDATE_MANIFEST_URL" \
+    --signature-file "$UPDATER_ARTIFACT.sig" \
+    --notes "$CODINAL_UPDATE_MANIFEST_NOTES" \
+    --pub-date "$CODINAL_UPDATE_MANIFEST_PUB_DATE" \
+    --output "$CODINAL_UPDATE_MANIFEST_PATH"
+  test -f "$CODINAL_UPDATE_MANIFEST_PATH"
+fi
 
 echo "release app: $APP"
 echo "release artifact: $ARTIFACT"

@@ -8,39 +8,62 @@ PYTHON="$APP/Contents/Resources/python/bin/python3"
 
 test -x "$EXECUTABLE"
 test -x "$PYTHON"
-codesign --verify --deep --strict --verbose=2 "$APP"
-"$PYTHON" -B -c \
-  'import anthropic, fastapi, google.genai, mcp, openai'
-
-"$EXECUTABLE" &
-APP_PID=$!
-cleanup() {
-  kill "$APP_PID" >/dev/null 2>&1 || true
-  wait "$APP_PID" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-SIDECAR_PID=""
-for _ in $(seq 1 20); do
-  while IFS= read -r candidate; do
-    if ps -o command= -p "$candidate" | grep -q -- \
-      "-B -m runtime.control_plane"; then
-      SIDECAR_PID="$candidate"
-      break
-    fi
-  done < <(pgrep -P "$APP_PID" || true)
-  if [ -n "$SIDECAR_PID" ]; then
-    break
+if [ "${CODINAL_SKIP_CODESIGN_CHECK:-0}" != "1" ]; then
+  codesign --verify --deep --strict --verbose=2 "$APP"
+fi
+if [ "${CODINAL_SKIP_EMBEDDED_IMPORTS:-0}" != "1" ]; then
+  "$PYTHON" -B -c \
+    'import anthropic, fastapi, google.genai, mcp, openai'
+  if [ ! -f "$APP/Contents/Resources/runtime/runtime/control_plane/app.py" ]; then
+    echo "packaged control-plane application missing" >&2
+    exit 1
   fi
-  sleep 1
-done
-
-if [ -z "$SIDECAR_PID" ]; then
-  echo "packaged control-plane sidecar did not start" >&2
-  exit 1
+  grep -q "/v1/sessions/.*/mcp/connect" \
+    "$APP/Contents/Resources/runtime/runtime/control_plane/app.py" \
+    || { echo "packaged MCP connect route missing" >&2; exit 1; }
+  grep -q "/v1/sessions/.*/mcp/servers" \
+    "$APP/Contents/Resources/runtime/runtime/control_plane/app.py" \
+    || { echo "packaged MCP list/disconnect routes missing" >&2; exit 1; }
 fi
 
-cleanup
-trap - EXIT
-codesign --verify --deep --strict --verbose=2 "$APP"
+if [ "${CODINAL_SKIP_APP_LAUNCH:-0}" != "1" ]; then
+  "$EXECUTABLE" &
+  APP_PID=$!
+  cleanup() {
+    kill "$APP_PID" >/dev/null 2>&1 || true
+    wait "$APP_PID" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+
+  SIDECAR_PID=""
+  for _ in $(seq 1 20); do
+    while IFS= read -r candidate; do
+      if ps -o command= -p "$candidate" | grep -q -- \
+        "-B -m runtime.control_plane"; then
+        SIDECAR_PID="$candidate"
+        break
+      fi
+    done < <(pgrep -P "$APP_PID" || true)
+    if [ -n "$SIDECAR_PID" ]; then
+      break
+    fi
+    sleep 1
+  done
+
+  if [ -z "$SIDECAR_PID" ]; then
+    echo "packaged control-plane sidecar did not start" >&2
+    exit 1
+  fi
+
+  cleanup
+  trap - EXIT
+else
+  echo "Codinal packaged smoke launched skipped by configuration"
+fi
+
+if [ "${CODINAL_SKIP_CODESIGN_CHECK:-0}" != "1" ]; then
+  codesign --verify --deep --strict --verbose=2 "$APP"
+else
+  echo "skipping codesign verification by configuration"
+fi
 echo "packaged app smoke test passed"
