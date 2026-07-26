@@ -27,6 +27,12 @@ class FakeTurns:
         self.started = []
         self.interrupted = []
 
+    async def recover(self):
+        return 0
+
+    async def shutdown(self):
+        return None
+
     async def start(
         self,
         session_id,

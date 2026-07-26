@@ -118,6 +118,7 @@ class TurnEngine:
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
+        self._producer_futures: set[asyncio.Future[Any]] = set()
 
     # -- external controls ------------------------------------------------------
     def request_interrupt(self) -> None:
@@ -133,6 +134,10 @@ class TurnEngine:
                 hook()
             except Exception:
                 pass  # best-effort: a dead executor must not block the stop
+
+    def is_quiescent(self) -> bool:
+        """Return true only after every provider stream worker has exited."""
+        return not self._producer_futures
 
     async def _interruptible(self, coro: Any, interrupted: Any) -> Any:
         """Await `coro`, but resolve early with `interrupted` if the user stops the
@@ -274,6 +279,80 @@ class TurnEngine:
             async for event in self._loop():
                 yield event
 
+    async def resume_after_crash(
+        self,
+        *,
+        active_tool_call_ids: list[str] | None = None,
+    ) -> AsyncIterator[Event]:
+        """Resume durable work without replaying a possibly completed tool."""
+        pending = self._unanswered_trailing_tool_calls()
+        active = set(active_tool_call_ids or [])
+        remaining = []
+        self._cancel.clear()
+        yield Event(EventType.TURN_START, {"input": "(recovered)"})
+        abandoned_ids = set()
+        for tool_call in pending:
+            if tool_call.id not in active:
+                remaining.append(tool_call)
+                continue
+            reason = (
+                "execution interrupted by app restart; outcome is unknown; "
+                "inspect the workspace before retrying"
+            )
+            self.messages.append(_tool_error_message(tool_call, reason))
+            self._audit(
+                tool_call,
+                stage="finished",
+                status="recovery_unknown",
+                reason=reason,
+            )
+            abandoned_ids.add(tool_call.id)
+            yield Event(
+                EventType.TOOL_FINISHED,
+                {
+                    "name": tool_call.name,
+                    "tool_call_id": tool_call.id,
+                    "status": "recovery_unknown",
+                    "reason": "app restarted during execution",
+                },
+            )
+        if active - abandoned_ids:
+            self._append_notice(
+                "error",
+                "Could not reconcile the interrupted tool call.",
+            )
+            yield Event(
+                EventType.ERROR,
+                {
+                    "error": "interrupted tool recovery failed",
+                    "error_type": "recovery_error",
+                },
+            )
+            return
+        if remaining:
+            async for event in self._handle_tool_calls(remaining):
+                yield event
+            yield Event(EventType.ITERATION_END, {"iteration": 0})
+        elif not active and self._tail_is_complete_assistant():
+            yield Event(
+                EventType.TURN_END,
+                {"status": "completed", "iterations": 0},
+            )
+            return
+        if not self._cancel.is_set():
+            async for event in self._loop():
+                yield event
+
+    def _tail_is_complete_assistant(self) -> bool:
+        for message in reversed(self.messages):
+            if message.get("role") == "notice":
+                continue
+            return (
+                message.get("role") == "assistant"
+                and not message.get("tool_calls")
+            )
+        return False
+
     def _unanswered_trailing_tool_calls(self) -> list[ToolCall]:
         """The tool-calls of the last assistant message that don't yet have a tool result —
         i.e. the prompt we suspended on (+ any after it). Reconstructed from the persisted thread.
@@ -412,6 +491,15 @@ class TurnEngine:
         model, settings = self.model, self.model_settings
         provider = self.provider
 
+        def enqueue(kind: str, payload: Any) -> None:
+            try:
+                loop.call_soon_threadsafe(
+                    queue.put_nowait,
+                    (kind, payload),
+                )
+            except RuntimeError:
+                pass
+
         def produce():
             try:
                 for chunk in provider.stream(
@@ -421,13 +509,17 @@ class TurnEngine:
                     # asyncio.Event's flag from a thread is safe; we only read).
                     if self._cancel.is_set():
                         break
-                    loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
+                    enqueue("chunk", chunk)
             except Exception as exc:  # surfaced to the awaiting consumer
-                loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+                enqueue("error", exc)
             finally:
-                loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+                enqueue("done", None)
 
-        loop.run_in_executor(None, produce)
+        producer_future = loop.run_in_executor(None, produce)
+        self._producer_futures.add(producer_future)
+        producer_future.add_done_callback(
+            self._producer_futures.discard
+        )
         while True:
             # Race the queue against Stop so a stalled stream (no chunks arriving —
             # the pre-first-token wait, a wedged connection) can't hold the turn.
@@ -499,7 +591,13 @@ class TurnEngine:
 
         if concurrent:
             for tool_call in concurrent:
-                yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+                yield Event(
+                    EventType.TOOL_STARTED,
+                    {
+                        "name": tool_call.name,
+                        "tool_call_id": tool_call.id,
+                    },
+                )
                 self._audit(tool_call, stage="started")
             outcomes = await asyncio.gather(
                 *[asyncio.to_thread(self._execute_sync, tc) for tc in concurrent]
@@ -511,7 +609,13 @@ class TurnEngine:
             if self._cancel.is_set():
                 yield self._interrupted_tool(tool_call)
                 continue
-            yield Event(EventType.TOOL_STARTED, {"name": tool_call.name})
+            yield Event(
+                EventType.TOOL_STARTED,
+                {
+                    "name": tool_call.name,
+                    "tool_call_id": tool_call.id,
+                },
+            )
             self._audit(tool_call, stage="started")
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
             yield self._record_result(tool_call, result, status)
@@ -526,7 +630,12 @@ class TurnEngine:
         )
         return Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": "interrupted", "reason": "stopped"},
+            {
+                "name": tool_call.name,
+                "tool_call_id": tool_call.id,
+                "status": "interrupted",
+                "reason": "stopped",
+            },
         )
 
     def _parallel_safe(self, tool_call: ToolCall) -> bool:
@@ -642,7 +751,12 @@ class TurnEngine:
             self.messages.append(_tool_error_message(tool_call, reason))
             yield Event(
                 EventType.TOOL_FINISHED,
-                {"name": tool_call.name, "status": "denied", "reason": reason},
+                {
+                    "name": tool_call.name,
+                    "tool_call_id": tool_call.id,
+                    "status": "denied",
+                    "reason": reason,
+                },
             )
             self._audit(tool_call, stage="finished", status="denied", reason=reason)
             yield False
@@ -654,7 +768,12 @@ class TurnEngine:
             )
             yield Event(
                 EventType.TOOL_FINISHED,
-                {"name": tool_call.name, "status": "error", "reason": "unknown tool"},
+                {
+                    "name": tool_call.name,
+                    "tool_call_id": tool_call.id,
+                    "status": "error",
+                    "reason": "unknown tool",
+                },
             )
             yield False
             return
@@ -709,6 +828,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
                 **({"display": display} if display else {}),
@@ -792,6 +912,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -843,6 +964,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },
@@ -887,6 +1009,7 @@ class TurnEngine:
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
+                "tool_call_id": tool_call.id,
                 "status": status,
                 "result_preview": _preview(result),
             },

@@ -23,6 +23,12 @@ class FakeTurns:
     def __init__(self):
         self.active = set()
 
+    async def recover(self):
+        return 0
+
+    async def shutdown(self):
+        return None
+
     def interrupt(self, _session_id):
         return False
 

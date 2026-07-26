@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import shutil
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import (
@@ -22,7 +23,7 @@ from typing import (
 
 from runtime.events import Event
 
-from .models import RootDir, SessionRecord
+from .models import RootDir, SessionRecord, TurnCheckpoint, TurnStatus
 
 _ARTIFACT_SUFFIXES = {
     ".md",
@@ -61,6 +62,13 @@ class SessionStore(Protocol):
 
     def save(self, record: SessionRecord) -> None: ...
 
+    def save_checkpoint(
+        self,
+        record: SessionRecord,
+        *,
+        completed_tool_call_id: str | None = None,
+    ) -> None: ...
+
     def list(self, *, workspace: Optional[str] = None) -> list[SessionRecord]: ...
 
     def export_records(self) -> list[SessionRecord]: ...
@@ -82,6 +90,12 @@ class SessionStore(Protocol):
     ) -> None: ...
 
     def touch_workspace(self, path: str) -> None: ...
+
+    def delete_approval_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+    ) -> None: ...
 
 
 class SessionEngine(Protocol):
@@ -214,14 +228,88 @@ class SessionService:
         return engine
 
     def persist(self, session_id: str) -> bool:
-        engine = self._engines.get(session_id)
-        if engine is None or self._snapshotter is None:
-            return False
-        record = self._snapshotter(session_id, engine)
+        record = self._snapshot(session_id)
         if record is None:
             return False
         self._store.save(record)
         return True
+
+    def persist_checkpoint(
+        self,
+        session_id: str,
+        *,
+        checkpoint: TurnCheckpoint,
+        completed_tool_call_id: str | None = None,
+    ) -> bool:
+        record = self._snapshot(session_id)
+        if record is None:
+            return False
+        updated = replace(
+            record,
+            turn_checkpoint=checkpoint,
+        )
+        if completed_tool_call_id is None:
+            self._store.save(updated)
+        else:
+            self._store.save_checkpoint(
+                updated,
+                completed_tool_call_id=completed_tool_call_id,
+            )
+        return True
+
+    def recoverable_sessions(self) -> list[SessionRecord]:
+        return [
+            record
+            for record in self._store.list()
+            if not record.session_id.startswith("__")
+            and record.turn_checkpoint.status is not TurnStatus.IDLE
+        ]
+
+    def clear_approval_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+    ) -> None:
+        self._store.delete_approval_decision(
+            session_id,
+            tool_call_id,
+        )
+
+    def mark_recovery_failed(self, session_id: str) -> bool:
+        record = self._store.load(session_id)
+        if record is None:
+            return False
+        if (
+            record.messages
+            and record.messages[-1].get("role") == "notice"
+            and record.messages[-1].get("kind") == "recovery_error"
+        ):
+            return True
+        self._store.save(
+            replace(
+                record,
+                messages=[
+                    *record.messages,
+                    {
+                        "role": "notice",
+                        "kind": "recovery_error",
+                        "text": (
+                            "Codinal could not resume this interrupted "
+                            "turn. The recovery checkpoint was preserved."
+                        ),
+                        "ts": time.time(),
+                    },
+                ],
+            )
+        )
+        return True
+
+    def _snapshot(self, session_id: str) -> SessionRecord | None:
+        engine = self._engines.get(session_id)
+        if engine is None or self._snapshotter is None:
+            return None
+        record = self._snapshotter(session_id, engine)
+        return record
 
     def messages(self, session_id: str) -> list[dict[str, Any]]:
         engine = self._engines.get(session_id)

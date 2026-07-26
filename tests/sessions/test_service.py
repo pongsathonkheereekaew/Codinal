@@ -7,6 +7,7 @@ from runtime.sessions import (
     SessionCleanupError,
     SessionRecord,
     SessionService,
+    TurnCheckpoint,
 )
 
 
@@ -201,6 +202,75 @@ def test_persist_saves_snapshot_from_injected_adapter(tmp_path):
 
     assert service.persist("s1") is True
     assert store.load("s1") == expected
+
+
+def test_persist_checkpoint_atomically_records_recovery_state(tmp_path):
+    store = MemorySessionStore()
+    engine = object()
+    snapshot = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="interactive",
+        messages=[
+            {
+                "role": "assistant",
+                "tool_calls": [{"id": "call-1"}],
+            }
+        ],
+    )
+    service = SessionService(
+        store,
+        scratch_base=tmp_path / "scratch",
+        snapshotter=lambda _session_id, _engine: snapshot,
+    )
+    service.attach_engine("s1", engine)
+
+    assert service.persist_checkpoint(
+        "s1",
+        checkpoint=TurnCheckpoint.executing({"call-1"}),
+    )
+    assert store.load("s1") == replace(
+        snapshot,
+        turn_checkpoint=TurnCheckpoint.executing({"call-1"}),
+    )
+    assert service.recoverable_sessions() == [
+        replace(
+            snapshot,
+            turn_checkpoint=TurnCheckpoint.executing({"call-1"}),
+        )
+    ]
+
+
+def test_recovery_failure_notice_is_idempotent_and_preserves_checkpoint(
+    tmp_path,
+):
+    checkpoint = TurnCheckpoint.executing({"call-1"})
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="interactive",
+        turn_checkpoint=checkpoint,
+    )
+    store = MemorySessionStore(record)
+    service = SessionService(
+        store,
+        scratch_base=tmp_path / "scratch",
+    )
+
+    assert service.mark_recovery_failed("s1")
+    assert service.mark_recovery_failed("s1")
+
+    retained = store.load("s1")
+    assert retained is not None
+    assert retained.turn_checkpoint == checkpoint
+    notices = [
+        message
+        for message in retained.messages
+        if message.get("kind") == "recovery_error"
+    ]
+    assert len(notices) == 1
 
 
 def test_list_sessions_returns_public_metadata_and_hides_internal_records(tmp_path):

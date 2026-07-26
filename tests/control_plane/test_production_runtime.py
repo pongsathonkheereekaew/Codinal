@@ -2,7 +2,9 @@ import base64
 import copy
 import io
 import json
+import os
 import platform
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -22,13 +24,56 @@ from runtime.control_plane.server import ServerConfig, build_services
 from runtime.git import GitWorkspaceRecord, GitWorktreeStore, WorktreeState
 from runtime.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from runtime.policy import ApprovalOutcome, ToolCall
-from runtime.sessions import SessionRecord
+from runtime.sessions import SessionRecord, TurnCheckpoint, TurnStatus
 from runtime.settings import JsonPreferenceStore
 from runtime.storage import ConversationStore
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
+
+
+def _kill_crash_worker_at_durable_window(
+    *,
+    mode,
+    data_dir,
+    workspace,
+    ready,
+):
+    worker = Path(__file__).parents[1] / "fixtures" / (
+        "crash_recovery_worker.py"
+    )
+    repo_root = Path(__file__).parents[2]
+    worker_environment = dict(os.environ)
+    worker_environment["PYTHONPATH"] = str(repo_root)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(worker),
+            mode,
+            str(data_dir),
+            str(workspace),
+            str(ready),
+        ],
+        cwd=repo_root,
+        env=worker_environment,
+    )
+    try:
+        for _ in range(500):
+            if ready.exists():
+                break
+            if process.poll() is not None:
+                raise AssertionError(
+                    f"crash worker exited early: {process.returncode}"
+                )
+            time.sleep(0.01)
+        assert ready.exists()
+        os.kill(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
 
 
 class ReadThenAnswerProvider(ProviderClient):
@@ -131,7 +176,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
     assert all(event["action"] == "preserved_corrupt_state" for event in events)
     with sqlite3.connect(data_dir / "codinal.db") as conversations:
         assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 3
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 1
@@ -659,6 +704,371 @@ def test_production_default_approval_broker_resumes_turn(tmp_path):
         "session-broker",
         "provider/call 1",
     )
+
+
+def test_restart_restores_awaiting_approval_without_losing_tool_call(
+    tmp_path,
+):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text="recovered mutation complete")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id="session-recovery",
+            workspace=str(workspace),
+            source_workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            messages=[
+                {"role": "user", "content": "create recovered.txt"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "provider/call-recovery",
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps(
+                                    {
+                                        "path": "recovered.txt",
+                                        "content": "restored once\n",
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                },
+            ],
+            turn_checkpoint=TurnCheckpoint(
+                TurnStatus.AWAITING_APPROVAL
+            ),
+        )
+    )
+    store.close()
+    provider = RecoveryProvider()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config, provider=provider)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        pending = []
+        for _ in range(100):
+            pending = client.get(
+                "/v1/sessions/session-recovery/approvals",
+                headers=AUTH,
+            ).json()
+            if pending:
+                break
+            time.sleep(0.01)
+        assert len(pending) == 1
+        resolved = client.post(
+            (
+                "/v1/sessions/session-recovery/approvals/"
+                f"{pending[0]['approval_id']}"
+            ),
+            headers=AUTH,
+            json={"outcome": "once"},
+        )
+        assert resolved.status_code == 200
+        for _ in range(100):
+            if not services.turns.is_active("session-recovery"):
+                break
+            time.sleep(0.01)
+
+    assert provider.calls == 1
+    assert (workspace / "recovered.txt").read_text(
+        encoding="utf-8"
+    ) == "restored once\n"
+    recovered = ConversationStore(data_dir).load("session-recovery")
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    assert [
+        message.get("tool_call_id")
+        for message in recovered.messages
+        if message.get("role") == "tool"
+    ] == ["provider/call-recovery"]
+
+
+def test_restart_never_replays_tool_that_may_have_completed(tmp_path):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text="workspace inspection required")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "uncertain.txt"
+    target.write_text("already completed\n", encoding="utf-8")
+    data_dir = tmp_path / "data"
+    store = ConversationStore(data_dir)
+    store.save(
+        SessionRecord(
+            session_id="session-uncertain",
+            workspace=str(workspace),
+            source_workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            messages=[
+                {"role": "user", "content": "update uncertain.txt"},
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "provider/call-uncertain",
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "arguments": json.dumps(
+                                    {
+                                        "path": "uncertain.txt",
+                                        "content": "DANGEROUS REPLAY\n",
+                                    }
+                                ),
+                            },
+                        }
+                    ],
+                },
+            ],
+            turn_checkpoint=TurnCheckpoint.executing(
+                {"provider/call-uncertain"}
+            ),
+        )
+    )
+    store.close()
+    provider = RecoveryProvider()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config, provider=provider)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ):
+        for _ in range(100):
+            if not services.turns.is_active("session-uncertain"):
+                break
+            time.sleep(0.01)
+
+    assert provider.calls == 1
+    assert target.read_text(encoding="utf-8") == "already completed\n"
+    recovered = ConversationStore(data_dir).load("session-uncertain")
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    tool_result = next(
+        message
+        for message in recovered.messages
+        if message.get("role") == "tool"
+    )
+    assert tool_result["tool_call_id"] == "provider/call-uncertain"
+    assert "outcome is unknown" in tool_result["content"]
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="requires SIGSTOP/SIGKILL process semantics",
+)
+def test_sigkill_after_approval_ack_resumes_without_reprompt(tmp_path):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text="recovered after process kill")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    ready = tmp_path / "approval-committed.json"
+    _kill_crash_worker_at_durable_window(
+        mode="approval",
+        data_dir=data_dir,
+        workspace=workspace,
+        ready=ready,
+    )
+
+    provider = RecoveryProvider()
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=provider,
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        for _ in range(200):
+            if not services.turns.is_active("session-kill"):
+                break
+            time.sleep(0.01)
+        pending = client.get(
+            "/v1/sessions/session-kill/approvals",
+            headers=AUTH,
+        )
+
+    assert pending.json() == []
+    assert provider.calls == 1
+    assert (workspace / "recovered-after-kill.txt").read_text(
+        encoding="utf-8"
+    ) == "executed once after restart\n"
+    recovered = ConversationStore(data_dir).load("session-kill")
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="requires SIGSTOP/SIGKILL process semantics",
+)
+def test_sigkill_during_parallel_tools_never_replays_either_call(
+    tmp_path,
+):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text="parallel recovery complete")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    ready = tmp_path / "parallel-checkpoint.txt"
+    _kill_crash_worker_at_durable_window(
+        mode="parallel",
+        data_dir=data_dir,
+        workspace=workspace,
+        ready=ready,
+    )
+
+    provider = RecoveryProvider()
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=provider,
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ):
+        for _ in range(200):
+            if not services.turns.is_active("session-kill"):
+                break
+            time.sleep(0.01)
+
+    assert provider.calls == 1
+    recovered = ConversationStore(data_dir).load("session-kill")
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    unknown = {
+        message.get("tool_call_id")
+        for message in recovered.messages
+        if message.get("role") == "tool"
+        and "outcome is unknown" in message.get("content", "")
+    }
+    assert unknown == {"call-1", "call-2"}
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="requires SIGSTOP/SIGKILL process semantics",
+)
+def test_sigkill_during_streaming_resumes_one_answer(tmp_path):
+    class RecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text="single recovered answer")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    ready = tmp_path / "stream-checkpoint.txt"
+    _kill_crash_worker_at_durable_window(
+        mode="streaming",
+        data_dir=data_dir,
+        workspace=workspace,
+        ready=ready,
+    )
+
+    provider = RecoveryProvider()
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=provider,
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ):
+        for _ in range(200):
+            if not services.turns.is_active("session-kill"):
+                break
+            time.sleep(0.01)
+
+    assert provider.calls == 1
+    recovered = ConversationStore(data_dir).load("session-kill")
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    assistant_messages = [
+        message
+        for message in recovered.messages
+        if message.get("role") == "assistant"
+    ]
+    assert [message.get("content") for message in assistant_messages] == [
+        "single recovered answer"
+    ]
 
 
 @pytest.mark.skipif(

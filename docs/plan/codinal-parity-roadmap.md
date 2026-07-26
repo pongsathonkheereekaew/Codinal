@@ -41,7 +41,8 @@ acceptance evidence is recorded from the real product surface.
 | OS shell sandbox | Implemented on macOS | sandbox negative tests and notarization spike |
 | Isolated session worktrees | Implemented | Git lifecycle E2E and Apply conflict tests |
 | Sessions/history/model swap | Implemented baseline | SQLite/session route/UI tests |
-| Durable migrations/recovery/export | Implemented and verified | v0/v1 matrix, restore-from-backup startup E2E, authenticated export v1 with 32 MiB stored-data safety bound |
+| Durable migrations/recovery/export | Implemented and verified | v0/v1/v2 matrix, restore-from-backup startup E2E, authenticated export v1 with 32 MiB stored-data safety bound |
+| Interrupted turn recovery | Streaming, approval, and parallel-tool baseline verified; plan/shell/apply-back pending | real SIGKILL/restart E2Es, durable approval ledger, no-replay multi-call tests |
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
 | MCP | Secure connect/runtime tools implemented; lifecycle UI/governance missing | MCP contract/service tests |

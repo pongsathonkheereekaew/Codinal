@@ -1,11 +1,17 @@
 import asyncio
+import sqlite3
 import threading
 
 import pytest
 
 from runtime.events import Event, EventHub, EventType
-from runtime.policy import PermissionEngine, ToolCall, ToolManifest
-from runtime.providers import AssistantTurn, ModelCapabilities, ProviderClient
+from runtime.policy import Mode, PermissionEngine, ToolCall, ToolManifest
+from runtime.providers import (
+    AssistantTurn,
+    ModelCapabilities,
+    ProviderClient,
+    StreamChunk,
+)
 from runtime.tools import ToolRegistry
 from runtime.turn_engine import TurnEngine
 from runtime.turns import (
@@ -14,12 +20,19 @@ from runtime.turns import (
     SessionNotFoundError,
     TurnCoordinator,
 )
+from runtime.sessions import (
+    SessionRecord,
+    TurnCheckpoint,
+    TurnStatus,
+)
 
 
 class FakeSessions:
     def __init__(self, engine=None):
         self.engine = engine
         self.persisted = []
+        self.checkpoints = []
+        self.cleared_approvals = []
         self.requests = []
 
     def get_engine(self, session_id, *, workspace=None, agent="code"):
@@ -30,6 +43,27 @@ class FakeSessions:
         self.persisted.append(session_id)
         return True
 
+    def persist_checkpoint(
+        self,
+        session_id,
+        *,
+        checkpoint,
+        completed_tool_call_id=None,
+    ):
+        self.checkpoints.append(
+            (
+                session_id,
+                checkpoint.status.value,
+                list(checkpoint.active_tool_call_ids),
+            )
+        )
+        if checkpoint.status is TurnStatus.IDLE:
+            self.persisted.append(session_id)
+        if completed_tool_call_id is not None:
+            self.cleared_approvals.append(
+                (session_id, completed_tool_call_id)
+            )
+        return True
 
 class ScriptedEngine:
     def __init__(self):
@@ -76,6 +110,10 @@ def test_turn_streams_wire_events_and_persists_session(tmp_path):
     assert result == {"ok": True, "session_id": "session-1"}
     assert sessions.requests == [("session-1", tmp_path, "code")]
     assert sessions.persisted == ["session-1"]
+    assert sessions.checkpoints == [
+        ("session-1", "running", []),
+        ("session-1", "idle", []),
+    ]
     assert received == [
         {"type": "turn_start", "input": "hello"},
         {"type": "assistant_delta", "text": "hello"},
@@ -84,6 +122,49 @@ def test_turn_streams_wire_events_and_persists_session(tmp_path):
             "status": "completed",
             "iterations": 1,
         },
+    ]
+
+
+def test_tool_execution_is_write_ahead_checkpointed():
+    class ToolEngine(ScriptedEngine):
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            yield Event(
+                EventType.ASSISTANT_MESSAGE,
+                {"text": None, "tool_calls": ["write_file"]},
+            )
+            yield Event(
+                EventType.TOOL_STARTED,
+                {"name": "write_file", "tool_call_id": "call-1"},
+            )
+            yield Event(
+                EventType.TOOL_FINISHED,
+                {
+                    "name": "write_file",
+                    "tool_call_id": "call-1",
+                    "status": "ok",
+                },
+            )
+            yield Event(EventType.TURN_END, {"status": "completed"})
+
+    async def scenario():
+        sessions = FakeSessions(ToolEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="write")
+        await turns.wait("session-1")
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.checkpoints == [
+        ("session-1", "running", []),
+        ("session-1", "running", []),
+        ("session-1", "executing", ["call-1"]),
+        ("session-1", "running", []),
+        ("session-1", "idle", []),
+    ]
+    assert sessions.cleared_approvals == [
+        ("session-1", "call-1")
     ]
 
 
@@ -242,6 +323,501 @@ def test_export_refuses_while_turn_is_active():
         await turns.wait("session-1")
 
     asyncio.run(scenario())
+
+
+def test_startup_recovery_resumes_durable_session_once(tmp_path):
+    class RecoverableEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.recovered = []
+
+        async def resume_after_crash(self, *, active_tool_call_ids=None):
+            self.recovered.append(list(active_tool_call_ids or []))
+            yield Event(EventType.TURN_START, {"input": "(recovered)"})
+            yield Event(EventType.TURN_END, {"status": "completed"})
+
+    class RecoverableSessions(FakeSessions):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.record = SessionRecord(
+                session_id="session-1",
+                workspace=str(tmp_path),
+                model="test-model",
+                mode="interactive",
+                turn_checkpoint=TurnCheckpoint.executing(
+                    {"call-1"}
+                ),
+            )
+
+        def recoverable_sessions(self):
+            return [self.record]
+
+    async def scenario():
+        engine = RecoverableEngine()
+        sessions = RecoverableSessions(engine)
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        recovered = await turns.recover()
+        duplicate = await turns.recover()
+        await turns.wait("session-1")
+        return recovered, duplicate, engine, sessions
+
+    recovered, duplicate, engine, sessions = asyncio.run(scenario())
+
+    assert recovered == 1
+    assert duplicate == 0
+    assert engine.recovered == [["call-1"]]
+    assert sessions.checkpoints == [
+        ("session-1", "executing", ["call-1"]),
+        ("session-1", "idle", []),
+    ]
+
+
+def test_startup_recovery_failure_is_persisted_and_published(tmp_path):
+    class BrokenRecoverySessions(FakeSessions):
+        def __init__(self):
+            super().__init__()
+            self.failures = []
+            self.record = SessionRecord(
+                session_id="session-1",
+                workspace=str(tmp_path),
+                model="test-model",
+                mode="interactive",
+                turn_checkpoint=TurnCheckpoint(TurnStatus.RUNNING),
+            )
+
+        def recoverable_sessions(self):
+            return [self.record]
+
+        def get_engine(self, *args, **kwargs):
+            raise RuntimeError("private reconstruction failure")
+
+        def mark_recovery_failed(self, session_id):
+            self.failures.append(session_id)
+            return True
+
+    async def scenario():
+        sessions = BrokenRecoverySessions()
+        events = EventHub()
+        published = []
+
+        async def listener(message):
+            published.append(message)
+
+        events.subscribe_session("session-1", listener)
+        turns = TurnCoordinator(sessions=sessions, events=events)
+        recovered = await turns.recover()
+        return recovered, sessions, published
+
+    recovered, sessions, published = asyncio.run(scenario())
+
+    assert recovered == 0
+    assert sessions.failures == ["session-1"]
+    assert published == [
+        {
+            "type": "error",
+            "error": "interrupted turn recovery failed",
+        }
+    ]
+
+
+def test_graceful_shutdown_preserves_last_non_idle_checkpoint():
+    class AwaitingApprovalEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            yield Event(
+                EventType.PERMISSION_REQUIRED,
+                {"approval_id": "safe-id", "name": "write_file"},
+            )
+            await self.release.wait()
+
+        def request_interrupt(self):
+            super().request_interrupt()
+            self.release.set()
+
+    async def scenario():
+        sessions = FakeSessions(AwaitingApprovalEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="write")
+        while len(sessions.checkpoints) < 2:
+            await asyncio.sleep(0)
+        await turns.shutdown()
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.checkpoints == [
+        ("session-1", "running", []),
+        ("session-1", "awaiting_approval", []),
+    ]
+    assert sessions.persisted == []
+
+
+def test_graceful_shutdown_persists_completed_tool_progress():
+    class FinishingEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            yield Event(
+                EventType.TOOL_STARTED,
+                {"name": "write_file", "tool_call_id": "call-1"},
+            )
+            await self.release.wait()
+            yield Event(
+                EventType.TOOL_FINISHED,
+                {
+                    "name": "write_file",
+                    "tool_call_id": "call-1",
+                    "status": "ok",
+                },
+            )
+            yield Event(
+                EventType.TURN_END,
+                {"status": "completed"},
+            )
+
+        def request_interrupt(self):
+            super().request_interrupt()
+            self.release.set()
+
+    async def scenario():
+        sessions = FakeSessions(FinishingEngine())
+        turns = TurnCoordinator(
+            sessions=sessions,
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="write")
+        while len(sessions.checkpoints) < 2:
+            await asyncio.sleep(0)
+        assert await turns.shutdown() is True
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.checkpoints[-2:] == [
+        ("session-1", "running", []),
+        ("session-1", "idle", []),
+    ]
+    assert sessions.cleared_approvals == [
+        ("session-1", "call-1")
+    ]
+
+
+def test_shutdown_interrupts_and_quiesces_blocked_sync_work():
+    class BlockingSyncEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+
+            def blocked_tool():
+                self.started.set()
+                self.release.wait(timeout=5)
+
+            await asyncio.to_thread(blocked_tool)
+
+        def request_interrupt(self):
+            super().request_interrupt()
+            self.release.set()
+
+    async def scenario():
+        engine = BlockingSyncEngine()
+        sessions = FakeSessions(engine)
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="block")
+        while not engine.started.is_set():
+            await asyncio.sleep(0)
+        quiesced = await turns.shutdown()
+        return engine, turns, quiesced
+
+    engine, turns, quiesced = asyncio.run(scenario())
+
+    assert quiesced is True
+    assert engine.interrupted is True
+    assert engine.release.is_set()
+    assert turns.has_active_turns() is False
+
+
+def test_shutdown_reports_noncooperative_worker_before_teardown(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "runtime.turns.service._SHUTDOWN_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    class NonCooperativeEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+
+            def blocked_tool():
+                self.started.set()
+                self.release.wait(timeout=5)
+
+            await asyncio.to_thread(blocked_tool)
+
+    async def scenario():
+        engine = NonCooperativeEngine()
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="block")
+        while not engine.started.is_set():
+            await asyncio.sleep(0)
+        quiesced = await turns.shutdown()
+        engine.release.set()
+        return quiesced
+
+    assert asyncio.run(scenario()) is False
+
+
+def test_shutdown_reports_detached_provider_stream_worker(tmp_path):
+    class WedgedProvider(ProviderClient):
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, **_kwargs):
+            raise AssertionError("stream path should be used")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+        def stream(self, **_kwargs):
+            self.started.set()
+            self.release.wait(timeout=5)
+            yield StreamChunk(
+                turn=AssistantTurn(text="too late")
+            )
+
+    async def scenario():
+        provider = WedgedProvider()
+        engine = TurnEngine(
+            provider=provider,
+            registry=ToolRegistry(ToolManifest()),
+            permissions=PermissionEngine(
+                tmp_path,
+                mode=Mode.INTERACTIVE,
+            ),
+            model="openai:gpt-test",
+        )
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="stream")
+        while not provider.started.is_set():
+            await asyncio.sleep(0)
+        quiesced = await turns.shutdown()
+        provider.release.set()
+        while not engine.is_quiescent():
+            await asyncio.sleep(0)
+        return quiesced
+
+    assert asyncio.run(scenario()) is False
+
+
+def test_shutdown_remembers_provider_worker_after_turn_retires(
+    tmp_path,
+):
+    class WedgedProvider(ProviderClient):
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, **_kwargs):
+            raise AssertionError("stream path should be used")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+        def stream(self, **_kwargs):
+            self.started.set()
+            self.release.wait(timeout=5)
+            yield StreamChunk(
+                turn=AssistantTurn(text="too late")
+            )
+
+    async def scenario():
+        provider = WedgedProvider()
+        engine = TurnEngine(
+            provider=provider,
+            registry=ToolRegistry(ToolManifest()),
+            permissions=PermissionEngine(
+                tmp_path,
+                mode=Mode.INTERACTIVE,
+            ),
+            model="openai:gpt-test",
+        )
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="stream")
+        while not provider.started.is_set():
+            await asyncio.sleep(0)
+        assert turns.interrupt("session-1") is True
+        await turns.wait("session-1")
+        quiesced = await turns.shutdown()
+        provider.release.set()
+        while not engine.is_quiescent():
+            await asyncio.sleep(0)
+        return quiesced
+
+    assert asyncio.run(scenario()) is False
+
+
+def test_shutdown_rejects_start_that_was_waiting_on_snapshot_barrier():
+    async def scenario():
+        turns = TurnCoordinator(
+            sessions=FakeSessions(ScriptedEngine()),
+            events=EventHub(),
+        )
+        await turns.shutdown()
+        with pytest.raises(SessionBusyError, match="shutting down"):
+            await turns.start("session-1", user_input="late")
+
+    asyncio.run(scenario())
+
+
+def test_shutdown_at_tool_started_still_persists_write_ahead_state():
+    class RacingEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.allow_tool_started = asyncio.Event()
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            await self.allow_tool_started.wait()
+            yield Event(
+                EventType.TOOL_STARTED,
+                {"name": "write_file", "tool_call_id": "call-1"},
+            )
+            await asyncio.sleep(3600)
+
+        def request_interrupt(self):
+            super().request_interrupt()
+            self.allow_tool_started.set()
+
+    async def scenario():
+        engine = RacingEngine()
+        sessions = FakeSessions(engine)
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="write")
+        while not sessions.checkpoints:
+            await asyncio.sleep(0)
+        await turns.shutdown()
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.checkpoints[-1] == (
+        "session-1",
+        "executing",
+        ["call-1"],
+    )
+
+
+def test_checkpoint_failure_never_clears_last_durable_recovery_state():
+    class ToolEngine(ScriptedEngine):
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            yield Event(
+                EventType.TOOL_STARTED,
+                {"name": "write_file", "tool_call_id": "call-1"},
+            )
+            raise AssertionError("execution must stop when checkpoint fails")
+
+    class FailingCheckpointSessions(FakeSessions):
+        def persist_checkpoint(self, session_id, *, checkpoint):
+            super().persist_checkpoint(
+                session_id,
+                checkpoint=checkpoint,
+            )
+            return checkpoint.status is not TurnStatus.EXECUTING
+
+    async def scenario():
+        sessions = FailingCheckpointSessions(ToolEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        await turns.start("session-1", user_input="write")
+        await turns.wait("session-1")
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.checkpoints == [
+        ("session-1", "running", []),
+        ("session-1", "executing", ["call-1"]),
+    ]
+    assert sessions.persisted == []
+
+
+def test_checkpoint_exception_never_writes_idle_fallback():
+    class ToolEngine(ScriptedEngine):
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            yield Event(
+                EventType.TOOL_STARTED,
+                {"name": "write_file", "tool_call_id": "call-1"},
+            )
+            yield Event(
+                EventType.TOOL_FINISHED,
+                {
+                    "name": "write_file",
+                    "tool_call_id": "call-1",
+                    "status": "ok",
+                },
+            )
+
+    class RaisingCheckpointSessions(FakeSessions):
+        def persist_checkpoint(
+            self,
+            session_id,
+            *,
+            checkpoint,
+            completed_tool_call_id=None,
+        ):
+            if completed_tool_call_id == "call-1":
+                raise sqlite3.IntegrityError(
+                    "simulated atomic rollback"
+                )
+            return super().persist_checkpoint(
+                session_id,
+                checkpoint=checkpoint,
+            )
+
+    async def scenario():
+        sessions = RaisingCheckpointSessions(ToolEngine())
+        turns = TurnCoordinator(
+            sessions=sessions,
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="write")
+        await turns.wait("session-1")
+        return sessions
+
+    sessions = asyncio.run(scenario())
+
+    assert sessions.checkpoints == [
+        ("session-1", "running", []),
+        ("session-1", "executing", ["call-1"]),
+    ]
+    assert sessions.persisted == []
 
 
 def test_unexpected_engine_error_is_value_sanitized_and_persisted():

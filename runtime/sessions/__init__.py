@@ -1,6 +1,11 @@
 """Session lifecycle boundary for the Codinal runtime."""
 
-from .models import RootDir, SessionRecord
+from .models import (
+    RootDir,
+    SessionRecord,
+    TurnCheckpoint,
+    TurnStatus,
+)
 from .service import EngineRequest, SessionCleanupError, SessionService
 
 __all__ = [
@@ -9,4 +14,6 @@ __all__ = [
     "SessionCleanupError",
     "SessionRecord",
     "SessionService",
+    "TurnCheckpoint",
+    "TurnStatus",
 ]

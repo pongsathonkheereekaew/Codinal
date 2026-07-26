@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Callable
 
 from runtime.events import Event, EventHub, EventType
-from runtime.sessions import SessionService
+from runtime.sessions import (
+    SessionService,
+    TurnCheckpoint,
+    TurnStatus,
+)
 
 
 class SessionNotFoundError(LookupError):
@@ -26,6 +30,9 @@ class ExportBusyError(RuntimeError):
     pass
 
 
+_SHUTDOWN_TIMEOUT_SECONDS = 2.0
+
+
 class TurnCoordinator:
     def __init__(
         self,
@@ -37,8 +44,11 @@ class TurnCoordinator:
         self._events = events
         self._active: dict[str, asyncio.Task[None]] = {}
         self._engines: dict[str, Any] = {}
+        self._retired_engines: list[Any] = []
         self._starting: set[str] = set()
+        self._executing: dict[str, set[str]] = {}
         self._snapshot_barrier = asyncio.Lock()
+        self._shutting_down = False
 
     async def start(
         self,
@@ -70,6 +80,8 @@ class TurnCoordinator:
         model: str | None,
         source: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        if self._shutting_down:
+            raise SessionBusyError("turn coordinator is shutting down")
         active = self._active.get(session_id)
         if (
             session_id in self._starting
@@ -130,6 +142,116 @@ class TurnCoordinator:
             not task.done() for task in self._active.values()
         )
 
+    async def shutdown(self) -> bool:
+        """Stop live work while preserving its latest durable checkpoint."""
+        async with self._snapshot_barrier:
+            self._shutting_down = True
+            tasks = [
+                task
+                for task in self._active.values()
+                if not task.done()
+            ]
+            self._retired_engines = [
+                engine
+                for engine in self._retired_engines
+                if not _engine_is_quiescent(engine)
+            ]
+            active_engines = tuple(self._engines.values())
+            engines = active_engines + tuple(
+                engine
+                for engine in self._retired_engines
+                if all(
+                    engine is not active
+                    for active in active_engines
+                )
+            )
+            for engine in engines:
+                try:
+                    engine.request_interrupt()
+                except Exception:
+                    pass
+        quiesced = True
+        if tasks:
+            _, pending = await asyncio.wait(
+                tasks,
+                timeout=_SHUTDOWN_TIMEOUT_SECONDS,
+            )
+            quiesced = not pending
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(
+                    *pending,
+                    return_exceptions=True,
+                )
+        quiesced = quiesced and all(
+            _engine_is_quiescent(engine)
+            for engine in engines
+        )
+        return quiesced
+
+    async def recover(self) -> int:
+        """Resume durable non-idle turns exactly once per process."""
+        recovered = 0
+        async with self._snapshot_barrier:
+            records = await asyncio.to_thread(
+                self._sessions.recoverable_sessions
+            )
+            for record in records:
+                session_id = record.session_id
+                if self.is_active(session_id):
+                    continue
+                self._starting.add(session_id)
+                try:
+                    engine = await asyncio.to_thread(
+                        self._sessions.get_engine,
+                        session_id,
+                    )
+                except Exception:
+                    try:
+                        await asyncio.to_thread(
+                            self._sessions.mark_recovery_failed,
+                            session_id,
+                        )
+                    except Exception:
+                        pass
+                    await self._events.publish_session(
+                        session_id,
+                        {
+                            "type": "error",
+                            "error": (
+                                "interrupted turn recovery failed"
+                            ),
+                        },
+                    )
+                    continue
+                finally:
+                    self._starting.discard(session_id)
+                if engine is None:
+                    continue
+                active_tool_call_ids = (
+                    list(
+                        record.turn_checkpoint.active_tool_call_ids
+                    )
+                    if record.turn_checkpoint.status
+                    is TurnStatus.EXECUTING
+                    else []
+                )
+                self._executing[session_id] = set(
+                    active_tool_call_ids
+                )
+                task = asyncio.create_task(
+                    self._resume(
+                        session_id,
+                        engine,
+                        active_tool_call_ids=active_tool_call_ids,
+                    )
+                )
+                self._active[session_id] = task
+                self._engines[session_id] = engine
+                recovered += 1
+        return recovered
+
     async def _run(
         self,
         session_id: str,
@@ -138,9 +260,38 @@ class TurnCoordinator:
         *,
         source: dict[str, Any] | None,
     ) -> None:
+        await self._drive(
+            session_id,
+            engine,
+            engine.run(user_input, source=source),
+        )
+
+    async def _resume(
+        self,
+        session_id: str,
+        engine: Any,
+        *,
+        active_tool_call_ids: list[str],
+    ) -> None:
+        await self._drive(
+            session_id,
+            engine,
+            engine.resume_after_crash(
+                active_tool_call_ids=active_tool_call_ids
+            ),
+        )
+
+    async def _drive(
+        self,
+        session_id: str,
+        engine: Any,
+        events: AsyncIterator[Event],
+    ) -> None:
         terminal: dict[str, Any] | None = None
+        cancelled = False
+        durability_failed = False
         try:
-            async for event in engine.run(user_input, source=source):
+            async for event in events:
                 message = _wire_event(event)
                 if event.type in {
                     EventType.TURN_END,
@@ -149,24 +300,51 @@ class TurnCoordinator:
                 }:
                     terminal = message
                 else:
+                    checkpoint = self._checkpoint_for_event(
+                        session_id,
+                        event,
+                    )
+                    if checkpoint is not None:
+                        completed_id = (
+                            event.data.get("tool_call_id")
+                            if event.type is EventType.TOOL_FINISHED
+                            else None
+                        )
+                        persistence_options: dict[str, Any] = {
+                            "checkpoint": checkpoint,
+                        }
+                        if isinstance(completed_id, str):
+                            persistence_options[
+                                "completed_tool_call_id"
+                            ] = completed_id
+                        try:
+                            persisted = await asyncio.to_thread(
+                                self._sessions.persist_checkpoint,
+                                session_id,
+                                **persistence_options,
+                            )
+                        except Exception:
+                            durability_failed = True
+                            raise
+                        if not persisted:
+                            durability_failed = True
+                            raise RuntimeError(
+                                "conversation checkpoint failed"
+                            )
                     await self._events.publish_session(
                         session_id,
                         message,
                     )
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception:
             terminal = {
                 "type": "error",
                 "error": "turn execution failed",
             }
         finally:
-            try:
-                persisted = await asyncio.to_thread(
-                    self._sessions.persist,
-                    session_id,
-                )
-            except Exception:
-                persisted = False
-            if not persisted:
+            if durability_failed:
                 await self._events.publish_session(
                     session_id,
                     {
@@ -174,12 +352,67 @@ class TurnCoordinator:
                         "error": "conversation persistence failed",
                     },
                 )
+            elif (
+                not cancelled
+                and (
+                    not self._shutting_down
+                    or terminal is not None
+                )
+            ):
+                try:
+                    persisted = await asyncio.to_thread(
+                    self._sessions.persist_checkpoint,
+                    session_id,
+                    checkpoint=TurnCheckpoint(),
+                    )
+                except Exception:
+                    persisted = False
+                if not persisted:
+                    await self._events.publish_session(
+                        session_id,
+                        {
+                            "type": "error",
+                            "error": "conversation persistence failed",
+                        },
+                    )
             current = asyncio.current_task()
             if self._active.get(session_id) is current:
                 self._active.pop(session_id, None)
                 self._engines.pop(session_id, None)
+                self._executing.pop(session_id, None)
+                if not _engine_is_quiescent(engine):
+                    self._retired_engines.append(engine)
             if terminal is not None:
                 await self._events.publish_session(session_id, terminal)
+
+    def _checkpoint_for_event(
+        self,
+        session_id: str,
+        event: Event,
+    ) -> TurnCheckpoint | None:
+        executing = self._executing.setdefault(session_id, set())
+        if event.type is EventType.TOOL_STARTED:
+            tool_call_id = event.data.get("tool_call_id")
+            if isinstance(tool_call_id, str):
+                executing.add(tool_call_id)
+            return TurnCheckpoint.executing(executing)
+        if event.type is EventType.TOOL_FINISHED:
+            tool_call_id = event.data.get("tool_call_id")
+            if isinstance(tool_call_id, str):
+                executing.discard(tool_call_id)
+            if executing:
+                return TurnCheckpoint.executing(executing)
+            return TurnCheckpoint(TurnStatus.RUNNING)
+        if event.type in {
+            EventType.TURN_START,
+            EventType.ASSISTANT_MESSAGE,
+        }:
+            if executing:
+                return TurnCheckpoint.executing(executing)
+            return TurnCheckpoint(TurnStatus.RUNNING)
+        if event.type is EventType.PERMISSION_REQUIRED:
+            return TurnCheckpoint(TurnStatus.AWAITING_APPROVAL)
+        return None
 
     def interrupt(self, session_id: str) -> bool:
         task = self._active.get(session_id)
@@ -210,3 +443,8 @@ def _wire_event(event: Event) -> dict[str, Any]:
         **event.data,
         "type": event.type.value,
     }
+
+
+def _engine_is_quiescent(engine: Any) -> bool:
+    checker = getattr(engine, "is_quiescent", None)
+    return True if checker is None else bool(checker())

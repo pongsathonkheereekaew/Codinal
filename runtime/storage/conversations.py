@@ -13,7 +13,11 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from runtime.sessions import SessionRecord
+from runtime.sessions import (
+    SessionRecord,
+    TurnCheckpoint,
+    TurnStatus,
+)
 
 from .errors import ExportTooLargeError
 from .migrations import (
@@ -26,7 +30,7 @@ from .migrations import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
 
 
@@ -83,9 +87,52 @@ def _migrate_to_v2(connection: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v3(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(sessions)")
+    }
+    if "turn_status" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions "
+            "ADD COLUMN turn_status TEXT NOT NULL DEFAULT 'idle'"
+        )
+    if "active_tool_call_ids" not in columns:
+        connection.execute(
+            "ALTER TABLE sessions "
+            "ADD COLUMN active_tool_call_ids TEXT NOT NULL DEFAULT '[]'"
+        )
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS approval_decisions (
+            session_id TEXT NOT NULL,
+            tool_call_id TEXT NOT NULL,
+            request_fingerprint TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT ({_NOW}),
+            PRIMARY KEY (session_id, tool_call_id),
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    approval_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(approval_decisions)"
+        )
+    }
+    if "request_fingerprint" not in approval_columns:
+        connection.execute(
+            "ALTER TABLE approval_decisions "
+            "ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT ''"
+        )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
+    3: _migrate_to_v3,
 }
 
 
@@ -128,12 +175,20 @@ class ConversationStore:
         with self._lock:
             self._connection.close()
 
-    def save(self, record: SessionRecord) -> None:
+    def save(
+        self,
+        record: SessionRecord,
+        *,
+        completed_tool_call_id: str | None = None,
+    ) -> None:
         _validate_session_id(record.session_id)
         _validate_record(record)
         messages = [_encode_json(message) for message in record.messages]
         extra_roots = _encode_json(record.extra_roots or [])
         grants = _encode_json(record.grants or {})
+        active_tool_call_ids = _encode_json(
+            record.turn_checkpoint.active_tool_call_ids
+        )
         title = record.title or _title_from(record.messages)
 
         with self._lock, self._connection:
@@ -143,9 +198,12 @@ class ConversationStore:
                     session_id, workspace, source_workspace, model, mode,
                     title, agent,
                     extra_roots, grants, pinned, archived, origin,
-                    origin_label, updated_at
+                    origin_label, turn_status, active_tool_call_ids,
+                    updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {_NOW})
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {_NOW}
+                )
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace,
                     source_workspace = excluded.source_workspace,
@@ -159,6 +217,8 @@ class ConversationStore:
                     archived = excluded.archived,
                     origin = excluded.origin,
                     origin_label = excluded.origin_label,
+                    turn_status = excluded.turn_status,
+                    active_tool_call_ids = excluded.active_tool_call_ids,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -175,6 +235,8 @@ class ConversationStore:
                     int(record.archived),
                     record.origin,
                     record.origin_label,
+                    record.turn_checkpoint.status.value,
+                    active_tool_call_ids,
                 ),
             )
             existing = [
@@ -218,6 +280,26 @@ class ConversationStore:
             self._touch_workspace(
                 record.source_workspace or record.workspace
             )
+            if completed_tool_call_id is not None:
+                _validate_tool_call_id(completed_tool_call_id)
+                self._connection.execute(
+                    """
+                    DELETE FROM approval_decisions
+                    WHERE session_id = ? AND tool_call_id = ?
+                    """,
+                    (record.session_id, completed_tool_call_id),
+                )
+
+    def save_checkpoint(
+        self,
+        record: SessionRecord,
+        *,
+        completed_tool_call_id: str | None = None,
+    ) -> None:
+        self.save(
+            record,
+            completed_tool_call_id=completed_tool_call_id,
+        )
 
     def load(self, session_id: str) -> Optional[SessionRecord]:
         _validate_session_id(session_id)
@@ -240,6 +322,80 @@ class ConversationStore:
                 )
             ]
         return _record_from_row(row, messages=messages)
+
+    def load_approval_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        request_fingerprint: str,
+    ) -> str | None:
+        _validate_session_id(session_id)
+        _validate_tool_call_id(tool_call_id)
+        _validate_request_fingerprint(request_fingerprint)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT outcome FROM approval_decisions
+                WHERE session_id = ? AND tool_call_id = ?
+                    AND request_fingerprint = ?
+                """,
+                (session_id, tool_call_id, request_fingerprint),
+            ).fetchone()
+        return str(row["outcome"]) if row is not None else None
+
+    def save_approval_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+        request_fingerprint: str,
+        outcome: str,
+    ) -> None:
+        _validate_session_id(session_id)
+        _validate_tool_call_id(tool_call_id)
+        _validate_request_fingerprint(request_fingerprint)
+        if outcome not in {
+            "once",
+            "always_tool",
+            "always_command",
+            "deny",
+        }:
+            raise ValueError("invalid approval outcome")
+        with self._lock, self._connection:
+            self._connection.execute(
+                f"""
+                INSERT INTO approval_decisions (
+                    session_id, tool_call_id, request_fingerprint,
+                    outcome, updated_at
+                )
+                VALUES (?, ?, ?, ?, {_NOW})
+                ON CONFLICT(session_id, tool_call_id) DO UPDATE SET
+                    request_fingerprint = excluded.request_fingerprint,
+                    outcome = excluded.outcome,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    session_id,
+                    tool_call_id,
+                    request_fingerprint,
+                    outcome,
+                ),
+            )
+
+    def delete_approval_decision(
+        self,
+        session_id: str,
+        tool_call_id: str,
+    ) -> None:
+        _validate_session_id(session_id)
+        _validate_tool_call_id(tool_call_id)
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                DELETE FROM approval_decisions
+                WHERE session_id = ? AND tool_call_id = ?
+                """,
+                (session_id, tool_call_id),
+            )
 
     def list(
         self,
@@ -299,6 +455,8 @@ class ConversationStore:
                     + LENGTH(CAST(grants AS BLOB))
                     + COALESCE(LENGTH(CAST(origin AS BLOB)), 0)
                     + COALESCE(LENGTH(CAST(origin_label AS BLOB)), 0)
+                    + LENGTH(CAST(turn_status AS BLOB))
+                    + LENGTH(CAST(active_tool_call_ids AS BLOB))
                     + LENGTH(CAST(updated_at AS BLOB))
                 ), 0)
                 FROM sessions
@@ -440,6 +598,23 @@ def _validate_session_id(session_id: str) -> None:
         raise ValueError("invalid session id")
 
 
+def _validate_tool_call_id(tool_call_id: str) -> None:
+    if (
+        not isinstance(tool_call_id, str)
+        or not 1 <= len(tool_call_id) <= 256
+        or "\x00" in tool_call_id
+    ):
+        raise ValueError("invalid tool call id")
+
+
+def _validate_request_fingerprint(request_fingerprint: str) -> None:
+    if (
+        not isinstance(request_fingerprint, str)
+        or re.fullmatch(r"[0-9a-f]{64}", request_fingerprint) is None
+    ):
+        raise ValueError("invalid approval request fingerprint")
+
+
 def _validate_record(record: SessionRecord) -> None:
     bounded = (
         (record.workspace, 4096),
@@ -456,6 +631,7 @@ def _validate_record(record: SessionRecord) -> None:
         or not all(isinstance(message, dict) for message in record.messages)
         or not isinstance(record.extra_roots, list)
         or not isinstance(record.grants, dict)
+        or not isinstance(record.turn_checkpoint, TurnCheckpoint)
     ):
         raise ValueError("invalid session data")
     if record.source_workspace is not None and (
@@ -513,6 +689,15 @@ def _record_from_row(
         archived=bool(row["archived"]),
         origin=row["origin"],
         origin_label=row["origin_label"],
+        turn_checkpoint=TurnCheckpoint(
+            status=TurnStatus(row["turn_status"]),
+            active_tool_call_ids=tuple(
+                _decode_json(
+                    row["active_tool_call_ids"],
+                    expected=list,
+                )
+            ),
+        ),
     )
 
 

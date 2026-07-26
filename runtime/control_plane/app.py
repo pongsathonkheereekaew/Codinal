@@ -26,7 +26,7 @@ from runtime.control_plane.input_validation import (
     MAX_TURN_BODY_BYTES,
     valid_turn_input,
 )
-from runtime.policy import ApprovalOutcome
+from runtime.policy import ApprovalOutcome, ApprovalPersistenceError
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
     ExportBusyError,
@@ -76,6 +76,10 @@ class OAuthCallbacks(Protocol):
 
 
 class TurnControl(Protocol):
+    async def recover(self) -> int: ...
+
+    async def shutdown(self) -> bool | None: ...
+
     async def start(
         self,
         session_id: str,
@@ -198,17 +202,20 @@ def create_control_plane_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
+            await services.turns.recover()
             yield
         finally:
-            mcp = getattr(services, "mcp", None)
-            if mcp is not None:
-                await mcp.aclose()
-            git = getattr(services, "git", None)
-            if git is not None:
-                git.close()
-            approvals = getattr(services, "approvals", None)
-            if approvals is not None:
-                approvals.close()
+            quiesced = await services.turns.shutdown()
+            if quiesced is not False:
+                mcp = getattr(services, "mcp", None)
+                if mcp is not None:
+                    await mcp.aclose()
+                git = getattr(services, "git", None)
+                if git is not None:
+                    git.close()
+                approvals = getattr(services, "approvals", None)
+                if approvals is not None:
+                    approvals.close()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -426,7 +433,18 @@ def create_control_plane_app(
         if approvals is None:
             raise HTTPException(status_code=503, detail="approvals unavailable")
         outcome = await _read_approval(request)
-        if not approvals.resolve(session_id, approval_id, outcome):
+        try:
+            resolved = approvals.resolve(
+                session_id,
+                approval_id,
+                outcome,
+            )
+        except ApprovalPersistenceError:
+            raise HTTPException(
+                status_code=503,
+                detail="approval decision could not be saved",
+            ) from None
+        if not resolved:
             raise HTTPException(
                 status_code=409,
                 detail="approval is not pending or outcome is not applicable",

@@ -28,7 +28,10 @@ from .approval import (
     PermissionRequest,
     deny_all,
 )
-from .approval_broker import ApprovalBroker
+from .approval_broker import (
+    ApprovalBroker,
+    ApprovalPersistenceError,
+)
 from .manifest import ToolManifest, ToolSpec
 from .tool_calls import (
     ToolCall,
@@ -47,6 +50,7 @@ __all__ = [
     "standing_rule_candidate",
     "ApprovalOutcome",
     "ApprovalBroker",
+    "ApprovalPersistenceError",
     "Approver",
     "PermissionRequest",
     "deny_all",

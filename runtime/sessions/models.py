@@ -8,8 +8,52 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
+
+
+class TurnStatus(str, Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    AWAITING_APPROVAL = "awaiting_approval"
+    EXECUTING = "executing"
+
+
+@dataclass(frozen=True)
+class TurnCheckpoint:
+    status: TurnStatus = TurnStatus.IDLE
+    active_tool_call_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            len(set(self.active_tool_call_ids))
+            != len(self.active_tool_call_ids)
+            or any(
+                not isinstance(tool_call_id, str)
+                or not 1 <= len(tool_call_id) <= 256
+                for tool_call_id in self.active_tool_call_ids
+            )
+            or (
+                self.status is TurnStatus.EXECUTING
+                and not self.active_tool_call_ids
+            )
+            or (
+                self.status is not TurnStatus.EXECUTING
+                and bool(self.active_tool_call_ids)
+            )
+        ):
+            raise ValueError("invalid turn checkpoint")
+
+    @classmethod
+    def executing(
+        cls,
+        tool_call_ids: set[str],
+    ) -> "TurnCheckpoint":
+        return cls(
+            TurnStatus.EXECUTING,
+            tuple(sorted(tool_call_ids)),
+        )
 
 
 @dataclass
@@ -30,6 +74,9 @@ class SessionRecord:
     archived: bool = False
     origin: Optional[str] = None
     origin_label: Optional[str] = None
+    turn_checkpoint: TurnCheckpoint = field(
+        default_factory=TurnCheckpoint
+    )
 
 
 @dataclass

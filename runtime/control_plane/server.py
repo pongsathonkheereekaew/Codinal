@@ -24,7 +24,11 @@ from runtime.policy import ApprovalBroker, Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
 from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.sandbox import SandboxedShell
-from runtime.sessions import SessionCleanupError, SessionRecord
+from runtime.sessions import (
+    SessionCleanupError,
+    SessionRecord,
+    TurnCheckpoint,
+)
 from runtime.storage import ConversationStore
 from runtime.tools import (
     build_core_registry,
@@ -92,7 +96,7 @@ def build_services(
     store = ConversationStore(config.data_dir)
     provider_client = provider or ProviderRouter(secret_service)
     git_service = GitWorktreeService(config.data_dir)
-    approval_broker = ApprovalBroker()
+    approval_broker = ApprovalBroker(decisions=store)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -196,6 +200,11 @@ def build_services(
             archived=existing.archived if existing else False,
             origin=existing.origin if existing else "desktop",
             origin_label=existing.origin_label if existing else "Codinal",
+            turn_checkpoint=(
+                existing.turn_checkpoint
+                if existing
+                else TurnCheckpoint()
+            ),
         )
 
     return compose_runtime(

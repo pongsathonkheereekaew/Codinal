@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from runtime.sessions import SessionRecord
+from runtime.sessions import (
+    SessionRecord,
+    TurnCheckpoint,
+    TurnStatus,
+)
 from runtime.storage import (
     ConversationStore,
     ExportTooLargeError,
@@ -43,6 +47,9 @@ def test_save_reopen_and_load_preserves_complete_session(tmp_path):
         archived=True,
         origin="desktop",
         origin_label="Codinal",
+        turn_checkpoint=TurnCheckpoint.executing(
+            {"provider-call-1"}
+        ),
     )
 
     store.save(original)
@@ -61,6 +68,119 @@ def test_save_reopen_and_load_preserves_complete_session(tmp_path):
     assert loaded.archived is True
     assert loaded.origin == "desktop"
     assert loaded.origin_label == "Codinal"
+    assert loaded.turn_checkpoint == TurnCheckpoint.executing(
+        {"provider-call-1"}
+    )
+
+
+def test_approval_decision_survives_restart_until_tool_finishes(tmp_path):
+    store = ConversationStore(tmp_path)
+    store.save(record())
+    store.save_approval_decision(
+        "session-1", "call-1", "a" * 64, "once"
+    )
+    store.close()
+
+    reopened = ConversationStore(tmp_path)
+
+    assert (
+        reopened.load_approval_decision(
+            "session-1", "call-1", "a" * 64
+        )
+        == "once"
+    )
+    assert (
+        reopened.load_approval_decision(
+            "session-1", "call-1", "b" * 64
+        )
+        is None
+    )
+    reopened.delete_approval_decision("session-1", "call-1")
+    assert (
+        reopened.load_approval_decision(
+            "session-1", "call-1", "a" * 64
+        )
+        is None
+    )
+
+
+def test_checkpoint_and_approval_consumption_commit_atomically(tmp_path):
+    store = ConversationStore(tmp_path)
+    initial = record(
+        turn_checkpoint=TurnCheckpoint.executing({"call-1"})
+    )
+    store.save(initial)
+    store.save_approval_decision(
+        "session-1", "call-1", "a" * 64, "once"
+    )
+    completed = record(
+        messages=[
+            {"role": "user", "content": "hello"},
+            {"role": "tool", "tool_call_id": "call-1", "content": "ok"},
+        ],
+        turn_checkpoint=TurnCheckpoint(TurnStatus.RUNNING),
+    )
+
+    store.save_checkpoint(
+        completed,
+        completed_tool_call_id="call-1",
+    )
+    store.close()
+    reopened = ConversationStore(tmp_path)
+
+    loaded = reopened.load("session-1")
+    assert loaded is not None
+    assert loaded.messages == completed.messages
+    assert loaded.turn_checkpoint == completed.turn_checkpoint
+    assert (
+        reopened.load_approval_decision(
+            "session-1", "call-1", "a" * 64
+        )
+        is None
+    )
+
+
+def test_failed_approval_consumption_rolls_back_checkpoint(tmp_path):
+    store = ConversationStore(tmp_path)
+    initial = record(
+        turn_checkpoint=TurnCheckpoint.executing({"call-1"})
+    )
+    store.save(initial)
+    store.save_approval_decision(
+        "session-1", "call-1", "a" * 64, "once"
+    )
+    with sqlite3.connect(store.db_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_approval_delete
+            BEFORE DELETE ON approval_decisions
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated crash window');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.save_checkpoint(
+            record(
+                messages=[
+                    {"role": "user", "content": "changed"}
+                ],
+                turn_checkpoint=TurnCheckpoint(TurnStatus.RUNNING),
+            ),
+            completed_tool_call_id="call-1",
+        )
+
+    loaded = store.load("session-1")
+    assert loaded is not None
+    assert loaded.messages == initial.messages
+    assert loaded.turn_checkpoint == initial.turn_checkpoint
+    assert (
+        store.load_approval_decision(
+            "session-1", "call-1", "a" * 64
+        )
+        == "once"
+    )
 
 
 def test_isolated_runtime_workspace_keeps_user_source_for_listing(
@@ -271,8 +391,8 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
         "/Users/example/project"
     )
     with sqlite3.connect(store.db_path) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 2
-    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v2-*.bak"))
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+    backups = list((tmp_path / "backups").glob("codinal.db.pre-v0-to-v3-*.bak"))
     assert len(backups) == 1
     assert stat.S_IMODE((tmp_path / "backups").stat().st_mode) == 0o700
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
@@ -284,7 +404,7 @@ def test_existing_phase_2_database_migrates_source_workspace_column(
     assert "source_workspace" not in columns
 
 
-def test_v1_conversation_schema_migrates_to_v2_without_losing_data(tmp_path):
+def test_v1_conversation_schema_migrates_to_v3_without_losing_data(tmp_path):
     database = tmp_path / "codinal.db"
     with sqlite3.connect(database) as connection:
         connection.executescript(
@@ -337,11 +457,70 @@ def test_v1_conversation_schema_migrates_to_v2_without_losing_data(tmp_path):
     ]
     assert restored.source_workspace is None
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "codinal.db.pre-v1-to-v2-*.bak"
+                "codinal.db.pre-v1-to-v3-*.bak"
+            )
+        )
+    ) == 1
+
+
+def test_v2_conversation_schema_adds_idle_recovery_state(tmp_path):
+    database = tmp_path / "codinal.db"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE sessions (
+                session_id TEXT PRIMARY KEY,
+                workspace TEXT NOT NULL,
+                source_workspace TEXT,
+                model TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                title TEXT,
+                agent TEXT NOT NULL DEFAULT 'code',
+                extra_roots TEXT NOT NULL DEFAULT '[]',
+                grants TEXT NOT NULL DEFAULT '{}',
+                pinned INTEGER NOT NULL DEFAULT 0,
+                archived INTEGER NOT NULL DEFAULT 0,
+                origin TEXT,
+                origin_label TEXT,
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE messages (
+                session_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (session_id, sequence)
+            );
+            CREATE TABLE workspaces (
+                path TEXT PRIMARY KEY,
+                last_used TEXT NOT NULL DEFAULT ''
+            );
+            INSERT INTO sessions (
+                session_id, workspace, model, mode, agent
+            ) VALUES (
+                'retained-v2', '/workspace', 'openai:gpt-test',
+                'interactive', 'code'
+            );
+            PRAGMA user_version = 2;
+            """
+        )
+
+    store = ConversationStore(tmp_path)
+    restored = store.load("retained-v2")
+
+    assert restored is not None
+    assert restored.turn_checkpoint == TurnCheckpoint(
+        TurnStatus.IDLE
+    )
+    with sqlite3.connect(database) as migrated:
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert len(
+        list(
+            (tmp_path / "backups").glob(
+                "codinal.db.pre-v2-to-v3-*.bak"
             )
         )
     ) == 1
@@ -368,7 +547,7 @@ def test_corrupt_database_is_preserved_before_empty_recovery(tmp_path):
     assert database.read_bytes() != corrupt
     with sqlite3.connect(database) as recovered:
         assert recovered.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert recovered.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 def test_corrupt_database_restores_latest_valid_backup(tmp_path):
