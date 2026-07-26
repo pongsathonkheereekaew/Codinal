@@ -239,6 +239,14 @@ class SandboxedShell:
         with self._active_lock:
             if self._active is not None:
                 raise RuntimeError("sandbox executor is already active")
+            if self._interrupted:
+                self._interrupted = False
+                return SandboxResult(
+                    exit_code=130,
+                    stdout="",
+                    stderr="",
+                    interrupted=True,
+                )
             process = subprocess.Popen(
                 argv,
                 cwd=self.workspace,
@@ -249,7 +257,6 @@ class SandboxedShell:
                 start_new_session=True,
             )
             self._active = process
-            self._interrupted = False
 
         capture = _BoundedCapture(self.max_output_bytes)
         assert process.stdout is not None
@@ -281,6 +288,7 @@ class SandboxedShell:
                 reader.join()
             with self._active_lock:
                 interrupted = self._interrupted
+                self._interrupted = False
                 if self._active is process:
                     self._active = None
 
@@ -297,10 +305,16 @@ class SandboxedShell:
         """Kill the active command and all descendants, if any."""
         with self._active_lock:
             process = self._active
+            self._interrupted = True
             if process is None:
                 return
-            self._interrupted = True
             self._terminate(process)
+
+    def begin_turn(self) -> None:
+        with self._active_lock:
+            if self._active is not None:
+                raise RuntimeError("sandbox executor is still active")
+            self._interrupted = False
 
     def _safe_environment(self) -> dict[str, str]:
         safe = {
@@ -320,6 +334,7 @@ class SandboxedShell:
         safe["PATH"] = os.pathsep.join([*developer_bins, source_path])
         safe.update(
             {
+                "GIT_OPTIONAL_LOCKS": "0",
                 "HOME": str(self.temp_dir),
                 "TMPDIR": str(self.temp_dir),
                 "XDG_CACHE_HOME": str(self.temp_dir / "cache"),

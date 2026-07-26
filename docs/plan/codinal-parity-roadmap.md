@@ -49,7 +49,7 @@ acceptance evidence is recorded from the real product surface.
 | Multi-root and artifacts | Service methods exist; complete API/UI workflows missing | `runtime/sessions/service.py` |
 | Plan/question/directory prompts | Engine primitives exist; production callbacks/UI missing | `runtime/turn_engine/engine.py` |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
-| Checkpoints | Git-worktree baseline, exact-path direct-file attribution (including ignored files), and a crash-consistent composite restore journal are implemented with private object storage; non-Git coverage and transactionally isolated shell attribution remain open | automatic lifecycle, ambiguous-boundary restart reconciliation, ignored-file restore, shell fallback, conflict-abort, and manual-edit preservation E2Es |
+| Checkpoints | Git-worktree baseline, exact-path direct-file attribution (including ignored files), transactionally isolated shell attribution, and a crash-consistent composite restore journal are implemented with private object storage; non-Git coverage remains open | automatic lifecycle, ambiguous-boundary restart reconciliation, direct+shell ignored-file restore, same-path conflict-abort, and active-turn manual-edit preservation E2Es |
 | Semantic index, parallel subagents, PR/CI, browser | Missing | no product evidence |
 
 ## Execution map
@@ -219,11 +219,10 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Extend automatic per-turn checkpoints to non-Git workspaces and isolate
-   shell mutations transactionally so unrelated active-turn edits are never
-   stored or reverted. Exact-path direct-file attribution (including ignored
-   Git-worktree files) and crash-consistent multi-scope restore journaling are
-   implemented.
+1. Extend automatic per-turn checkpoints to non-Git workspaces. Exact-path
+   direct-file attribution (including ignored Git-worktree files),
+   transactionally isolated shell attribution, and crash-consistent
+   multi-scope restore journaling are implemented.
 2. Complete plan/question/directory prompts, because their engine contracts
    already exist and they unblock safe plan-to-build.
 3. Build searchable/forkable sessions and explicit context/file-tree surfaces.

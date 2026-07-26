@@ -183,7 +183,12 @@ def register_mutation_tools(
             or not 0 < timeout_seconds <= _MAX_COMMAND_SECONDS
         ):
             return {"error": "invalid timeout"}
-        if mutation_recorder is not None:
+        if (
+            mutation_recorder is not None
+            and not bool(
+                getattr(shell, "transactional_mutations", False)
+            )
+        ):
             try:
                 mutation_recorder.record_shell_fallback()
             except Exception:

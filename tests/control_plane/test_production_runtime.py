@@ -22,6 +22,7 @@ from runtime.control_plane import (
 )
 from runtime.control_plane.server import ServerConfig, build_services
 from runtime.git import (
+    CheckpointCaptureMode,
     CheckpointRestoreScope,
     CheckpointRestoreState,
     GitWorkspaceRecord,
@@ -1316,6 +1317,22 @@ def test_turn_checkpoint_reconciles_ambiguous_restore_after_restart(
                         )
                     ]
                 )
+            if self.calls == 2:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "checkpoint-shell",
+                            "run_shell",
+                            {
+                                "command": (
+                                    "/usr/bin/perl -e "
+                                    "\"open(F,'>shell-output.txt'); "
+                                    "print F qq(shell\\\\n); close(F)\""
+                                ),
+                            },
+                        )
+                    ]
+                )
             return AssistantTurn(text="checkpointed")
 
         def capabilities(self, _model):
@@ -1415,6 +1432,15 @@ def test_turn_checkpoint_reconciles_ambiguous_restore_after_restart(
             headers=AUTH,
         )
         checkpoint_id = checkpoints.json()[0]["checkpoint_id"]
+        captured_checkpoint = services.git.load_checkpoint(
+            checkpoint_id
+        )
+        attributed_paths = {
+            item.path
+            for item in services.git.store.list_checkpoint_files(
+                checkpoint_id
+            )
+        }
     (git_record.worktree_path / "manual.txt").write_text(
         "manual after checkpoint\n",
         encoding="utf-8",
@@ -1463,8 +1489,17 @@ def test_turn_checkpoint_reconciles_ambiguous_restore_after_restart(
     assert accepted.status_code == 202
     assert checkpoints.status_code == 200
     assert len(checkpoints.json()) == 1
+    assert (
+        captured_checkpoint.capture_mode
+        is CheckpointCaptureMode.ATTRIBUTED
+    )
+    assert attributed_paths == {
+        ".agent-cache",
+        "shell-output.txt",
+    }
     assert restarted_checkpoints.json() == []
     assert not (git_record.worktree_path / ".agent-cache").exists()
+    assert not (git_record.worktree_path / "shell-output.txt").exists()
     assert (git_record.worktree_path / "manual.txt").read_text(
         encoding="utf-8"
     ) == "manual after checkpoint\n"

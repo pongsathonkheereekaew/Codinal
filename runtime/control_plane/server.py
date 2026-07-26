@@ -17,6 +17,7 @@ from runtime.git import (
     GitWorkspaceError,
     GitWorktreeService,
     NotGitRepositoryError,
+    TransactionalShell,
 )
 from runtime.mcp import MCPManager
 from runtime.oauth import OAuthCoordinator
@@ -120,9 +121,31 @@ def build_services(
             raise SessionCleanupError(str(error)) from None
 
     def build_engine(context):
-        shell = SandboxedShell(
-            workspace=context.roots[0].path,
-            temp_dir=sandbox_directory(context.request.session_id),
+        git_record = git_service.load(context.request.session_id)
+        shell = (
+            TransactionalShell(
+                workspace=context.roots[0].path,
+                temp_dir=(
+                    sandbox_directory(context.request.session_id)
+                    / "shell-transactions"
+                ),
+                git_executable=git_service.git_executable,
+                git_read_root=git_record.git_common_dir,
+                apply_attributed_delta=lambda paths, apply_delta: (
+                    git_service.apply_file_delta(
+                        context.request.session_id,
+                        paths,
+                        apply_delta,
+                    )
+                ),
+            )
+            if git_record is not None
+            else SandboxedShell(
+                workspace=context.roots[0].path,
+                temp_dir=sandbox_directory(
+                    context.request.session_id
+                ),
+            )
         )
         registry = build_core_registry(context.roots)
         register_mutation_tools(
@@ -140,7 +163,7 @@ def build_services(
                 else None
             ),
         )
-        if git_service.load(context.request.session_id) is not None:
+        if git_record is not None:
             register_git_tools(
                 registry,
                 service=git_service,
@@ -164,6 +187,7 @@ def build_services(
                     context.request.session_id
                 ),
             ],
+            turn_start_hooks=[shell.begin_turn],
         )
         engine.agent = context.request.agent
         engine.source_workspace = context.request.workspace
@@ -247,9 +271,10 @@ def _coding_instructions() -> str:
         "You are Codinal, a local coding agent. Inspect the workspace with "
         "the provided tools, make requested changes with the mutation tools, "
         "and cite concrete file paths and line numbers. Shell commands run as "
-        "direct argv in a network-denied workspace sandbox and do not support "
-        "shell operators. Never claim a file changed unless a tool result "
-        "proves it."
+        "direct argv in a network-denied transactional workspace mirror; only "
+        "their conflict-checked file delta is applied, and shell operators are "
+        "not supported. Never claim a file changed unless a tool result proves "
+        "it."
     )
 
 

@@ -73,6 +73,7 @@ class TurnEngine:
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
+        turn_start_hooks: Optional[list[Callable[[], None]]] = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -118,6 +119,9 @@ class TurnEngine:
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
+        self._turn_start_hooks: list[Callable[[], None]] = list(
+            turn_start_hooks or []
+        )
         self._producer_futures: set[asyncio.Future[Any]] = set()
 
     # -- external controls ------------------------------------------------------
@@ -134,6 +138,11 @@ class TurnEngine:
                 hook()
             except Exception:
                 pass  # best-effort: a dead executor must not block the stop
+
+    def prepare_turn(self) -> None:
+        self._cancel.clear()
+        for hook in self._turn_start_hooks:
+            hook()
 
     def is_quiescent(self) -> bool:
         """Return true only after every provider stream worker has exited."""
@@ -177,7 +186,6 @@ class TurnEngine:
         if source is not None:
             message["source"] = source
         self.messages.append(message)
-        self._cancel.clear()
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
@@ -288,7 +296,6 @@ class TurnEngine:
         pending = self._unanswered_trailing_tool_calls()
         active = set(active_tool_call_ids or [])
         remaining = []
-        self._cancel.clear()
         yield Event(EventType.TURN_START, {"input": "(recovered)"})
         abandoned_ids = set()
         for tool_call in pending:

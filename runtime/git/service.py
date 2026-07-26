@@ -14,7 +14,7 @@ import subprocess
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from runtime.sandbox import SandboxedShell
 
@@ -246,22 +246,12 @@ class GitWorktreeService:
                 raise GitWorkspaceError(
                     "pending checkpoint not found"
                 )
-            if (
-                checkpoint.capture_mode
-                is CheckpointCaptureMode.WHOLE_TREE
-            ):
-                return
             candidate = Path(path)
-            try:
-                candidate_parent = candidate.parent.resolve(
-                    strict=True
+            if (
+                candidate.is_absolute()
+                and not candidate.is_relative_to(
+                    record.worktree_path
                 )
-            except (FileNotFoundError, OSError):
-                raise GitWorkspaceError(
-                    "checkpoint path is unavailable"
-                ) from None
-            if not (candidate_parent / candidate.name).is_relative_to(
-                record.worktree_path
             ):
                 return
             relative = self._checkpoint_relative_path(
@@ -285,6 +275,52 @@ class GitWorktreeService:
                     before_mode=mode,
                 )
             )
+
+    def apply_file_delta(
+        self,
+        session_id: str,
+        paths: tuple[Path, ...],
+        apply_delta: Callable[[], bool],
+    ) -> bool:
+        with self._lock:
+            checkpoint = self.store.pending_checkpoint(session_id)
+            if checkpoint is None:
+                raise GitWorkspaceError(
+                    "pending checkpoint not found"
+                )
+            before = {
+                item.path
+                for item in self.store.list_checkpoint_files(
+                    checkpoint.checkpoint_id
+                )
+            }
+            added: tuple[str, ...] = ()
+            applied = False
+            try:
+                for path in paths:
+                    self.record_file_preimage(session_id, path)
+                after = {
+                    item.path
+                    for item in self.store.list_checkpoint_files(
+                        checkpoint.checkpoint_id
+                    )
+                }
+                added = tuple(sorted(after - before))
+                applied = bool(apply_delta())
+                return applied
+            finally:
+                if not applied:
+                    current = {
+                        item.path
+                        for item in self.store.list_checkpoint_files(
+                            checkpoint.checkpoint_id
+                        )
+                    }
+                    added = tuple(sorted(current - before))
+                    self.store.delete_checkpoint_files(
+                        checkpoint.checkpoint_id,
+                        added,
+                    )
 
     def record_shell_fallback(self, session_id: str) -> None:
         with self._lock:
@@ -1485,10 +1521,24 @@ class GitWorktreeService:
                 "checkpoint path is unavailable"
             )
         try:
-            parent = candidate.parent.resolve(strict=True)
-            relative = (parent / candidate.name).relative_to(
-                record.worktree_path
-            )
+            relative = candidate.relative_to(record.worktree_path)
+            if ".." in relative.parts:
+                raise ValueError
+            ancestor = candidate.parent
+            while True:
+                try:
+                    metadata = ancestor.lstat()
+                    break
+                except FileNotFoundError:
+                    if ancestor == record.worktree_path:
+                        raise
+                    ancestor = ancestor.parent
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or ancestor.resolve(strict=True) != ancestor
+                or not ancestor.is_relative_to(record.worktree_path)
+            ):
+                raise ValueError
         except (FileNotFoundError, OSError, ValueError):
             raise GitWorkspaceError(
                 "checkpoint path is outside the worktree"

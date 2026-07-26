@@ -399,6 +399,32 @@ def test_second_active_turn_is_rejected_and_interrupt_reaches_engine():
     assert engine.interrupted is True
 
 
+def test_cached_engine_is_prepared_at_each_turn_boundary():
+    class PreparedEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.prepared = 0
+
+        def prepare_turn(self):
+            self.prepared += 1
+
+    async def scenario():
+        engine = PreparedEngine()
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="first")
+        await turns.wait("session-1")
+        await turns.start("session-1", user_input="second")
+        await turns.wait("session-1")
+        return engine
+
+    engine = asyncio.run(scenario())
+
+    assert engine.prepared == 2
+
+
 def test_workspace_preparation_is_nonblocking_and_counts_as_active():
     class SlowSessions(FakeSessions):
         def __init__(self, engine):

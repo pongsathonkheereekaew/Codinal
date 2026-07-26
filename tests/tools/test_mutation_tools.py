@@ -174,6 +174,35 @@ def test_mutation_recorder_failure_prevents_file_and_shell_mutation(
     assert shell.calls == []
 
 
+def test_transactional_shell_owns_shell_path_attribution(
+    tmp_path: Path,
+) -> None:
+    class TransactionalFakeShell(FakeShell):
+        transactional_mutations = True
+
+    class Recorder:
+        def record_file_preimage(self, _path):
+            pass
+
+        def record_shell_fallback(self):
+            raise AssertionError("whole-tree fallback must be skipped")
+
+    shell = TransactionalFakeShell()
+    registry, _ = build_registry(
+        tmp_path,
+        shell=shell,
+        mutation_recorder=Recorder(),
+    )
+
+    result = registry.execute(
+        "run_shell",
+        {"command": "pwd"},
+    )
+
+    assert result["exit_code"] == 0
+    assert shell.calls == [("pwd", None)]
+
+
 def test_write_file_refuses_traversal_symlinks_and_missing_parent(
     tmp_path: Path,
 ) -> None:

@@ -353,6 +353,32 @@ class GitWorktreeStore:
             ).fetchall()
         return [_checkpoint_file_from_row(row) for row in rows]
 
+    def delete_checkpoint_files(
+        self,
+        checkpoint_id: str,
+        paths: tuple[str, ...],
+    ) -> int:
+        _validate_checkpoint_id(checkpoint_id)
+        for path in paths:
+            _validate_checkpoint_file(
+                CheckpointFileRecord(
+                    checkpoint_id=checkpoint_id,
+                    path=path,
+                )
+            )
+        with self._lock, self._connection:
+            deleted = 0
+            for path in paths:
+                cursor = self._connection.execute(
+                    """
+                    DELETE FROM checkpoint_files
+                    WHERE checkpoint_id = ? AND path = ?
+                    """,
+                    (checkpoint_id, path),
+                )
+                deleted += cursor.rowcount
+            return deleted
+
     def save_restore(
         self,
         record: CheckpointRestoreRecord,

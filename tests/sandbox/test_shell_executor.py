@@ -121,6 +121,25 @@ def test_interrupt_kills_the_active_command(shell: SandboxedShell) -> None:
 
 
 @requires_seatbelt
+def test_interrupt_before_start_cancels_next_command(
+    shell: SandboxedShell,
+) -> None:
+    shell.interrupt()
+
+    result = shell.run("/bin/echo must-not-run")
+
+    assert result.exit_code == 130
+    assert result.stdout == ""
+    assert result.interrupted is True
+
+    shell.begin_turn()
+    resumed = shell.run("/bin/echo next-turn")
+
+    assert resumed.exit_code == 0
+    assert resumed.stdout == "next-turn\n"
+
+
+@requires_seatbelt
 def test_seatbelt_allows_workspace_and_temp_writes_only(
     shell: SandboxedShell,
     tmp_path: Path,

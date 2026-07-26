@@ -18,6 +18,7 @@ from .service import (
     NotGitRepositoryError,
 )
 from .store import GitWorktreeStore
+from .transactional_shell import TransactionalShell
 
 __all__ = [
     "DetachedHeadError",
@@ -33,5 +34,6 @@ __all__ = [
     "GitWorktreeService",
     "GitWorktreeStore",
     "NotGitRepositoryError",
+    "TransactionalShell",
     "WorktreeState",
 ]

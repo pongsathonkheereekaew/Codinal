@@ -161,6 +161,7 @@ class TurnCoordinator:
         self._starting.add(session_id)
         try:
             try:
+                _prepare_engine_turn(engine)
                 code_checkpoint_id = await self._begin_code_checkpoint(
                     session_id,
                     engine,
@@ -349,6 +350,7 @@ class TurnCoordinator:
                     if self._code_checkpoints is not None
                     else None
                 )
+                _prepare_engine_turn(engine)
                 task = asyncio.create_task(
                     self._resume(
                         session_id,
@@ -678,3 +680,9 @@ def _wire_event(event: Event) -> dict[str, Any]:
 def _engine_is_quiescent(engine: Any) -> bool:
     checker = getattr(engine, "is_quiescent", None)
     return True if checker is None else bool(checker())
+
+
+def _prepare_engine_turn(engine: Any) -> None:
+    prepare = getattr(engine, "prepare_turn", None)
+    if callable(prepare):
+        prepare()
