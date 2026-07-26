@@ -1,6 +1,8 @@
 """Isolated Git worktree runtime."""
 
 from .models import (
+    CheckpointCaptureMode,
+    CheckpointFileRecord,
     CheckpointState,
     CodeCheckpointRecord,
     GitWorkspaceRecord,
@@ -16,6 +18,8 @@ from .store import GitWorktreeStore
 
 __all__ = [
     "DetachedHeadError",
+    "CheckpointCaptureMode",
+    "CheckpointFileRecord",
     "CheckpointState",
     "CodeCheckpointRecord",
     "GitWorkspaceError",

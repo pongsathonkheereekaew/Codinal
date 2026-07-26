@@ -20,6 +20,11 @@ class CheckpointState(str, Enum):
     COMPLETED = "completed"
 
 
+class CheckpointCaptureMode(str, Enum):
+    ATTRIBUTED = "attributed"
+    WHOLE_TREE = "whole_tree"
+
+
 @dataclass(frozen=True)
 class GitWorkspaceRecord:
     session_id: str
@@ -44,5 +49,16 @@ class CodeCheckpointRecord:
     before_message_count: int = 0
     after_message_count: int = 0
     state: CheckpointState = CheckpointState.PENDING
+    capture_mode: CheckpointCaptureMode = CheckpointCaptureMode.WHOLE_TREE
     created_at: str = ""
     updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class CheckpointFileRecord:
+    checkpoint_id: str
+    path: str
+    before_blob: str = ""
+    after_blob: str = ""
+    before_mode: int = 0
+    after_mode: int = 0

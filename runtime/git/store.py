@@ -6,6 +6,7 @@ import re
 import sqlite3
 import threading
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Optional
 
 from runtime.storage.migrations import (
@@ -17,6 +18,8 @@ from runtime.storage.migrations import (
 )
 
 from .models import (
+    CheckpointCaptureMode,
+    CheckpointFileRecord,
     CheckpointState,
     CodeCheckpointRecord,
     GitWorkspaceRecord,
@@ -25,7 +28,7 @@ from .models import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 
 def _migrate_to_v1(connection: sqlite3.Connection) -> None:
@@ -76,9 +79,42 @@ def _migrate_to_v2(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v3(connection: sqlite3.Connection) -> None:
+    checkpoint_columns = {
+        row[1]
+        for row in connection.execute(
+            "PRAGMA table_info(code_checkpoints)"
+        )
+    }
+    if "capture_mode" not in checkpoint_columns:
+        connection.execute(
+            """
+            ALTER TABLE code_checkpoints
+            ADD COLUMN capture_mode TEXT NOT NULL DEFAULT 'whole_tree'
+            """
+        )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS checkpoint_files (
+            checkpoint_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            before_blob TEXT NOT NULL DEFAULT '',
+            after_blob TEXT NOT NULL DEFAULT '',
+            before_mode INTEGER NOT NULL DEFAULT 0,
+            after_mode INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (checkpoint_id, path),
+            FOREIGN KEY (checkpoint_id)
+                REFERENCES code_checkpoints(checkpoint_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
+    3: _migrate_to_v3,
 }
 
 
@@ -186,17 +222,19 @@ class GitWorktreeStore:
                 INSERT INTO code_checkpoints (
                     checkpoint_id, session_id, before_tree, after_tree,
                     before_message_count, after_message_count, state,
-                    created_at, updated_at
+                    capture_mode, created_at, updated_at
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?,
                     COALESCE(NULLIF(?, ''), {_NOW}),
                     {_NOW}
                 )
                 ON CONFLICT(checkpoint_id) DO UPDATE SET
+                    before_tree = excluded.before_tree,
                     after_tree = excluded.after_tree,
                     after_message_count = excluded.after_message_count,
                     state = excluded.state,
+                    capture_mode = excluded.capture_mode,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -207,6 +245,7 @@ class GitWorktreeStore:
                     record.before_message_count,
                     record.after_message_count,
                     record.state.value,
+                    record.capture_mode.value,
                     record.created_at,
                 ),
             )
@@ -221,6 +260,58 @@ class GitWorktreeStore:
         _validate_checkpoint_id(checkpoint_id)
         with self._lock:
             return self._load_checkpoint(checkpoint_id)
+
+    def save_checkpoint_file(
+        self,
+        record: CheckpointFileRecord,
+    ) -> CheckpointFileRecord:
+        _validate_checkpoint_file(record)
+        with self._lock, self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO checkpoint_files (
+                    checkpoint_id, path, before_blob, after_blob,
+                    before_mode, after_mode
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(checkpoint_id, path) DO UPDATE SET
+                    after_blob = excluded.after_blob,
+                    after_mode = excluded.after_mode
+                """,
+                (
+                    record.checkpoint_id,
+                    record.path,
+                    record.before_blob,
+                    record.after_blob,
+                    record.before_mode,
+                    record.after_mode,
+                ),
+            )
+            row = self._connection.execute(
+                """
+                SELECT * FROM checkpoint_files
+                WHERE checkpoint_id = ? AND path = ?
+                """,
+                (record.checkpoint_id, record.path),
+            ).fetchone()
+        assert row is not None
+        return _checkpoint_file_from_row(row)
+
+    def list_checkpoint_files(
+        self,
+        checkpoint_id: str,
+    ) -> list[CheckpointFileRecord]:
+        _validate_checkpoint_id(checkpoint_id)
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM checkpoint_files
+                WHERE checkpoint_id = ?
+                ORDER BY path
+                """,
+                (checkpoint_id,),
+            ).fetchall()
+        return [_checkpoint_file_from_row(row) for row in rows]
 
     def pending_checkpoint(
         self,
@@ -378,7 +469,11 @@ def _validate_checkpoint(record: CodeCheckpointRecord) -> None:
     _validate_checkpoint_id(record.checkpoint_id)
     _validate_session_id(record.session_id)
     if (
-        not re.fullmatch(r"[0-9a-f]{40,64}", record.before_tree)
+        (
+            record.before_tree
+            and re.fullmatch(r"[0-9a-f]{40,64}", record.before_tree)
+            is None
+        )
         or (
             record.after_tree
             and re.fullmatch(r"[0-9a-f]{40,64}", record.after_tree)
@@ -389,6 +484,10 @@ def _validate_checkpoint(record: CodeCheckpointRecord) -> None:
         or not isinstance(record.after_message_count, int)
         or record.after_message_count < 0
         or not isinstance(record.state, CheckpointState)
+        or not isinstance(
+            record.capture_mode,
+            CheckpointCaptureMode,
+        )
         or (
             record.after_tree
             and record.after_message_count
@@ -400,7 +499,14 @@ def _validate_checkpoint(record: CodeCheckpointRecord) -> None:
         )
         or (
             record.state is CheckpointState.COMPLETED
-            and not record.after_tree
+            and (
+                not record.before_tree
+                or not record.after_tree
+            )
+        )
+        or (
+            record.capture_mode is CheckpointCaptureMode.WHOLE_TREE
+            and not record.before_tree
         )
     ):
         raise ValueError("invalid code checkpoint")
@@ -415,6 +521,54 @@ def _checkpoint_from_row(row: sqlite3.Row) -> CodeCheckpointRecord:
         before_message_count=int(row["before_message_count"]),
         after_message_count=int(row["after_message_count"]),
         state=CheckpointState(row["state"]),
+        capture_mode=CheckpointCaptureMode(row["capture_mode"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _validate_checkpoint_file(record: CheckpointFileRecord) -> None:
+    _validate_checkpoint_id(record.checkpoint_id)
+    path = PurePosixPath(record.path)
+    valid_modes = {0, 0o100644, 0o100755}
+    if (
+        not isinstance(record.path, str)
+        or not 1 <= len(record.path.encode("utf-8")) <= 4096
+        or path.is_absolute()
+        or ".." in path.parts
+        or str(path) != record.path
+        or record.before_mode not in valid_modes
+        or record.after_mode not in valid_modes
+        or bool(record.before_blob) != bool(record.before_mode)
+        or bool(record.after_blob) != bool(record.after_mode)
+        or (
+            record.before_blob
+            and re.fullmatch(
+                r"[0-9a-f]{40,64}",
+                record.before_blob,
+            )
+            is None
+        )
+        or (
+            record.after_blob
+            and re.fullmatch(
+                r"[0-9a-f]{40,64}",
+                record.after_blob,
+            )
+            is None
+        )
+    ):
+        raise ValueError("invalid checkpoint file")
+
+
+def _checkpoint_file_from_row(
+    row: sqlite3.Row,
+) -> CheckpointFileRecord:
+    return CheckpointFileRecord(
+        checkpoint_id=row["checkpoint_id"],
+        path=row["path"],
+        before_blob=row["before_blob"],
+        after_blob=row["after_blob"],
+        before_mode=int(row["before_mode"]),
+        after_mode=int(row["after_mode"]),
     )

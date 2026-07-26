@@ -97,6 +97,11 @@ per-file provenance header; ไม่ commit OpenWorker source tree ทั้ง
 - **Runtime SSOT (OpenWorker-derived):** provider adapters, TurnEngine loop, MCP transport, conversation persistence mechanics, tool implementations
 - **Bridge (amended by F1-reopen):** loopback HTTP+WS **+ mandatory per-session bearer token** (Rust host mint + inject). Policy enforcement = `PermissionEngine` collaborator ใน `engine.py` (harness-controlled, engine.py:60-78) — runtime ห้าม bypass. spike 0a.4 พบว่า UI reuse พูด HTTP+WS; stdio บังคับ rewrite UI bridge → token auth ถูกกว่า
 - **Policy placement (M6 refinement, 2026-07-25):** `runtime/policy/` = ENGINE (PermissionEngine + risk + approval port; runs in sidecar, ships in .app). `harness/policy/` = DECLARATIVE SSOT (tool manifest, risk posture; user-editable, installs to ~/.agents). สอดคล้อง D6/M4 split (cases=harness, runner=runtime). Phase 1.1 ✅: 20 tests green, P0 shell-operator/argv-prefix behaviors pinned.
+- **Checkpoint placement refinement (2026-07-26):** `harness/` remains the
+  declarative lifecycle-policy SSOT; the executable Git/worktree/checkpoint
+  service and its durable store live under `runtime/git/` as sidecar mechanics.
+  This mirrors the conformance and policy splits above and avoids shipping a
+  second executable implementation from the installed harness assets.
 
 ### D8 — Distribution: macOS-first, Tauri cross-platform later
 - v1: macOS (Apple Silicon + Intel), **direct distribution** (ไม่ Mac App Store) → App Sandbox ไม่ถูกบังคับ (รองรับ D4 shell-out)

@@ -40,6 +40,7 @@ class CodeCheckpointControl(Protocol):
         session_id: str,
         *,
         message_count: int,
+        attributed: bool = False,
     ) -> Any | None: ...
 
     def capture_checkpoint(
@@ -571,6 +572,7 @@ class TurnCoordinator:
             self._code_checkpoints.begin_checkpoint,
             session_id,
             message_count=len(engine.messages),
+            attributed=True,
         )
         return (
             str(checkpoint.checkpoint_id)

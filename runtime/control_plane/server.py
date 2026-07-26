@@ -129,6 +129,16 @@ def build_services(
             registry,
             roots=context.roots,
             shell=shell,
+            mutation_recorder=(
+                git_service.mutation_recorder(
+                    context.request.session_id
+                )
+                if git_service.load(
+                    context.request.session_id
+                )
+                is not None
+                else None
+            ),
         )
         if git_service.load(context.request.session_id) is not None:
             register_git_tools(

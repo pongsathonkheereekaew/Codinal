@@ -97,8 +97,16 @@ class FakeCodeCheckpoints:
         self.pending = pending
         self.actions = actions
 
-    def begin_checkpoint(self, session_id, *, message_count):
-        self.begun.append((session_id, message_count))
+    def begin_checkpoint(
+        self,
+        session_id,
+        *,
+        message_count,
+        attributed=False,
+    ):
+        self.begun.append(
+            (session_id, message_count, attributed)
+        )
         return SimpleNamespace(checkpoint_id="a" * 32)
 
     def capture_checkpoint(
@@ -191,7 +199,7 @@ def test_turn_automatically_captures_code_and_conversation_checkpoint():
 
     checkpoints, actions = asyncio.run(scenario())
 
-    assert checkpoints.begun == [("session-1", 0)]
+    assert checkpoints.begun == [("session-1", 0, True)]
     assert checkpoints.captured == [
         ("session-1", "a" * 32, 1)
     ]
@@ -233,7 +241,13 @@ def test_turn_does_not_finalize_code_checkpoint_when_idle_save_fails():
 
 def test_turn_never_starts_when_automatic_checkpoint_fails():
     class FailingCheckpoints(FakeCodeCheckpoints):
-        def begin_checkpoint(self, session_id, *, message_count):
+        def begin_checkpoint(
+            self,
+            session_id,
+            *,
+            message_count,
+            attributed=False,
+        ):
             raise OSError("disk unavailable")
 
     async def scenario():

@@ -301,6 +301,121 @@ def test_checkpoint_objects_are_private_to_codinal_storage(
 
 
 @requires_seatbelt
+def test_attributed_checkpoint_restores_ignored_agent_file_only(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    (repo / ".gitignore").write_text(
+        ".agent-cache\n",
+        encoding="utf-8",
+    )
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-m", "ignore agent cache")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-attributed", repo)
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-attributed",
+        message_count=0,
+        attributed=True,
+    )
+    assert checkpoint is not None
+    recorder = service.mutation_recorder("checkpoint-attributed")
+    ignored = record.worktree_path / ".agent-cache"
+    recorder.record_file_preimage(ignored)
+    ignored.write_text("agent output\n", encoding="utf-8")
+    manual = record.worktree_path / "manual.txt"
+    manual.write_text("manual during turn\n", encoding="utf-8")
+    service.complete_checkpoint(
+        "checkpoint-attributed",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+
+    service.restore_checkpoint_code(
+        "checkpoint-attributed",
+        checkpoint.checkpoint_id,
+    )
+
+    assert not ignored.exists()
+    assert manual.read_text(encoding="utf-8") == (
+        "manual during turn\n"
+    )
+
+
+@requires_seatbelt
+def test_attributed_checkpoint_falls_back_before_shell_mutation(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    (repo / ".gitignore").write_text(
+        ".agent-cache\n",
+        encoding="utf-8",
+    )
+    git(repo, "add", ".gitignore")
+    git(repo, "commit", "-m", "ignore agent cache")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-shell-fallback", repo)
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-shell-fallback",
+        message_count=0,
+        attributed=True,
+    )
+    assert checkpoint is not None
+    recorder = service.mutation_recorder(
+        "checkpoint-shell-fallback"
+    )
+    tracked = record.worktree_path / "tracked.txt"
+    recorder.record_file_preimage(tracked)
+    tracked.write_text("direct agent edit\n", encoding="utf-8")
+    ignored = record.worktree_path / ".agent-cache"
+    recorder.record_file_preimage(ignored)
+    ignored.write_text("direct ignored edit\n", encoding="utf-8")
+    recorder.record_shell_fallback()
+    generated = record.worktree_path / "shell-output.txt"
+    generated.write_text("shell agent edit\n", encoding="utf-8")
+    service.complete_checkpoint(
+        "checkpoint-shell-fallback",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+
+    service.restore_checkpoint_code(
+        "checkpoint-shell-fallback",
+        checkpoint.checkpoint_id,
+    )
+
+    assert tracked.read_text(encoding="utf-8") == "base\n"
+    assert not ignored.exists()
+    assert not generated.exists()
+
+
+@requires_seatbelt
+def test_attributed_checkpoint_leaves_extra_root_unmanaged(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    extra_root = tmp_path / "extra"
+    extra_root.mkdir()
+    extra_file = extra_root / "valid.txt"
+    service = GitWorktreeService(tmp_path / "data")
+    service.prepare("checkpoint-extra-root", repo)
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-extra-root",
+        message_count=0,
+        attributed=True,
+    )
+    assert checkpoint is not None
+
+    service.mutation_recorder(
+        "checkpoint-extra-root"
+    ).record_file_preimage(extra_file)
+
+    assert service.store.list_checkpoint_files(
+        checkpoint.checkpoint_id
+    ) == []
+
+
+@requires_seatbelt
 def test_next_checkpoint_finalizes_captured_pending_turn(
     tmp_path: Path,
 ) -> None:

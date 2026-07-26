@@ -32,6 +32,12 @@ class ShellExecutor(Protocol):
     ) -> SandboxResult: ...
 
 
+class MutationRecorder(Protocol):
+    def record_file_preimage(self, path: Path) -> None: ...
+
+    def record_shell_fallback(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class _Target:
     parent: Path
@@ -53,6 +59,7 @@ def register_mutation_tools(
     *,
     roots: list[RootDir],
     shell: ShellExecutor,
+    mutation_recorder: MutationRecorder | None = None,
 ) -> ToolRegistry:
     """Attach the built-in consequential tools to an existing registry."""
     paths = _WritablePaths(roots)
@@ -73,6 +80,14 @@ def register_mutation_tools(
         if error:
             return {"ok": False, "error": error}
         mode = existing.st_mode & 0o777 if existing else 0o600
+        if not _record_file_preimage(
+            mutation_recorder,
+            target.parent / target.name,
+        ):
+            return {
+                "ok": False,
+                "error": "automatic checkpoint unavailable",
+            }
         error = _atomic_write(target, encoded, mode=mode)
         if error:
             return {"ok": False, "error": error}
@@ -135,6 +150,14 @@ def register_mutation_tools(
         if result_size > _MAX_WRITE_BYTES:
             return {"ok": False, "error": "result exceeds write limit"}
         encoded = content.replace(old, new).encode("utf-8")
+        if not _record_file_preimage(
+            mutation_recorder,
+            target.parent / target.name,
+        ):
+            return {
+                "ok": False,
+                "error": "automatic checkpoint unavailable",
+            }
         error = _atomic_write(
             target,
             encoded,
@@ -160,6 +183,13 @@ def register_mutation_tools(
             or not 0 < timeout_seconds <= _MAX_COMMAND_SECONDS
         ):
             return {"error": "invalid timeout"}
+        if mutation_recorder is not None:
+            try:
+                mutation_recorder.record_shell_fallback()
+            except Exception:
+                return {
+                    "error": "automatic checkpoint unavailable"
+                }
         try:
             result = shell.run(
                 command,
@@ -181,6 +211,19 @@ def register_mutation_tools(
     registry.register(replace_in_file, schema=_replace_in_file_schema())
     registry.register(run_shell, schema=_run_shell_schema())
     return registry
+
+
+def _record_file_preimage(
+    recorder: MutationRecorder | None,
+    path: Path,
+) -> bool:
+    if recorder is None:
+        return True
+    try:
+        recorder.record_file_preimage(path)
+    except Exception:
+        return False
+    return True
 
 
 class _WritablePaths:

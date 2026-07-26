@@ -9,6 +9,7 @@ import secrets
 import signal
 import shlex
 import shutil
+import stat
 import subprocess
 import threading
 from dataclasses import dataclass, replace
@@ -18,6 +19,8 @@ from typing import Optional
 from runtime.sandbox import SandboxedShell
 
 from .models import (
+    CheckpointCaptureMode,
+    CheckpointFileRecord,
     CheckpointState,
     CodeCheckpointRecord,
     GitWorkspaceRecord,
@@ -28,6 +31,7 @@ from .store import GitWorktreeStore
 _PROBE_TIMEOUT_SECONDS = 10
 _PROBE_OUTPUT_LIMIT = 1024 * 1024
 _MAX_CHECKPOINT_PATCH_BYTES = 32 * 1024 * 1024
+_MAX_CHECKPOINT_FILE_BYTES = 32 * 1024 * 1024
 
 
 class _BoundedOutput:
@@ -57,6 +61,21 @@ class _ProbeResult:
     stdout: str
     stderr: str
     output_truncated: bool = False
+
+
+@dataclass(frozen=True)
+class _MutationRecorder:
+    service: "GitWorktreeService"
+    session_id: str
+
+    def record_file_preimage(self, path: Path) -> None:
+        self.service.record_file_preimage(
+            self.session_id,
+            path,
+        )
+
+    def record_shell_fallback(self) -> None:
+        self.service.record_shell_fallback(self.session_id)
 
 
 class GitWorkspaceError(RuntimeError):
@@ -146,6 +165,7 @@ class GitWorktreeService:
         session_id: str,
         *,
         message_count: int,
+        attributed: bool = False,
     ) -> CodeCheckpointRecord | None:
         if self.store.load(session_id) is None:
             return None
@@ -171,15 +191,25 @@ class GitWorktreeService:
                     )
             record = self._usable_record(session_id)
             checkpoint_id = secrets.token_hex(16)
-            before_tree = self._snapshot_tree(
-                record,
-                checkpoint_id,
+            capture_mode = (
+                CheckpointCaptureMode.ATTRIBUTED
+                if attributed
+                else CheckpointCaptureMode.WHOLE_TREE
+            )
+            before_tree = (
+                ""
+                if attributed
+                else self._snapshot_tree(
+                    record,
+                    checkpoint_id,
+                )
             )
             checkpoint = CodeCheckpointRecord(
                 checkpoint_id=checkpoint_id,
                 session_id=session_id,
                 before_tree=before_tree,
                 before_message_count=message_count,
+                capture_mode=capture_mode,
             )
             try:
                 return self.store.save_checkpoint(checkpoint)
@@ -190,6 +220,86 @@ class GitWorktreeService:
                     "before",
                 )
                 raise
+
+    def mutation_recorder(self, session_id: str) -> _MutationRecorder:
+        return _MutationRecorder(self, session_id)
+
+    def record_file_preimage(
+        self,
+        session_id: str,
+        path: Path,
+    ) -> None:
+        with self._lock:
+            record = self._usable_record(session_id)
+            checkpoint = self.store.pending_checkpoint(session_id)
+            if checkpoint is None:
+                raise GitWorkspaceError(
+                    "pending checkpoint not found"
+                )
+            if (
+                checkpoint.capture_mode
+                is CheckpointCaptureMode.WHOLE_TREE
+            ):
+                return
+            candidate = Path(path)
+            try:
+                candidate_parent = candidate.parent.resolve(
+                    strict=True
+                )
+            except (FileNotFoundError, OSError):
+                raise GitWorkspaceError(
+                    "checkpoint path is unavailable"
+                ) from None
+            if not (candidate_parent / candidate.name).is_relative_to(
+                record.worktree_path
+            ):
+                return
+            relative = self._checkpoint_relative_path(
+                record,
+                candidate,
+            )
+            existing = {
+                item.path
+                for item in self.store.list_checkpoint_files(
+                    checkpoint.checkpoint_id
+                )
+            }
+            if relative in existing:
+                return
+            blob, mode = self._capture_file_blob(record, path)
+            self.store.save_checkpoint_file(
+                CheckpointFileRecord(
+                    checkpoint_id=checkpoint.checkpoint_id,
+                    path=relative,
+                    before_blob=blob,
+                    before_mode=mode,
+                )
+            )
+
+    def record_shell_fallback(self, session_id: str) -> None:
+        with self._lock:
+            record = self._usable_record(session_id)
+            checkpoint = self.store.pending_checkpoint(session_id)
+            if checkpoint is None:
+                raise GitWorkspaceError(
+                    "pending checkpoint not found"
+                )
+            if (
+                checkpoint.capture_mode
+                is CheckpointCaptureMode.WHOLE_TREE
+            ):
+                return
+            before_tree = self._snapshot_tree(
+                record,
+                checkpoint.checkpoint_id,
+            )
+            self.store.save_checkpoint(
+                replace(
+                    checkpoint,
+                    before_tree=before_tree,
+                    capture_mode=CheckpointCaptureMode.WHOLE_TREE,
+                )
+            )
 
     def complete_checkpoint(
         self,
@@ -231,13 +341,70 @@ class GitWorktreeService:
                 or message_count < checkpoint.before_message_count
             ):
                 raise ValueError("invalid checkpoint message count")
-            after_tree = self._snapshot_tree(
-                record,
-                checkpoint_id,
-                phase="after",
-            )
+            files = self.store.list_checkpoint_files(checkpoint_id)
+            captured_files = [
+                replace(
+                    item,
+                    after_blob=blob,
+                    after_mode=mode,
+                )
+                for item in files
+                for blob, mode in [
+                    self._capture_file_blob(
+                        record,
+                        record.worktree_path / item.path,
+                    )
+                ]
+            ]
+            for item in captured_files:
+                self.store.save_checkpoint_file(item)
+            if (
+                checkpoint.capture_mode
+                is CheckpointCaptureMode.ATTRIBUTED
+            ):
+                before_tree = self._checkpoint_file_tree(
+                    record,
+                    checkpoint_id,
+                    captured_files,
+                    phase="before",
+                )
+                after_tree = self._checkpoint_file_tree(
+                    record,
+                    checkpoint_id,
+                    captured_files,
+                    phase="after",
+                )
+            else:
+                before_tree = (
+                    self._checkpoint_file_tree(
+                        record,
+                        checkpoint_id,
+                        captured_files,
+                        phase="before",
+                        base_tree=checkpoint.before_tree,
+                    )
+                    if captured_files
+                    else checkpoint.before_tree
+                )
+                whole_after_tree = self._snapshot_tree(
+                    record,
+                    checkpoint_id,
+                    phase="after",
+                )
+                after_tree = (
+                    self._checkpoint_file_tree(
+                        record,
+                        checkpoint_id,
+                        captured_files,
+                        phase="after",
+                        base_tree=whole_after_tree,
+                    )
+                    if captured_files
+                    else whole_after_tree
+                )
             captured = replace(
                 checkpoint,
+                before_tree=before_tree,
                 after_tree=after_tree,
                 after_message_count=message_count,
             )
@@ -1044,6 +1211,160 @@ class GitWorktreeService:
             )
         return tree
 
+    def _checkpoint_relative_path(
+        self,
+        record: GitWorkspaceRecord,
+        path: Path,
+    ) -> str:
+        candidate = Path(path)
+        if not candidate.is_absolute() or candidate.is_symlink():
+            raise GitWorkspaceError(
+                "checkpoint path is unavailable"
+            )
+        try:
+            parent = candidate.parent.resolve(strict=True)
+            relative = (parent / candidate.name).relative_to(
+                record.worktree_path
+            )
+        except (FileNotFoundError, OSError, ValueError):
+            raise GitWorkspaceError(
+                "checkpoint path is outside the worktree"
+            ) from None
+        value = relative.as_posix()
+        if not value or len(value.encode("utf-8")) > 4096:
+            raise GitWorkspaceError("invalid checkpoint path")
+        return value
+
+    def _capture_file_blob(
+        self,
+        record: GitWorkspaceRecord,
+        path: Path,
+    ) -> tuple[str, int]:
+        self._checkpoint_relative_path(record, path)
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            return "", 0
+        except OSError:
+            raise GitWorkspaceError(
+                "checkpoint file is unavailable"
+            ) from None
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_size > _MAX_CHECKPOINT_FILE_BYTES
+        ):
+            raise GitWorkspaceError(
+                "checkpoint file is unsupported"
+            )
+        result = self._checkpoint_git(
+            record,
+            "hash-object",
+            "-w",
+            "--no-filters",
+            path,
+        )
+        blob = result.stdout.strip()
+        if (
+            result.exit_code != 0
+            or re.fullmatch(r"[0-9a-f]{40,64}", blob) is None
+        ):
+            raise GitWorkspaceError(
+                "unable to capture checkpoint file"
+            )
+        mode = (
+            0o100755
+            if metadata.st_mode & stat.S_IXUSR
+            else 0o100644
+        )
+        return blob, mode
+
+    def _checkpoint_file_tree(
+        self,
+        record: GitWorkspaceRecord,
+        checkpoint_id: str,
+        files: list[CheckpointFileRecord],
+        *,
+        phase: str,
+        base_tree: str = "",
+    ) -> str:
+        identity = hashlib.sha256(
+            record.session_id.encode("utf-8")
+        ).hexdigest()
+        index_path = (
+            self.sandbox_base
+            / identity
+            / f"files-{checkpoint_id}-{phase}.index"
+        )
+        index_path.unlink(missing_ok=True)
+        try:
+            initialized = self._index_git(
+                record,
+                index_path,
+                "read-tree",
+                *(base_tree,) if base_tree else ("--empty",),
+            )
+            if initialized.exit_code != 0:
+                raise GitWorkspaceError(
+                    "unable to initialize checkpoint files"
+                )
+            for item in files:
+                blob = (
+                    item.before_blob
+                    if phase == "before"
+                    else item.after_blob
+                )
+                mode = (
+                    item.before_mode
+                    if phase == "before"
+                    else item.after_mode
+                )
+                if blob:
+                    changed = self._index_git(
+                        record,
+                        index_path,
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        format(mode, "o"),
+                        blob,
+                        item.path,
+                    )
+                else:
+                    changed = self._index_git(
+                        record,
+                        index_path,
+                        "update-index",
+                        "--force-remove",
+                        "--",
+                        item.path,
+                    )
+                if changed.exit_code != 0:
+                    raise GitWorkspaceError(
+                        "unable to capture checkpoint files"
+                    )
+            written = self._index_git(
+                record,
+                index_path,
+                "write-tree",
+            )
+            tree = written.stdout.strip()
+            if (
+                written.exit_code != 0
+                or re.fullmatch(r"[0-9a-f]{40,64}", tree) is None
+                or not self._set_checkpoint_ref(
+                    record,
+                    checkpoint_id,
+                    phase,
+                    tree,
+                )
+            ):
+                raise GitWorkspaceError(
+                    "unable to retain checkpoint files"
+                )
+            return tree
+        finally:
+            index_path.unlink(missing_ok=True)
+
     def _capture_tree(
         self,
         record: GitWorkspaceRecord,
@@ -1262,6 +1583,59 @@ class GitWorktreeService:
                 raise GitWorkspaceError(
                     "unable to initialize checkpoint restore"
                 )
+            attributed_paths = {
+                item.path
+                for checkpoint in checkpoints
+                for item in self.store.list_checkpoint_files(
+                    checkpoint.checkpoint_id
+                )
+            }
+            for path in sorted(attributed_paths):
+                blob, mode = self._capture_file_blob(
+                    record,
+                    record.worktree_path / path,
+                )
+                if blob:
+                    updated = self._index_git(
+                        record,
+                        index_path,
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        format(mode, "o"),
+                        blob,
+                        path,
+                    )
+                else:
+                    updated = self._index_git(
+                        record,
+                        index_path,
+                        "update-index",
+                        "--force-remove",
+                        "--",
+                        path,
+                    )
+                if updated.exit_code != 0:
+                    raise GitWorkspaceError(
+                        "unable to capture attributed files"
+                    )
+            effective = self._index_git(
+                record,
+                index_path,
+                "write-tree",
+            )
+            effective_current_tree = effective.stdout.strip()
+            if (
+                effective.exit_code != 0
+                or re.fullmatch(
+                    r"[0-9a-f]{40,64}",
+                    effective_current_tree,
+                )
+                is None
+            ):
+                raise GitWorkspaceError(
+                    "unable to capture checkpoint restore state"
+                )
             for checkpoint in ordered:
                 patch_path = self._checkpoint_patch(
                     record,
@@ -1312,7 +1686,7 @@ class GitWorktreeService:
                 )
             return self._tree_patch(
                 record,
-                current_tree,
+                effective_current_tree,
                 restored_tree,
                 f"composed-{target.checkpoint_id}",
             )

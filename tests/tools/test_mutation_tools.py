@@ -33,6 +33,7 @@ def build_registry(
     *,
     extra_roots: list[RootDir] | None = None,
     shell: object | None = None,
+    mutation_recorder: object | None = None,
 ):
     roots = [
         RootDir(workspace, writable=True),
@@ -40,7 +41,12 @@ def build_registry(
     ]
     registry = build_core_registry(roots, manifest=ToolManifest())
     fake_shell = shell or FakeShell()
-    register_mutation_tools(registry, roots=roots, shell=fake_shell)
+    register_mutation_tools(
+        registry,
+        roots=roots,
+        shell=fake_shell,
+        mutation_recorder=mutation_recorder,
+    )
     return registry, fake_shell
 
 
@@ -92,6 +98,80 @@ def test_write_file_creates_and_atomically_replaces_content(
     assert target.read_text(encoding="utf-8") == "print('new')\n"
     assert target.stat().st_ino != old_inode
     assert target.stat().st_mode & 0o777 == 0o640
+
+
+def test_mutation_recorder_observes_preimage_before_file_write(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / ".ignored"
+    target.write_text("manual\n", encoding="utf-8")
+
+    class Recorder:
+        def __init__(self):
+            self.preimages = []
+
+        def record_file_preimage(self, path):
+            self.preimages.append(
+                (path, path.read_text(encoding="utf-8"))
+            )
+
+        def record_shell_fallback(self):
+            raise AssertionError("shell fallback was not expected")
+
+    recorder = Recorder()
+    registry, _ = build_registry(
+        tmp_path,
+        mutation_recorder=recorder,
+    )
+
+    result = registry.execute(
+        "write_file",
+        {"path": ".ignored", "content": "agent\n"},
+    )
+
+    assert result["ok"] is True
+    assert recorder.preimages == [(target, "manual\n")]
+    assert target.read_text(encoding="utf-8") == "agent\n"
+
+
+def test_mutation_recorder_failure_prevents_file_and_shell_mutation(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "source.py"
+    target.write_text("manual\n", encoding="utf-8")
+
+    class FailingRecorder:
+        def record_file_preimage(self, _path):
+            raise OSError("private failure")
+
+        def record_shell_fallback(self):
+            raise OSError("private failure")
+
+    shell = FakeShell()
+    registry, _ = build_registry(
+        tmp_path,
+        shell=shell,
+        mutation_recorder=FailingRecorder(),
+    )
+
+    written = registry.execute(
+        "write_file",
+        {"path": "source.py", "content": "agent\n"},
+    )
+    executed = registry.execute(
+        "run_shell",
+        {"command": "pwd"},
+    )
+
+    assert written == {
+        "ok": False,
+        "error": "automatic checkpoint unavailable",
+    }
+    assert executed == {
+        "error": "automatic checkpoint unavailable",
+    }
+    assert target.read_text(encoding="utf-8") == "manual\n"
+    assert shell.calls == []
 
 
 def test_write_file_refuses_traversal_symlinks_and_missing_parent(

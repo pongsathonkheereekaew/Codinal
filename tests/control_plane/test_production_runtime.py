@@ -179,7 +179,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
         assert conversations.execute("PRAGMA user_version").fetchone()[0] == 3
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 def test_production_startup_restores_latest_good_backups(tmp_path):
@@ -1296,7 +1296,7 @@ def test_turn_checkpoint_restores_code_and_conversation_after_restart(
                             "checkpoint-write",
                             "write_file",
                             {
-                                "path": "generated.txt",
+                                "path": ".agent-cache",
                                 "content": "agent change\n",
                             },
                         )
@@ -1341,8 +1341,19 @@ def test_turn_checkpoint_restores_code_and_conversation_after_restart(
         check=True,
     )
     (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    (source / ".gitignore").write_text(
+        ".agent-cache\n",
+        encoding="utf-8",
+    )
     subprocess.run(
-        ["git", "-C", str(source), "add", "tracked.txt"],
+        [
+            "git",
+            "-C",
+            str(source),
+            "add",
+            "tracked.txt",
+            ".gitignore",
+        ],
         check=True,
     )
     subprocess.run(
@@ -1377,7 +1388,7 @@ def test_turn_checkpoint_restores_code_and_conversation_after_restart(
                 "/v1/sessions/checkpoint-e2e/turns",
                 headers=AUTH,
                 json={
-                    "input": "create generated.txt",
+                    "input": "create ignored agent cache",
                     "workspace": str(source),
                 },
             )
@@ -1427,7 +1438,7 @@ def test_turn_checkpoint_restores_code_and_conversation_after_restart(
     assert restarted_checkpoints.json() == checkpoints.json()
     assert restored.status_code == 200
     assert restored.json()["scope"] == "both"
-    assert not (git_record.worktree_path / "generated.txt").exists()
+    assert not (git_record.worktree_path / ".agent-cache").exists()
     assert (git_record.worktree_path / "manual.txt").read_text(
         encoding="utf-8"
     ) == "manual after checkpoint\n"
