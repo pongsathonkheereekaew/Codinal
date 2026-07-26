@@ -768,6 +768,208 @@ def test_set_model_updates_persisted_session_and_validates_value(tmp_path):
     assert service.set_model("missing", "openai:gpt")["ok"] is False
 
 
+def test_set_model_switches_live_engine_and_persists_switch_notice(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="openai:gpt-old",
+        mode="interactive",
+    )
+    store = MemorySessionStore(record)
+
+    class LiveEngine:
+        model = "openai:gpt-old"
+        messages = []
+
+        def switch_model(self, model):
+            self.model = model
+            self.messages.append(
+                {"role": "notice", "content": f"Switched to {model}"}
+            )
+
+    engine = LiveEngine()
+    service = SessionService(
+        store,
+        scratch_base=tmp_path / "scratch",
+        snapshotter=lambda session_id, live: replace(
+            record,
+            session_id=session_id,
+            model=live.model,
+            messages=list(live.messages),
+        ),
+    )
+    service.attach_engine("s1", engine)
+
+    routing = {
+        "profile": "economy",
+        "provider": "gemini",
+        "selected_model": "gemini:gemini-new",
+        "cost_class": "economy",
+        "degradations": [],
+    }
+    assert service.set_model(
+        "s1",
+        "gemini:gemini-new",
+        routing=routing,
+    )["ok"] is True
+    assert engine.model == "gemini:gemini-new"
+    assert store.load("s1").model == "gemini:gemini-new"
+    assert store.load("s1").messages[0]["content"] == (
+        "Switched to gemini:gemini-new"
+    )
+    assert store.load("s1").messages[-1]["kind"] == "routing_decision"
+    assert store.load("s1").messages[-1]["source"]["routing"] == routing
+
+
+def test_set_model_atomically_persists_cold_routing_audit(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="openai:gpt-old",
+        mode="interactive",
+    )
+    store = MemorySessionStore(record)
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+    routing = {
+        "profile": "economy",
+        "provider": "gemini",
+        "selected_model": "gemini:gemini-new",
+        "cost_class": "economy",
+        "degradations": [],
+    }
+
+    result = service.set_model(
+        "s1",
+        "gemini:gemini-new",
+        routing=routing,
+    )
+
+    persisted = store.load("s1")
+    assert result["ok"] is True
+    assert persisted.model == "gemini:gemini-new"
+    assert persisted.message_count == 1
+    assert persisted.messages == [
+        {
+            "role": "notice",
+            "kind": "routing_decision",
+            "text": (
+                "Routing: economy → gemini · gemini:gemini-new · economy"
+            ),
+            "source": {"routing": routing},
+            "ts": persisted.messages[0]["ts"],
+        }
+    ]
+
+
+def test_set_model_rolls_back_live_engine_when_persistence_fails(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="openai:gpt-old",
+        mode="interactive",
+        messages=[{"role": "user", "content": "keep"}],
+    )
+
+    class FailingStore(MemorySessionStore):
+        def save(self, _record):
+            raise OSError("disk unavailable")
+
+    class LiveEngine:
+        model = "openai:gpt-old"
+        messages = list(record.messages)
+
+        def switch_model(self, model):
+            self.model = model
+            self.messages.append(
+                {"role": "notice", "content": f"Switched to {model}"}
+            )
+
+    engine = LiveEngine()
+    service = SessionService(
+        FailingStore(record),
+        scratch_base=tmp_path / "scratch",
+        snapshotter=lambda session_id, live: replace(
+            record,
+            session_id=session_id,
+            model=live.model,
+            messages=list(live.messages),
+        ),
+    )
+    service.attach_engine("s1", engine)
+
+    result = service.set_model("s1", "gemini:gemini-new")
+
+    assert result == {"ok": False, "error": "model persistence failed"}
+    assert engine.model == "openai:gpt-old"
+    assert engine.messages == record.messages
+
+
+def test_routing_requirements_include_durable_attachments(tmp_path):
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="openai:gpt-old",
+        mode="interactive",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "data:x"}},
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": "design.pdf",
+                            "file_data": "data:application/pdf;base64,AA==",
+                        },
+                    },
+                ],
+            }
+        ],
+    )
+    service = SessionService(
+        MemorySessionStore(record),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    assert service.routing_requirements("s1") == [
+        "pdf",
+        "tools",
+        "vision",
+    ]
+
+
+def test_cold_routing_context_loads_large_transcript_once(tmp_path):
+    class CountingStore(MemorySessionStore):
+        def __init__(self, *records):
+            super().__init__(*records)
+            self.loads = 0
+
+        def load(self, session_id):
+            self.loads += 1
+            return super().load(session_id)
+
+    record = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="openai:gpt-old",
+        mode="interactive",
+        messages=[
+            {"role": "user", "content": f"message-{index}"}
+            for index in range(10_000)
+        ],
+    )
+    store = CountingStore(record)
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    context = service.routing_context("s1")
+
+    assert store.loads == 1
+    assert context == {
+        "model": "openai:gpt-old",
+        "required_capabilities": ["tools"],
+    }
+
+
 def test_delete_interrupts_engine_runs_cleanup_and_removes_only_scratch(tmp_path):
     scratch_base = tmp_path / "scratch"
     scratch_workspace = scratch_base / "s1"

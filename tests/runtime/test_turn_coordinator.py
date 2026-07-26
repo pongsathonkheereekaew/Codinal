@@ -19,6 +19,7 @@ from runtime.turns import (
     CodeCheckpointError,
     ExportBusyError,
     SessionBusyError,
+    SessionModelError,
     SessionNotFoundError,
     TurnCoordinator,
 )
@@ -36,6 +37,8 @@ class FakeSessions:
         self.checkpoints = []
         self.cleared_approvals = []
         self.requests = []
+        self.model_changes = []
+        self.routing_changes = []
 
     def get_engine(self, session_id, *, workspace=None, agent="code"):
         self.requests.append((session_id, workspace, agent))
@@ -70,11 +73,27 @@ class FakeSessions:
     def list_sessions(self):
         return []
 
+    def set_model(self, session_id, model, *, routing=None):
+        self.model_changes.append((session_id, model))
+        self.routing_changes.append(routing)
+        if self.engine is None:
+            return {"ok": False}
+        switch_model = getattr(self.engine, "switch_model", None)
+        if callable(switch_model):
+            switch_model(model)
+        else:
+            self.engine.model = model
+        return {"ok": True, "session_id": session_id, "model": model}
+
 class ScriptedEngine:
     def __init__(self):
         self.messages = []
         self.roots = []
         self.interrupted = False
+        self.model = "openai:old"
+
+    def switch_model(self, model):
+        self.model = model
 
     async def run(self, user_input, *, source=None):
         self.messages.append({"role": "user", "content": user_input})
@@ -282,8 +301,9 @@ def test_turn_never_starts_when_automatic_checkpoint_fails():
 
     async def scenario():
         engine = ScriptedEngine()
+        sessions = FakeSessions(engine)
         turns = TurnCoordinator(
-            sessions=FakeSessions(engine),
+            sessions=sessions,
             events=EventHub(),
             code_checkpoints=FailingCheckpoints(),
         )
@@ -291,13 +311,115 @@ def test_turn_never_starts_when_automatic_checkpoint_fails():
             CodeCheckpointError,
             match="checkpoint unavailable",
         ):
-            await turns.start("session-1", user_input="must not run")
-        return engine, turns
+            await turns.start(
+                "session-1",
+                user_input="must not run",
+                model="gemini:new",
+            )
+        return engine, sessions, turns
 
-    engine, turns = asyncio.run(scenario())
+    engine, sessions, turns = asyncio.run(scenario())
 
     assert engine.messages == []
+    assert engine.model == "openai:old"
+    assert sessions.model_changes == []
     assert turns.has_active_turns() is False
+
+
+def test_context_failure_does_not_change_session_model():
+    async def fail_context():
+        raise ValueError("context unavailable")
+
+    async def scenario():
+        engine = ScriptedEngine()
+        sessions = FakeSessions(engine)
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        with pytest.raises(ValueError, match="context unavailable"):
+            await turns.start(
+                "session-1",
+                user_input="unresolved",
+                user_input_resolver=fail_context,
+                model="gemini:new",
+            )
+        return engine, sessions
+
+    engine, sessions = asyncio.run(scenario())
+
+    assert engine.model == "openai:old"
+    assert sessions.model_changes == []
+
+
+def test_accepted_turn_changes_model_after_checkpoint():
+    actions = []
+
+    class OrderedSessions(FakeSessions):
+        def set_model(self, session_id, model, *, routing=None):
+            actions.append("model")
+            return super().set_model(
+                session_id,
+                model,
+                routing=routing,
+            )
+
+    class OrderedCheckpoints(FakeCodeCheckpoints):
+        def begin_checkpoint(self, *args, **kwargs):
+            actions.append("checkpoint")
+            return super().begin_checkpoint(*args, **kwargs)
+
+    async def scenario():
+        engine = ScriptedEngine()
+        sessions = OrderedSessions(engine)
+        turns = TurnCoordinator(
+            sessions=sessions,
+            events=EventHub(),
+            code_checkpoints=OrderedCheckpoints(),
+        )
+        await turns.start(
+            "session-1",
+            user_input="run",
+            model="gemini:new",
+            source={
+                "routing": {
+                    "profile": "economy",
+                    "provider": "gemini",
+                    "selected_model": "gemini:new",
+                    "cost_class": "economy",
+                }
+            },
+        )
+        await turns.wait("session-1")
+        return engine, sessions
+
+    engine, sessions = asyncio.run(scenario())
+
+    assert actions[:2] == ["checkpoint", "model"]
+    assert engine.model == "gemini:new"
+    assert sessions.model_changes == [("session-1", "gemini:new")]
+    assert sessions.routing_changes[0]["profile"] == "economy"
+
+
+def test_model_switch_failure_rejects_turn_before_execution():
+    class FailingModelSessions(FakeSessions):
+        def set_model(self, session_id, model):
+            self.model_changes.append((session_id, model))
+            return {"ok": False}
+
+    async def scenario():
+        engine = ScriptedEngine()
+        sessions = FailingModelSessions(engine)
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        with pytest.raises(SessionModelError, match="model update failed"):
+            await turns.start(
+                "session-1",
+                user_input="must not run",
+                model="gemini:new",
+            )
+        return engine
+
+    engine = asyncio.run(scenario())
+
+    assert engine.messages == []
+    assert engine.model == "openai:old"
 
 
 def test_turn_never_starts_while_checkpoint_restore_is_pending():

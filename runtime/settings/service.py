@@ -23,6 +23,7 @@ from runtime.storage.migrations import (
 )
 
 _PREFERENCES_SCHEMA_VERSION = 1
+_ROUTING_PROFILES = {"manual", "quality", "balanced", "economy"}
 
 
 def _migrate_preferences_to_v1(value: dict[str, Any]) -> None:
@@ -191,6 +192,7 @@ class SettingsService:
         return {
             "model": self._model,
             "models": self._models(),
+            "routing_profile": self._routing_profile(),
             "onboarded": bool(self._preferences.get("onboarded", False)),
             "nav_layout": self._nav_layout(),
             "sessions_peek": self._sessions_peek(),
@@ -205,6 +207,23 @@ class SettingsService:
         self._preferences["default_model"] = normalized
         self._persist()
         return {"ok": True, **self.view()}
+
+    def set_routing_profile(self, profile: str) -> dict[str, Any]:
+        normalized = (profile or "").strip()
+        if normalized not in _ROUTING_PROFILES:
+            return {"ok": False, "error": "invalid routing profile"}
+        sentinel = object()
+        previous = self._preferences.get("routing_profile", sentinel)
+        self._preferences["routing_profile"] = normalized
+        try:
+            self._persist()
+        except Exception:
+            if previous is sentinel:
+                self._preferences.pop("routing_profile", None)
+            else:
+                self._preferences["routing_profile"] = previous
+            raise
+        return {"ok": True, "routing_profile": normalized}
 
     def set_onboarded(self, value: bool = True) -> dict[str, Any]:
         self._preferences["onboarded"] = bool(value)
@@ -306,6 +325,10 @@ class SettingsService:
             if self._preferences.get("nav_layout") == "grouped"
             else "flat"
         )
+
+    def _routing_profile(self) -> str:
+        profile = self._preferences.get("routing_profile")
+        return profile if profile in _ROUTING_PROFILES else "manual"
 
     def _sessions_peek(self) -> int:
         try:

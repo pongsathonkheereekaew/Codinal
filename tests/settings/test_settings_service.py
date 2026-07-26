@@ -178,6 +178,49 @@ def test_model_picker_customization_is_idempotent_and_persists(tmp_path):
     assert reborn.add_model("   ") == {"ok": False, "error": "empty model"}
 
 
+def test_routing_profile_is_validated_and_persists(tmp_path):
+    path = tmp_path / "prefs.json"
+    service = SettingsService(
+        JsonPreferenceStore(path),
+        default_model="openai:gpt-default",
+    )
+
+    assert service.view()["routing_profile"] == "manual"
+    assert service.set_routing_profile("balanced") == {
+        "ok": True,
+        "routing_profile": "balanced",
+    }
+    assert service.set_routing_profile("hidden") == {
+        "ok": False,
+        "error": "invalid routing profile",
+    }
+
+    reborn = SettingsService(
+        JsonPreferenceStore(path),
+        default_model="openai:gpt-default",
+    )
+    assert reborn.view()["routing_profile"] == "balanced"
+
+
+def test_routing_profile_rolls_back_when_persistence_fails():
+    class FailingStore:
+        def load(self):
+            return {"schema_version": 1}
+
+        def save(self, _preferences):
+            raise OSError("disk unavailable")
+
+    service = SettingsService(
+        FailingStore(),
+        default_model="openai:gpt-default",
+    )
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        service.set_routing_profile("quality")
+
+    assert service.view()["routing_profile"] == "manual"
+
+
 def test_sidebar_preferences_are_normalized_and_persisted(tmp_path):
     path = tmp_path / "prefs.json"
     service = SettingsService(

@@ -39,6 +39,7 @@ from runtime.turns import (
     CodeCheckpointError,
     ExportBusyError,
     SessionBusyError,
+    SessionModelError,
     SessionNotFoundError,
     SessionWorkspaceError,
 )
@@ -236,6 +237,8 @@ class SessionControl(Protocol):
         self,
         session_id: str,
         model: str,
+        *,
+        routing: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
     def delete(self, session_id: str) -> dict[str, Any]: ...
@@ -511,7 +514,41 @@ def create_control_plane_app(
 
     @app.get("/v1/settings")
     async def settings() -> dict[str, Any]:
-        return services.settings.view()
+        view = services.settings.view()
+        routing = getattr(services, "routing", None)
+        if routing is not None:
+            view["routing"] = routing.view(
+                view.get("routing_profile", "manual")
+            )
+        return view
+
+    @app.patch("/v1/settings/routing")
+    async def update_routing_profile(
+        request: Request,
+    ) -> dict[str, Any]:
+        body = await _read_bounded_object(
+            request,
+            limit=1024,
+            detail="invalid routing profile",
+        )
+        if set(body) != {"profile"} or not isinstance(
+            body.get("profile"),
+            str,
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid routing profile",
+            )
+        result = services.settings.set_routing_profile(body["profile"])
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "invalid routing profile"),
+            )
+        routing = getattr(services, "routing", None)
+        if routing is not None:
+            result["routing"] = routing.view(result["routing_profile"])
+        return result
 
     @app.get("/v1/sessions")
     async def list_sessions(
@@ -1019,6 +1056,82 @@ def create_control_plane_app(
     ) -> JSONResponse:
         _validate_public_session_id(session_id)
         turn = await _read_turn(request)
+        if isinstance(turn.get("source"), dict):
+            source = dict(turn["source"])
+            source.pop("routing", None)
+            turn["source"] = source or None
+        routing_resolution = None
+        routing = getattr(services, "routing", None)
+        settings_view = services.settings.view()
+        effective_profile = turn.get(
+            "routing_profile",
+            settings_view.get("routing_profile", "manual"),
+        )
+        if routing is not None:
+            preferred_model = turn.get("model")
+            routing_context_loader = getattr(
+                services.sessions,
+                "routing_context",
+                None,
+            )
+            if callable(routing_context_loader):
+                routing_context = await asyncio.to_thread(
+                    routing_context_loader,
+                    session_id,
+                )
+            else:
+                selected_model = getattr(
+                    services.sessions,
+                    "selected_model",
+                    None,
+                )
+                requirements = getattr(
+                    services.sessions,
+                    "routing_requirements",
+                    None,
+                )
+
+                def load_legacy_routing_context() -> dict[str, Any]:
+                    return {
+                        "model": (
+                            selected_model(session_id)
+                            if callable(selected_model)
+                            else None
+                        ),
+                        "required_capabilities": (
+                            requirements(session_id)
+                            if callable(requirements)
+                            else ()
+                        ),
+                    }
+
+                routing_context = await asyncio.to_thread(
+                    load_legacy_routing_context
+                )
+            if not preferred_model:
+                preferred_model = routing_context.get("model")
+            if not preferred_model:
+                preferred_model = settings_view.get("model", "")
+            try:
+                routing_resolution = routing.resolve(
+                    effective_profile,
+                    preferred_model=preferred_model or "",
+                    user_input=turn["input"],
+                    required_capabilities=routing_context.get(
+                        "required_capabilities",
+                        (),
+                    ),
+                )
+            except ValueError as error:
+                raise HTTPException(
+                    status_code=409,
+                    detail=str(error),
+                ) from None
+            turn["model"] = routing_resolution["selected_model"]
+            turn["source"] = {
+                **(turn.get("source") or {}),
+                "routing": routing_resolution,
+            }
         try:
             options: dict[str, Any] = {
                 "user_input": turn["input"],
@@ -1066,11 +1179,18 @@ def create_control_plane_app(
                 status_code=409,
                 detail="session workspace preparation failed",
             ) from None
+        except SessionModelError:
+            raise HTTPException(
+                status_code=409,
+                detail="session model update failed",
+            ) from None
         except CodeCheckpointError:
             raise HTTPException(
                 status_code=409,
                 detail="automatic code checkpoint unavailable",
             ) from None
+        if routing_resolution is not None:
+            result = {**result, "routing": routing_resolution}
         return JSONResponse(result, status_code=202)
 
     @app.get("/v1/sessions/{session_id}/workers")
@@ -2143,6 +2263,7 @@ async def _read_turn(request: Request) -> dict[str, Any]:
             "agent",
             "mode",
             "model",
+            "routing_profile",
             "source",
             "context",
         }
@@ -2183,6 +2304,14 @@ async def _read_turn(request: Request) -> dict[str, Any]:
                 or not 1 <= len(body["model"].encode("utf-8")) <= 256
                 or not body["model"].strip()
                 or any(ord(character) < 32 for character in body["model"])
+            )
+        )
+        or (
+            "routing_profile" in body
+            and (
+                not isinstance(body["routing_profile"], str)
+                or body["routing_profile"]
+                not in {"manual", "quality", "balanced", "economy"}
             )
         )
         or (

@@ -76,6 +76,8 @@ const state = {
   goals: [],
   goalGeneration: 0,
   managedGoal: null,
+  routingResolution: null,
+  routingPending: false,
 };
 
 const el = Object.fromEntries(
@@ -86,11 +88,13 @@ const el = Object.fromEntries(
     "runtime-status", "review-button", "change-count", "conversation",
     "empty-state", "message-list", "prompt", "attach-files",
     "attachment-input", "attachment-list", "choose-workspace",
-    "workspace-label", "agent-mode", "model-select", "stop-turn",
+    "workspace-label", "agent-mode", "routing-profile", "model-select",
+    "routing-resolution", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
     "checkpoint-select", "restore-scope", "restore-checkpoint",
-    "model-summary", "update-status", "check-update", "install-update",
+    "model-summary", "model-catalog", "update-status", "check-update",
+    "install-update",
     "provider-list", "toast-region",
     "session-dialog", "session-title-input", "rename-session",
     "pin-session", "archive-session", "delete-session",
@@ -186,12 +190,20 @@ async function connect(attemptsRemaining = 30) {
 
 async function loadSettings() {
   state.settings = await api("/v1/settings");
+  const routing = state.settings.routing || {};
+  const catalog = new Map(
+    (routing.models || []).map((model) => [model.id, model])
+  );
   const models = Array.isArray(state.settings.models)
     ? state.settings.models
     : [state.settings.model].filter(Boolean);
   el["model-select"].replaceChildren();
   for (const model of models) {
-    const option = node("option", "", model);
+    const metadata = catalog.get(model);
+    const label = metadata
+      ? `${model} · ${metadata.provider} · ${metadata.cost_class}`
+      : model;
+    const option = node("option", "", label);
     option.value = model;
     option.selected = model === state.settings.model;
     el["model-select"].append(option);
@@ -200,9 +212,67 @@ async function loadSettings() {
     const option = node("option", "", "Default model");
     el["model-select"].append(option);
   }
+  el["routing-profile"].replaceChildren();
+  for (const profile of routing.profiles || []) {
+    const option = node("option", "", profile.label || profile.id);
+    option.value = profile.id;
+    option.title = profile.description || "";
+    option.selected = profile.id === routing.profile;
+    el["routing-profile"].append(option);
+  }
+  if (!el["routing-profile"].options.length) {
+    const option = node("option", "", "Manual");
+    option.value = "manual";
+    el["routing-profile"].append(option);
+  }
+  state.routingResolution = null;
+  renderRoutingResolution();
+  el["model-catalog"].replaceChildren();
+  for (const metadata of routing.models || []) {
+    const capabilities = Object.entries(metadata.capabilities || {})
+      .filter(([, enabled]) => enabled)
+      .map(([name]) => name.replaceAll("_", " "))
+      .join(", ");
+    const row = node("div", "model-catalog-row");
+    row.append(
+      node("strong", "", metadata.id),
+      node(
+        "small",
+        "",
+        `${metadata.provider} · ${metadata.cost_class} · `
+        + `${metadata.configured ? "configured" : "credential missing"} · `
+        + `${metadata.auto_eligible ? "auto eligible" : "manual only"} · `
+        + (capabilities || "capabilities unknown")
+      )
+    );
+    el["model-catalog"].append(row);
+  }
   el["model-summary"].textContent = state.settings.model
-    ? `Current model: ${state.settings.model}`
+    ? (
+      `Current model: ${state.settings.model}. `
+      + `Routing: ${routing.profile || "manual"}.`
+    )
     : "The runtime will use its configured default model.";
+}
+
+function renderRoutingResolution() {
+  const resolution = state.routingResolution;
+  const profile = el["routing-profile"].value || "manual";
+  const model = el["model-select"].value;
+  const degradations = resolution?.degradations || [];
+  el["routing-resolution"].classList.toggle(
+    "has-degradation",
+    Boolean(degradations.length)
+  );
+  el["routing-resolution"].textContent = resolution
+    ? (
+      `${resolution.profile} → ${resolution.provider} · `
+      + `${resolution.selected_model} · ${resolution.cost_class}`
+      + `${degradations.length ? ` · ${degradations.join("; ")}` : ""}`
+    )
+    : profile === "manual"
+      ? `Manual → ${model || "selected model"}`
+      : `${profile} routing · exact provider, model, cost, and fallback appear here`;
 }
 
 async function loadSessions() {
@@ -1072,6 +1142,7 @@ async function selectSession(session) {
   invalidateContextItems();
   state.liveAssistant = null;
   state.activities.clear();
+  state.routingResolution = null;
   el["task-title"].textContent = session.title || "New task";
   syncAgentMode(session);
   selectModel(session.model);
@@ -1129,6 +1200,7 @@ function selectModel(model) {
     el["model-select"].append(option);
   }
   el["model-select"].value = model;
+  renderRoutingResolution();
 }
 
 async function newTask() {
@@ -1256,6 +1328,7 @@ function disconnectSocket() {
 function setBusy(busy) {
   state.busy = busy;
   el["model-select"].disabled = busy;
+  el["routing-profile"].disabled = busy || state.routingPending;
   el["agent-mode"].disabled = busy;
   el["new-task"].disabled = busy;
   el["choose-workspace"].disabled = busy;
@@ -2016,7 +2089,8 @@ function renderConversation() {
         contentText(message.content),
         false,
         index,
-        isSafeForkBoundary(index)
+        isSafeForkBoundary(index),
+        message.source?.routing || null
       )
     );
   }
@@ -2114,7 +2188,8 @@ function renderMessage(
   content,
   streaming = false,
   messageIndex = null,
-  forkable = false
+  forkable = false,
+  routing = null
 ) {
   const article = node("article", `message ${role}`);
   if (Number.isInteger(messageIndex)) {
@@ -2131,6 +2206,18 @@ function renderMessage(
     node("div", "message-meta", streaming ? "Codinal · Writing…" : who),
     node("p", "message-content", content)
   );
+  if (role === "user" && routing?.selected_model) {
+    const degradations = routing.degradations || [];
+    const badge = node(
+      "div",
+      "message-routing",
+      `${routing.profile} → ${routing.provider} · `
+      + `${routing.selected_model} · ${routing.cost_class}`
+      + `${degradations.length ? ` · ${degradations.join("; ")}` : ""}`
+    );
+    badge.classList.toggle("has-degradation", Boolean(degradations.length));
+    body.append(badge);
+  }
   if (Number.isInteger(messageIndex) && forkable) {
     const actions = node("div", "message-actions");
     const fork = node("button", "message-action", "Fork task from here");
@@ -2657,7 +2744,8 @@ async function sendTurn() {
     ? [...contexts.map((context) => context.content_part), ...requestParts]
     : requestInput;
   state.highlightedMessageIndex = null;
-  state.messages.push({ role: "user", content: displayTurnInput });
+  const optimisticMessage = { role: "user", content: displayTurnInput };
+  state.messages.push(optimisticMessage);
   el.prompt.value = "";
   state.attachments = [];
   state.contextItems = [];
@@ -2668,7 +2756,9 @@ async function sendTurn() {
   renderConversation();
   setBusy(true);
   try {
-    await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/turns`, {
+    const started = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/turns`,
+      {
       method: "POST",
       body: JSON.stringify({
         input: requestInput,
@@ -2680,6 +2770,7 @@ async function sendTurn() {
             ? "discuss"
             : "interactive",
         model: el["model-select"].value,
+        routing_profile: el["routing-profile"].value,
         ...(contexts.length ? {
           context: contexts.map((context) => ({
             kind: context.kind,
@@ -2689,7 +2780,19 @@ async function sendTurn() {
           })),
         } : {}),
       }),
-    });
+      }
+    );
+    if (started.routing) {
+      state.routingResolution = started.routing;
+      optimisticMessage.source = { routing: started.routing };
+      const session = state.sessions.find(
+        (candidate) => candidate.session_id === state.sessionId
+      );
+      if (session) session.model = started.routing.selected_model;
+      selectModel(started.routing.selected_model);
+      renderRoutingResolution();
+      renderConversation();
+    }
   } catch (error) {
     state.messages.pop();
     state.attachments = attachments;
@@ -2717,7 +2820,8 @@ function updateComposer() {
   const hasInput = Boolean(el.prompt.value.trim() || state.attachments.length);
   el["send-turn"].disabled = !state.online || !state.workspace
     || !state.sessionId || !hasInput || state.busy
-    || state.attachmentsPending > 0 || state.contextPending;
+    || state.attachmentsPending > 0 || state.contextPending
+    || state.routingPending;
   el["attach-files"].disabled = state.busy
     || state.attachmentsPending > 0;
 }
@@ -3276,10 +3380,40 @@ function wireEvents() {
         }
       );
       session.model = result.model;
+      state.routingResolution = null;
+      renderRoutingResolution();
       toast(`Model changed to ${result.model}`);
     } catch (error) {
       selectModel(session.model);
       toast(error.message, "error");
+    }
+  });
+  el["routing-profile"].addEventListener("change", async () => {
+    if (state.routingPending) return;
+    const previous = state.settings?.routing_profile || "manual";
+    state.routingPending = true;
+    el["routing-profile"].disabled = true;
+    updateComposer();
+    try {
+      const result = await api("/v1/settings/routing", {
+        method: "PATCH",
+        body: JSON.stringify({
+          profile: el["routing-profile"].value,
+        }),
+      });
+      state.settings.routing_profile = result.routing_profile;
+      if (result.routing) state.settings.routing = result.routing;
+      state.routingResolution = null;
+      renderRoutingResolution();
+      toast(`Routing profile changed to ${result.routing_profile}`);
+    } catch (error) {
+      el["routing-profile"].value = previous;
+      renderRoutingResolution();
+      toast(error.message, "error");
+    } finally {
+      state.routingPending = false;
+      el["routing-profile"].disabled = state.busy;
+      updateComposer();
     }
   });
   el.prompt.addEventListener("input", resizePrompt);

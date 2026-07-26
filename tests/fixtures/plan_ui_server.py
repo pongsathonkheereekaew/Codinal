@@ -94,6 +94,10 @@ class UIHandler(SimpleHTTPRequestHandler):
             **kwargs,
         )
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def do_GET(self):
         if self.path not in {"/", "/index.html"}:
             return super().do_GET()
@@ -167,6 +171,11 @@ def main() -> None:
         ),
         provider=RecoveryProvider(),
     )
+    for provider in ("gemini", "openai"):
+        services.secrets.set_api_key(
+            provider,
+            f"fixture-{provider}-key",
+        )
     app = create_control_plane_app(token=TOKEN, services=services)
     server = uvicorn.Server(
         uvicorn.Config(

@@ -668,9 +668,21 @@ select:focus-visible,
 .workspace {
   display: grid;
   min-width: 0;
-  grid-template-rows: 58px auto minmax(0, 1fr) auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  grid-template-rows:
+    58px repeat(4, auto) minmax(0, 1fr) auto;
   background: var(--bg);
 }
+
+.task-header { grid-row: 1; }
+.worker-panel { grid-row: 2; }
+.plan-panel { grid-row: 3; }
+.plan-build-panel { grid-row: 4; }
+.goal-panel { grid-row: 5; }
+.conversation { grid-row: 6; }
+.composer-wrap { grid-row: 7; }
 
 .task-header {
   display: flex;
@@ -1261,6 +1273,16 @@ select:focus-visible,
   font-weight: 600;
 }
 
+.message-routing {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.message-routing.has-degradation {
+  color: var(--warning);
+}
+
 .message-content {
   margin: 0;
   overflow-wrap: anywhere;
@@ -1511,6 +1533,20 @@ select:focus-visible,
   outline: 0;
   background: transparent;
   line-height: 1.5;
+}
+
+.routing-resolution {
+  min-height: 14px;
+  padding: 0 4px 3px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routing-resolution.has-degradation {
+  color: var(--warning);
 }
 
 .composer-toolbar,
@@ -1850,6 +1886,30 @@ body.is-dragging .drop-hint {
   display: grid;
   gap: 8px;
   margin-top: 13px;
+}
+
+.model-catalog {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.model-catalog-row {
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+
+.model-catalog-row strong {
+  font-size: 10.5px;
+}
+
+.model-catalog-row small {
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .provider-row {

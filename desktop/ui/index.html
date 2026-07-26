@@ -216,6 +216,8 @@
             <textarea id="prompt" rows="1"
               placeholder="Ask Codinal to build, debug, or explain…"
               aria-label="Message Codinal"></textarea>
+            <div id="routing-resolution" class="routing-resolution"
+              aria-live="polite"></div>
             <div class="composer-toolbar">
               <div class="composer-options">
                 <button id="attach-files" class="tool-button" type="button"
@@ -233,6 +235,8 @@
                   <option value="review">Review</option>
                   <option value="plan">Plan</option>
                 </select>
+                <select id="routing-profile"
+                  aria-label="Routing profile"></select>
                 <select id="model-select" aria-label="Model"></select>
               </div>
               <div class="send-controls">
@@ -299,6 +303,7 @@
         <section>
           <h3>Models</h3>
           <p id="model-summary" class="settings-copy">Loading model configuration…</p>
+          <div id="model-catalog" class="model-catalog"></div>
         </section>
         <section>
           <div class="settings-section-title update-row">

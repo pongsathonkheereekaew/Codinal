@@ -123,6 +123,26 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "rootSnapshot" in script
     assert "Semantic index not built" in html
     assert 'option value="semantic"' in html
+    assert 'id="routing-profile"' in html
+    assert 'id="routing-resolution"' in html
+    assert 'id="model-catalog"' in html
+    assert "/v1/settings/routing" in script
+    assert "routing_profile" in script
+    assert "started.routing.selected_model" in script
+    assert "message.source?.routing" in script
+    assert "optimisticMessage.source = { routing: started.routing }" in script
+    assert "state.routingPending" in script
+    assert "exact provider, model, cost, and fallback appear here" in script
+    assert "credential missing" in script
+    assert "auto eligible" in script
+    assert ".routing-resolution.has-degradation" in css
+    assert ".message-routing" in css
+    assert ".message-routing.has-degradation" in css
+    assert "58px repeat(4, auto) minmax(0, 1fr) auto" in css
+    assert ".composer-wrap { grid-row: 7; }" in css
+    workspace_css = css.split(".workspace {", 1)[1].split("}", 1)[0]
+    assert "min-height: 0" in workspace_css
+    assert "overflow: hidden" in workspace_css
     assert "Delete the local semantic index" in script
     assert "cancelProjectSearch" in script
     scheduled_search = script.split(

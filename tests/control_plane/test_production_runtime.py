@@ -457,6 +457,79 @@ def test_production_attachments_survive_restart_and_model_switch(tmp_path):
     assert "data:application/pdf;base64" not in markdown.text
 
 
+def test_production_routing_selects_and_persists_visible_concrete_model(
+    tmp_path,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    provider = AttachmentCaptureProvider()
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=tmp_path / "data",
+            default_model="openai:gpt-test",
+        ),
+        provider=provider,
+    )
+    services.secrets.set_api_key("gemini", "fixture-gemini-key")
+    payload = [
+        {"type": "text", "text": "Review this design"},
+        {
+            "type": "file",
+            "file": {
+                "filename": "design.pdf",
+                "file_data": _blank_pdf_url(),
+            },
+        },
+    ]
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        configured = client.patch(
+            "/v1/settings/routing",
+            headers=AUTH,
+            json={"profile": "quality"},
+        )
+        with client.websocket_connect(
+            "/ws/session/routing-session",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            started = client.post(
+                "/v1/sessions/routing-session/turns",
+                headers=AUTH,
+                json={
+                    "input": payload,
+                    "workspace": str(workspace),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+
+    assert configured.status_code == 200
+    assert started.status_code == 202
+    resolution = started.json()["routing"]
+    assert resolution["selected_model"] == "gemini:gemini-2.5-flash"
+    assert resolution["provider"] == "gemini"
+    assert resolution["cost_class"] == "economy"
+    assert resolution["degradations"] == []
+    assert provider.calls[0]["model"] == "gemini:gemini-2.5-flash"
+    assert services.sessions.list_sessions()[0]["model"] == (
+        "gemini:gemini-2.5-flash"
+    )
+    user_message = next(
+        message
+        for message in services.sessions.messages("routing-session")
+        if message.get("role") == "user"
+    )
+    assert user_message["source"]["routing"] == resolution
+
+
 def test_production_project_context_matches_exact_provider_part(
     tmp_path,
     monkeypatch,

@@ -1,6 +1,9 @@
+import asyncio
 import hashlib
+import threading
 from types import SimpleNamespace
 
+import httpx
 from fastapi.testclient import TestClient
 
 from runtime.control_plane import create_control_plane_app
@@ -16,8 +19,59 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 
 class FakeSettings:
+    def __init__(self):
+        self.routing_profile = "manual"
+
     def view(self):
-        return {"model": "openai:gpt-test"}
+        return {
+            "model": "openai:gpt-test",
+            "routing_profile": self.routing_profile,
+        }
+
+    def set_routing_profile(self, profile):
+        if profile not in {"manual", "quality", "balanced", "economy"}:
+            return {"ok": False, "error": "invalid routing profile"}
+        self.routing_profile = profile
+        return {"ok": True, "routing_profile": profile}
+
+
+class FakeRouting:
+    def __init__(self):
+        self.resolved = []
+
+    def view(self, profile):
+        return {
+            "profile": profile,
+            "profiles": [{"id": "manual"}, {"id": "balanced"}],
+            "models": [],
+        }
+
+    def resolve(
+        self,
+        profile,
+        *,
+        preferred_model,
+        user_input,
+        required_capabilities=(),
+    ):
+        self.resolved.append(
+            (
+                profile,
+                preferred_model,
+                user_input,
+                list(required_capabilities),
+            )
+        )
+        return {
+            "profile": profile,
+            "selected_model": "gemini:gemini-2.5-flash",
+            "provider": "gemini",
+            "cost_class": "economy",
+            "configured": True,
+            "required_capabilities": ["tools"],
+            "degradations": [],
+            "reason": "balanced selected configured gemini",
+        }
 
 
 class FakeGit:
@@ -119,6 +173,7 @@ class FakeSessions:
         self.rebuilt_project_indexes = []
         self.cleared_project_indexes = []
         self.export_too_large = False
+        self.routing_context_calls = []
 
     def list_sessions(self, *, workspace=None):
         return [
@@ -131,6 +186,19 @@ class FakeSessions:
 
     def messages(self, session_id):
         return [{"role": "user", "content": session_id}]
+
+    def selected_model(self, _session_id):
+        return "openai:gpt-session"
+
+    def routing_requirements(self, _session_id):
+        return ["tools"]
+
+    def routing_context(self, session_id):
+        self.routing_context_calls.append(session_id)
+        return {
+            "model": self.selected_model(session_id),
+            "required_capabilities": self.routing_requirements(session_id),
+        }
 
     def search_sessions(self, query, *, limit):
         return [
@@ -312,12 +380,13 @@ class FakeSessions:
         }
 
 
-def make_client(*, git=None):
+def make_client(*, git=None, routing=None):
     turns = FakeTurns()
     sessions = FakeSessions()
     services = SimpleNamespace(
         events=EventHub(),
         settings=FakeSettings(),
+        routing=routing,
         secrets=ProviderSecretService(),
         oauth=OAuthCoordinator(),
         turns=turns,
@@ -331,6 +400,182 @@ def make_client(*, git=None):
         sessions,
         turns,
     )
+
+
+def test_settings_expose_and_persist_transparent_routing_profile():
+    routing = FakeRouting()
+    client, _sessions, _turns = make_client(routing=routing)
+
+    with client:
+        initial = client.get("/v1/settings", headers=AUTH)
+        updated = client.patch(
+            "/v1/settings/routing",
+            headers=AUTH,
+            json={"profile": "balanced"},
+        )
+        invalid = client.patch(
+            "/v1/settings/routing",
+            headers=AUTH,
+            json={"profile": "hidden"},
+        )
+
+    assert initial.json()["routing"]["profile"] == "manual"
+    assert updated.json()["routing"]["profile"] == "balanced"
+    assert invalid.status_code == 400
+
+
+def test_turn_routing_returns_exact_resolution_and_uses_selected_model():
+    routing = FakeRouting()
+    client, _sessions, turns = make_client(routing=routing)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={
+                "input": "Build it",
+                "model": "openai:gpt-test",
+                "routing_profile": "balanced",
+            },
+        )
+
+    assert response.status_code == 202
+    assert response.json()["routing"]["provider"] == "gemini"
+    assert turns.started[0][1]["model"] == "gemini:gemini-2.5-flash"
+    assert routing.resolved == [
+        ("balanced", "openai:gpt-test", "Build it", ["tools"])
+    ]
+    assert turns.started[0][1]["source"]["routing"]["provider"] == "gemini"
+
+
+def test_persisted_auto_profile_routes_turn_without_request_overrides():
+    routing = FakeRouting()
+    client, _sessions, turns = make_client(routing=routing)
+
+    with client:
+        configured = client.patch(
+            "/v1/settings/routing",
+            headers=AUTH,
+            json={"profile": "economy"},
+        )
+        response = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={"input": "Continue"},
+        )
+
+    assert configured.status_code == 200
+    assert response.status_code == 202
+    assert response.json()["routing"]["profile"] == "economy"
+    assert routing.resolved == [
+        ("economy", "openai:gpt-session", "Continue", ["tools"])
+    ]
+    assert turns.started[0][1]["model"] == "gemini:gemini-2.5-flash"
+
+
+def test_cold_routing_context_does_not_block_control_plane_health():
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowSessions(FakeSessions):
+        def routing_context(self, session_id):
+            started.set()
+            release.wait(timeout=2)
+            return super().routing_context(session_id)
+
+    turns = FakeTurns()
+    sessions = SlowSessions()
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        routing=FakeRouting(),
+        secrets=ProviderSecretService(),
+        oauth=OAuthCoordinator(),
+        turns=turns,
+        sessions=sessions,
+        approvals=None,
+        mcp=None,
+        git=None,
+    )
+    app = create_control_plane_app(token=TOKEN, services=services)
+
+    async def scenario():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            turn = asyncio.create_task(
+                client.post(
+                    "/v1/sessions/session-1/turns",
+                    headers=AUTH,
+                    json={"input": "Continue"},
+                )
+            )
+            assert await asyncio.to_thread(started.wait, 1)
+            health = await asyncio.wait_for(
+                client.get("/v1/health", headers=AUTH),
+                timeout=0.5,
+            )
+            release.set()
+            return health, await turn
+
+    try:
+        health, turn = asyncio.run(scenario())
+    finally:
+        release.set()
+
+    assert health.status_code == 200
+    assert turn.status_code == 202
+    assert sessions.routing_context_calls == ["session-1"]
+
+
+def test_default_manual_turn_overwrites_untrusted_routing_source():
+    routing = FakeRouting()
+    client, _sessions, turns = make_client(routing=routing)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={
+                "input": "Inspect",
+                "source": {
+                    "routing": {
+                        "selected_model": "attacker:spoofed",
+                    }
+                },
+            },
+        )
+
+    assert response.status_code == 202
+    assert routing.resolved == [
+        ("manual", "openai:gpt-session", "Inspect", ["tools"])
+    ]
+    assert turns.started[0][1]["source"]["routing"] == (
+        response.json()["routing"]
+    )
+
+
+def test_client_routing_source_is_reserved_without_routing_service():
+    client, _sessions, turns = make_client(routing=None)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/turns",
+            headers=AUTH,
+            json={
+                "input": "Inspect",
+                "source": {
+                    "routing": {
+                        "selected_model": "attacker:spoofed",
+                    }
+                },
+            },
+        )
+
+    assert response.status_code == 202
+    assert turns.started[0][1]["source"] is None
 
 
 def test_versioned_export_is_authenticated_and_consistent():

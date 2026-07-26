@@ -17,6 +17,7 @@ from .goals import GoalCoordinator, GoalStore
 from .mcp import MCPManager, MCPService
 from .oauth import OAuthCoordinator
 from .policy import ApprovalBroker, Approver, Mode, PermissionEngine, deny_all
+from .routing import ModelRoutingService
 from .secrets import ProviderSecretService
 from .sessions import EngineRequest, RootDir, SessionService
 from .sessions.service import (
@@ -58,6 +59,7 @@ class RuntimeServices:
     turns: TurnCoordinator
     events: EventHub
     settings: SettingsService
+    routing: ModelRoutingService
     secrets: ProviderSecretService
     oauth: OAuthCoordinator
     mcp: MCPService | None = None
@@ -105,6 +107,10 @@ def compose_runtime(
         curated_models=curated_models,
     )
     secrets = provider_secrets or ProviderSecretService()
+    routing = ModelRoutingService(
+        lambda: list(settings.view()["models"]),
+        secrets,
+    )
     oauth_service = oauth or OAuthCoordinator()
 
     def build_engine(request: EngineRequest) -> SessionEngine:
@@ -240,6 +246,7 @@ def compose_runtime(
         turns=turns,
         events=events,
         settings=settings,
+        routing=routing,
         secrets=secrets,
         oauth=oauth_service,
         mcp=mcp,

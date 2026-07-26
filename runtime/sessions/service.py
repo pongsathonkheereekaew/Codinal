@@ -236,6 +236,15 @@ class SessionService:
         mode: str | None = None,
         model: str | None = None,
     ) -> Optional[SessionEngine]:
+        requested_model = (model or "").strip()
+        if (
+            requested_model
+            and (
+                len(requested_model.encode("utf-8")) > 256
+                or any(ord(character) < 32 for character in requested_model)
+            )
+        ):
+            raise ValueError("invalid model")
         engine = self._engines.get(session_id)
         if engine is not None:
             live_roots = getattr(engine, "roots", None)
@@ -268,8 +277,8 @@ class SessionService:
                 or self._default_model
             )
         selected_model = (
-            (model or "").strip()
-            if record is None and (model or "").strip()
+            requested_model
+            if record is None and requested_model
             else record.model if record else default_model
         )
         selected_mode = (
@@ -465,6 +474,31 @@ class SessionService:
             return list(engine.messages)
         record = self._store.load(session_id)
         return list(record.messages) if record else []
+
+    def selected_model(self, session_id: str) -> str | None:
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            value = str(getattr(engine, "model", "")).strip()
+            return value or None
+        record = self._store.load(session_id)
+        return record.model if record is not None else None
+
+    def routing_context(self, session_id: str) -> dict[str, Any]:
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            model = str(getattr(engine, "model", "")).strip() or None
+            messages = getattr(engine, "messages", [])
+        else:
+            record = self._store.load(session_id)
+            model = record.model if record is not None else None
+            messages = record.messages if record is not None else []
+        return {
+            "model": model,
+            "required_capabilities": _routing_requirements(messages),
+        }
+
+    def routing_requirements(self, session_id: str) -> list[str]:
+        return _routing_requirements(self.messages(session_id))
 
     def list_sessions(
         self, *, workspace: Optional[str] = None
@@ -786,7 +820,13 @@ class SessionService:
             "session_id": session_id,
         }
 
-    def set_model(self, session_id: str, model: str) -> dict[str, Any]:
+    def set_model(
+        self,
+        session_id: str,
+        model: str,
+        *,
+        routing: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal session"}
         normalized = (model or "").strip()
@@ -797,17 +837,70 @@ class SessionService:
         ):
             return {"ok": False, "error": "invalid model"}
         engine = self._engines.get(session_id)
+        audit_notice = _routing_audit_notice(routing, normalized)
         if engine is not None:
             previous = str(getattr(engine, "model", ""))
-            engine.model = normalized
-            if not self.persist(session_id):
+            messages = getattr(engine, "messages", None)
+            previous_message_count = (
+                len(messages) if isinstance(messages, list) else None
+            )
+            if audit_notice is not None and previous_message_count is None:
+                return {
+                    "ok": False,
+                    "error": "routing audit persistence failed",
+                }
+            try:
+                switch_model = getattr(engine, "switch_model", None)
+                if callable(switch_model):
+                    switch_model(normalized)
+                else:
+                    engine.model = normalized
+                if audit_notice is not None and isinstance(messages, list):
+                    messages.append(audit_notice)
+            except Exception:
                 engine.model = previous
+                if (
+                    previous_message_count is not None
+                    and isinstance(messages, list)
+                ):
+                    del messages[previous_message_count:]
+                return {"ok": False, "error": "model switch failed"}
+            try:
+                persisted = self.persist(session_id)
+            except Exception:
+                persisted = False
+            if not persisted:
+                try:
+                    if callable(switch_model):
+                        switch_model(previous)
+                    else:
+                        engine.model = previous
+                except Exception:
+                    engine.model = previous
+                if (
+                    previous_message_count is not None
+                    and isinstance(messages, list)
+                ):
+                    del messages[previous_message_count:]
                 return {"ok": False, "error": "model persistence failed"}
         else:
             record = self._store.load(session_id)
             if record is None:
                 return {"ok": False, "error": "session not found"}
-            self._store.save(replace(record, model=normalized))
+            messages = list(record.messages)
+            if audit_notice is not None:
+                messages.append(audit_notice)
+            try:
+                self._store.save(
+                    replace(
+                        record,
+                        model=normalized,
+                        messages=messages,
+                        message_count=len(messages),
+                    )
+                )
+            except Exception:
+                return {"ok": False, "error": "model persistence failed"}
         return {
             "ok": True,
             "session_id": session_id,
@@ -1815,6 +1908,53 @@ def _root_available(root: RootDir) -> bool:
         and (int(metadata.st_dev), int(metadata.st_ino))
         == (int(root.device), int(root.inode))
     )
+
+
+def _routing_audit_notice(
+    routing: dict[str, Any] | None,
+    model: str,
+) -> dict[str, Any] | None:
+    if (
+        not isinstance(routing, dict)
+        or routing.get("selected_model") != model
+    ):
+        return None
+    decision = copy.deepcopy(routing)
+    return {
+        "role": "notice",
+        "kind": "routing_decision",
+        "text": (
+            f"Routing: {decision.get('profile', 'manual')} → "
+            f"{decision.get('provider', 'unknown')} · {model} · "
+            f"{decision.get('cost_class', 'unknown')}"
+        ),
+        "source": {"routing": decision},
+        "ts": time.time(),
+    }
+
+
+def _routing_requirements(
+    messages: list[dict[str, Any]],
+) -> list[str]:
+    required = {"tools"}
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "image_url":
+                required.add("vision")
+            if (
+                part.get("type") == "file"
+                and isinstance(part.get("file"), dict)
+                and str(part["file"].get("file_data", "")).startswith(
+                    "data:application/pdf;base64,"
+                )
+            ):
+                required.add("pdf")
+    return sorted(required)
 
 
 def _inactive_root_view(root: dict[str, Any]) -> dict[str, Any]:

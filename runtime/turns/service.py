@@ -27,6 +27,10 @@ class SessionWorkspaceError(RuntimeError):
     pass
 
 
+class SessionModelError(RuntimeError):
+    pass
+
+
 class ExportBusyError(RuntimeError):
     pass
 
@@ -162,8 +166,6 @@ class TurnCoordinator:
                     "workspace": workspace,
                     "agent": agent,
                 }
-                if model is not None:
-                    engine_options["model"] = model
                 if mode is not None:
                     engine_options["mode"] = mode
                 engine = await asyncio.to_thread(
@@ -193,6 +195,38 @@ class TurnCoordinator:
                 raise CodeCheckpointError(
                     "automatic code checkpoint unavailable"
                 ) from None
+            if model is not None:
+                try:
+                    model_options: dict[str, Any] = {}
+                    if (
+                        isinstance(source, dict)
+                        and isinstance(source.get("routing"), dict)
+                    ):
+                        model_options["routing"] = source["routing"]
+                    switched = await asyncio.to_thread(
+                        self._sessions.set_model,
+                        session_id,
+                        model,
+                        **model_options,
+                    )
+                except Exception:
+                    switched = {"ok": False}
+                if not switched.get("ok"):
+                    if (
+                        code_checkpoint_id is not None
+                        and self._code_checkpoints is not None
+                    ):
+                        try:
+                            await asyncio.to_thread(
+                                self._code_checkpoints.finalize_checkpoint,
+                                session_id,
+                                code_checkpoint_id,
+                            )
+                        except Exception:
+                            pass
+                    raise SessionModelError(
+                        "session model update failed"
+                    )
 
             turn_id = f"turn-{uuid4()}"
             task = asyncio.create_task(
