@@ -94,6 +94,9 @@ class WorkerRecord:
     summary: str = ""
     error: str = ""
     commit: str = ""
+    build_id: str = ""
+    plan_task_id: str = ""
+    candidate_index: int = -1
     created_at: str | None = field(default=None, compare=False)
     updated_at: str | None = field(default=None, compare=False)
 
@@ -116,6 +119,20 @@ class WorkerRecord:
             or not isinstance(self.commit, str)
             or bool(self.commit)
             and _COMMIT.fullmatch(self.commit) is None
+            or bool(self.build_id) != bool(self.plan_task_id)
+            or self.build_id
+            and not _valid_id(self.build_id, "build-")
+            or self.plan_task_id
+            and (
+                re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}",
+                    self.plan_task_id,
+                )
+                is None
+                or not 0 <= self.candidate_index <= 3
+            )
+            or not self.plan_task_id
+            and self.candidate_index != -1
         ):
             raise ValueError("invalid worker record")
 

@@ -62,6 +62,10 @@ const state = {
   workers: [],
   workerGeneration: 0,
   plans: [],
+  planBuilds: [],
+  planBuildGeneration: 0,
+  managedPlan: null,
+  candidateDiffs: new Map(),
 };
 
 const el = Object.fromEntries(
@@ -88,6 +92,9 @@ const el = Object.fromEntries(
     "worker-dialog", "worker-task", "worker-ownership", "create-worker",
     "worker-dependencies",
     "plan-panel", "plan-summary", "plan-list",
+    "plan-build-panel", "plan-build-summary", "plan-build-list",
+    "plan-build-dialog", "plan-build-tasks", "plan-build-models",
+    "create-plan-build",
   ].map((id) => [id, document.getElementById(id)])
 );
 
@@ -316,7 +323,7 @@ function renderWorkers() {
       });
       actions.append(steer, cancel);
     }
-    if (worker.state === "succeeded" && worker.commit) {
+    if (worker.state === "succeeded" && worker.commit && !worker.build_id) {
       const adopt = node("button", "primary-button", "Adopt");
       adopt.type = "button";
       adopt.addEventListener("click", () => {
@@ -388,6 +395,243 @@ async function adoptWorker(worker) {
   toast("Worker changes adopted");
 }
 
+async function loadPlanBuilds() {
+  if (!state.sessionId) {
+    state.planBuilds = [];
+    renderPlanBuilds();
+    return;
+  }
+  const sessionId = state.sessionId;
+  const generation = ++state.planBuildGeneration;
+  const builds = await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/plan-builds`
+  );
+  if (
+    state.sessionId !== sessionId
+    || state.planBuildGeneration !== generation
+  ) return;
+  state.planBuilds = Array.isArray(builds) ? builds : [];
+  renderPlanBuilds();
+}
+
+function updatePlanBuild(build) {
+  if (!build || build.parent_session_id !== state.sessionId) return;
+  const index = state.planBuilds.findIndex(
+    (candidate) => candidate.build_id === build.build_id
+  );
+  if (index < 0) state.planBuilds.push(build);
+  else state.planBuilds[index] = build;
+  renderPlanBuilds();
+}
+
+function renderPlanBuilds() {
+  el["plan-build-list"].replaceChildren();
+  el["plan-build-panel"].classList.toggle(
+    "is-hidden",
+    !state.planBuilds.length
+  );
+  const actionable = state.planBuilds.filter(
+    (build) => build.state === "ready"
+  ).length;
+  el["plan-build-summary"].textContent = state.planBuilds.length
+    ? `${actionable} awaiting selection · ${state.planBuilds.length} total`
+    : "No parallel builds";
+  for (const build of state.planBuilds) {
+    const card = node("article", "plan-build-card");
+    card.append(
+      node("strong", "", `Build ${build.build_id.slice(-8)}`),
+      node("span", "saved-plan-status", build.state.replace("_", " "))
+    );
+    if (build.error) card.append(node("p", "plan-build-error", build.error));
+    for (const task of build.tasks || []) {
+      const selected_worker_id = task.selected_worker_id || "";
+      const taskCard = node("section", "plan-build-task");
+      taskCard.append(
+        node("strong", "", task.title),
+        node("small", "", `Verify: ${task.verification}`)
+      );
+      for (const candidate of task.candidates || []) {
+        const diffKey = `${build.build_id}:${candidate.worker_id}`;
+        const row = node(
+          "div",
+          `plan-build-candidate ${
+            candidate.worker_id === selected_worker_id ? "is-selected" : ""
+          }`
+        );
+        const details = node("div", "plan-build-candidate-details");
+        details.append(
+          node("strong", "", candidate.model),
+          node(
+            "small",
+            "",
+            `${candidate.state}${candidate.summary
+              ? ` · Candidate report: ${candidate.summary}`
+              : ""}`
+          )
+        );
+        row.append(details);
+        if (candidate.commit) {
+          const review = node("button", "secondary-button", "Review diff");
+          review.type = "button";
+          review.addEventListener("click", () => {
+            reviewPlanBuildCandidate(build, candidate).catch(
+              (error) => toast(error.message, "error")
+            );
+          });
+          row.append(review);
+        }
+        if (
+          ["ready", "selected"].includes(build.state)
+          && candidate.selectable
+        ) {
+          const select = node(
+            "button",
+            candidate.selected ? "primary-button" : "secondary-button",
+            candidate.selected ? "Selected" : "Select"
+          );
+          select.type = "button";
+          select.disabled = candidate.selected;
+          select.addEventListener("click", () => {
+            selectPlanBuildCandidate(build, candidate).catch(
+              (error) => toast(error.message, "error")
+            );
+          });
+          row.append(select);
+        }
+        taskCard.append(row);
+        const reviewed = state.candidateDiffs.get(diffKey);
+        if (reviewed) {
+          const evidence = node("div", "candidate-diff");
+          evidence.append(
+            node("strong", "", `Verification: ${reviewed.verification}`),
+            node("small", "", `Candidate report: ${
+              reviewed.summary || "No report"
+            }`),
+            node("pre", "", reviewed.diff || "No code changes")
+          );
+          if (reviewed.output_truncated) {
+            evidence.append(node("small", "", "Diff output truncated"));
+          }
+          taskCard.append(evidence);
+        }
+      }
+      card.append(taskCard);
+    }
+    if (build.state === "selected") {
+      const adopt = node(
+        "button",
+        "primary-button",
+        "Adopt selected results"
+      );
+      adopt.type = "button";
+      adopt.addEventListener("click", () => {
+        adoptPlanBuild(build).catch((error) => toast(error.message, "error"));
+      });
+      card.append(adopt);
+    }
+    el["plan-build-list"].append(card);
+  }
+}
+
+function openPlanBuildDialog(plan) {
+  state.managedPlan = plan;
+  el["plan-build-tasks"].replaceChildren();
+  const selected = new Set(plan.selected_task_ids || []);
+  for (const task of plan.tasks || []) {
+    if (!selected.has(task.id)) continue;
+    const row = node("label", "plan-build-dialog-task");
+    row.dataset.taskId = task.id;
+    row.append(node("strong", "", task.title));
+    const input = node("input");
+    input.placeholder = "Owned paths, comma separated";
+    input.setAttribute("aria-label", `Owned paths for ${task.title}`);
+    row.append(input);
+    el["plan-build-tasks"].append(row);
+  }
+  const models = [
+    el["model-select"].value,
+    ...Array.from(el["model-select"].options, (option) => option.value),
+  ].filter((model, index, all) => model && all.indexOf(model) === index);
+  if (models.length === 1) models.push(models[0]);
+  el["plan-build-models"].value = models.slice(0, 3).join(", ");
+  el["plan-build-dialog"].showModal();
+  el["plan-build-tasks"].querySelector("input")?.focus();
+}
+
+async function createPlanBuild() {
+  const plan = state.managedPlan;
+  const models = el["plan-build-models"].value
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean);
+  const tasks = Array.from(
+    el["plan-build-tasks"].querySelectorAll("[data-task-id]")
+  ).map((row) => ({
+    task_id: row.dataset.taskId,
+    ownership: row.querySelector("input").value
+      .split(",")
+      .map((path) => path.trim())
+      .filter(Boolean),
+    candidates: models.map((model) => ({ model })),
+  }));
+  if (
+    !state.sessionId
+    || !plan
+    || models.length < 2
+    || models.length > 4
+    || tasks.some((task) => !task.ownership.length)
+  ) {
+    toast("Enter owned paths and 2–4 candidate models", "error");
+    return;
+  }
+  const build = await api(
+    `/v1/sessions/${encodeURIComponent(state.sessionId)}/plan-builds`,
+    {
+      method: "POST",
+      body: JSON.stringify({ plan_id: plan.plan_id, tasks }),
+    }
+  );
+  updatePlanBuild(build);
+  state.managedPlan = null;
+  el["plan-build-dialog"].close();
+  await loadWorkers();
+  toast("Parallel comparison started");
+}
+
+async function selectPlanBuildCandidate(build, candidate) {
+  const selected = await api(
+    `/v1/plan-builds/${encodeURIComponent(build.build_id)}/select`,
+    {
+      method: "POST",
+      body: JSON.stringify({ worker_id: candidate.worker_id }),
+    }
+  );
+  updatePlanBuild(selected);
+}
+
+async function reviewPlanBuildCandidate(build, candidate) {
+  const reviewed = await api(
+    `/v1/plan-builds/${encodeURIComponent(
+      build.build_id
+    )}/candidates/${encodeURIComponent(candidate.worker_id)}/diff`
+  );
+  state.candidateDiffs.set(
+    `${build.build_id}:${candidate.worker_id}`,
+    reviewed
+  );
+  renderPlanBuilds();
+}
+
+async function adoptPlanBuild(build) {
+  const adopted = await api(
+    `/v1/plan-builds/${encodeURIComponent(build.build_id)}/adopt`,
+    { method: "POST" }
+  );
+  updatePlanBuild(adopted);
+  await Promise.all([loadWorkers(), loadDiff(false)]);
+  toast("Selected plan results adopted");
+}
+
 function scheduleSessionSearch() {
   window.clearTimeout(state.sessionSearchTimer);
   state.sessionSearchGeneration += 1;
@@ -450,6 +694,9 @@ async function selectSession(session) {
   state.workers = [];
   state.workerGeneration += 1;
   state.plans = [];
+  state.planBuilds = [];
+  state.planBuildGeneration += 1;
+  state.candidateDiffs.clear();
   state.roots = [];
   state.treeGeneration += 1;
   invalidateAttachments();
@@ -467,6 +714,7 @@ async function selectSession(session) {
   renderProjectTree();
   renderWorkers();
   renderPlans();
+  renderPlanBuilds();
   updateThreadSearchControls();
   try {
     const messages = await api(
@@ -486,6 +734,7 @@ async function selectSession(session) {
       loadRootsAndTree(),
       loadWorkers(),
       loadPlans(),
+      loadPlanBuilds(),
     ]);
     if (
       state.sessionId !== sessionId
@@ -548,6 +797,10 @@ function switchWorkspace(workspace) {
   state.checkpoints = [];
   state.workers = [];
   state.workerGeneration += 1;
+  state.plans = [];
+  state.planBuilds = [];
+  state.planBuildGeneration += 1;
+  state.candidateDiffs.clear();
   el["task-title"].textContent = "New task";
   updateWorkspaceLabel();
   renderSessions();
@@ -557,6 +810,8 @@ function switchWorkspace(workspace) {
   renderContextRoots();
   renderProjectTree();
   renderWorkers();
+  renderPlans();
+  renderPlanBuilds();
   updateThreadSearchControls();
   connectSocket();
   return true;
@@ -691,6 +946,10 @@ function handleEvent(event) {
       break;
     case "worker_status":
       updateWorker(event.worker);
+      loadPlanBuilds().catch((error) => toast(error.message, "error"));
+      break;
+    case "plan_build_status":
+      updatePlanBuild(event.build);
       break;
     default:
       break;
@@ -710,6 +969,7 @@ async function finishTurn() {
       loadRootsAndTree(),
       loadWorkers(),
       loadPlans(),
+      loadPlanBuilds(),
     ]);
   } catch (error) {
     toast(error.message, "error");
@@ -1499,6 +1759,19 @@ function renderPlans() {
       );
       card.append(item);
     }
+    if (
+      plan.status === "approved"
+      && (plan.selected_task_ids || []).length
+    ) {
+      const compare = node(
+        "button",
+        "secondary-button",
+        "Start parallel comparison"
+      );
+      compare.type = "button";
+      compare.addEventListener("click", () => openPlanBuildDialog(plan));
+      card.append(compare);
+    }
     el["plan-list"].append(card);
   }
 }
@@ -2227,6 +2500,9 @@ function wireEvents() {
   });
   el["create-worker"].addEventListener("click", () => {
     createWorker().catch((error) => toast(error.message, "error"));
+  });
+  el["create-plan-build"].addEventListener("click", () => {
+    createPlanBuild().catch((error) => toast(error.message, "error"));
   });
   el["session-search"].addEventListener("input", scheduleSessionSearch);
   el["thread-search"].addEventListener("input", () => findThreadMatches());

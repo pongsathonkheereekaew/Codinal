@@ -28,6 +28,7 @@ from .sessions.service import (
 from .settings import JsonPreferenceStore, SettingsService
 from .turns import TurnCoordinator
 from .workers import WorkerCoordinator, WorkerStore
+from .builds import PlanBuildCoordinator, PlanBuildStore
 
 EventEmitter = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -65,6 +66,7 @@ class RuntimeServices:
     interactions: Any | None = None
     plans: Any | None = None
     workers: WorkerCoordinator | None = None
+    builds: PlanBuildCoordinator | None = None
 
 
 def compose_runtime(
@@ -88,6 +90,7 @@ def compose_runtime(
     interaction_broker: Any | None = None,
     plan_store: Any | None = None,
     worker_store: WorkerStore | None = None,
+    plan_build_store: PlanBuildStore | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -203,6 +206,22 @@ def compose_runtime(
         if worker_store is not None and git_service is not None
         else None
     )
+    builds = (
+        PlanBuildCoordinator(
+            store=plan_build_store,
+            plans=plan_store,
+            workers=workers,
+            events=events,
+        )
+        if (
+            plan_build_store is not None
+            and plan_store is not None
+            and workers is not None
+        )
+        else None
+    )
+    if workers is not None and builds is not None:
+        workers.bind_plan_builds(builds)
     return RuntimeServices(
         sessions=sessions,
         turns=turns,
@@ -217,4 +236,5 @@ def compose_runtime(
         interactions=interaction_broker,
         plans=plan_store,
         workers=workers,
+        builds=builds,
     )

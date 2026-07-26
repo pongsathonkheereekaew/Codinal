@@ -130,6 +130,16 @@
           <div id="plan-list" class="plan-list" aria-live="polite"></div>
         </section>
 
+        <section id="plan-build-panel" class="plan-build-panel is-hidden"
+          aria-label="Plan build comparisons">
+          <header>
+            <strong>Build comparisons</strong>
+            <span id="plan-build-summary">No parallel builds</span>
+          </header>
+          <div id="plan-build-list" class="plan-build-list"
+            aria-live="polite"></div>
+        </section>
+
         <section id="conversation" class="conversation"
           aria-label="Conversation" aria-live="polite">
           <div id="empty-state" class="empty-state">
@@ -318,6 +328,25 @@
         <p class="dialog-note">The worker can only change these paths in its own Git worktree.</p>
         <button id="create-worker" class="primary-button"
           type="button">Start worker</button>
+      </form>
+    </dialog>
+
+    <dialog id="plan-build-dialog" class="session-dialog">
+      <form method="dialog">
+        <header>
+          <strong>Build plan in parallel</strong>
+          <button class="icon-button" value="cancel"
+            aria-label="Close plan build dialog">×</button>
+        </header>
+        <p class="dialog-note">Each candidate runs in an isolated worktree. Select one result per task before any changes are adopted.</p>
+        <div id="plan-build-tasks" class="plan-build-dialog-tasks"></div>
+        <label>
+          Candidate models (2–4, comma separated)
+          <input id="plan-build-models"
+            placeholder="openai:gpt-5.6-sol, anthropic:claude-sonnet-4-6" />
+        </label>
+        <button id="create-plan-build" class="primary-button"
+          type="button">Start parallel comparison</button>
       </form>
     </dialog>
 

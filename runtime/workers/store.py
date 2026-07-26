@@ -21,7 +21,7 @@ from .models import (
     WorkerState,
 )
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 
 
@@ -56,6 +56,24 @@ def _migrate_to_v1(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v2(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "ALTER TABLE workers ADD COLUMN build_id TEXT NOT NULL DEFAULT ''"
+    )
+    connection.execute(
+        "ALTER TABLE workers ADD COLUMN plan_task_id TEXT NOT NULL DEFAULT ''"
+    )
+    connection.execute(
+        "ALTER TABLE workers ADD COLUMN candidate_index INTEGER NOT NULL DEFAULT -1"
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS workers_build
+        ON workers(build_id, plan_task_id, candidate_index)
+        """
+    )
+
+
 class WorkerStore:
     def __init__(self, base_dir: str | Path) -> None:
         self.base = Path(base_dir).expanduser().resolve()
@@ -81,7 +99,7 @@ class WorkerStore:
             self._connection,
             previous_version,
             _SCHEMA_VERSION,
-            {1: _migrate_to_v1},
+            {1: _migrate_to_v1, 2: _migrate_to_v2},
         )
         secure_file(self.db_path)
 
@@ -114,10 +132,12 @@ class WorkerStore:
                             worker_id, parent_session_id, child_session_id,
                             task, ownership, dependencies, model, state,
                             worker_kind, protocol_version, capabilities,
-                            summary, error, commit_hash, created_at, updated_at
+                            summary, error, commit_hash, build_id,
+                            plan_task_id, candidate_index,
+                            created_at, updated_at
                         )
                         VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                             {_NOW}, {_NOW}
                         )
                         """,
@@ -223,6 +243,66 @@ class WorkerStore:
             )
         return self.load(worker_id) if cursor.rowcount == 1 else None
 
+    def transition_many(
+        self,
+        worker_ids: tuple[str, ...],
+        *,
+        expected: set[WorkerState],
+        target: WorkerState,
+    ) -> tuple[WorkerRecord, ...] | None:
+        if (
+            not worker_ids
+            or len(worker_ids) != len(set(worker_ids))
+            or not expected
+        ):
+            raise ValueError("invalid worker batch transition")
+        placeholders = ",".join("?" for _ in worker_ids)
+        expected_values = tuple(
+            state.value for state in sorted(expected, key=str)
+        )
+        with self._lock, self._connection:
+            rows = self._connection.execute(
+                f"""
+                SELECT worker_id, state
+                FROM workers
+                WHERE worker_id IN ({placeholders})
+                """,
+                worker_ids,
+            ).fetchall()
+            if (
+                len(rows) != len(worker_ids)
+                or any(
+                    WorkerState(row["state"]) not in expected
+                    for row in rows
+                )
+            ):
+                return None
+            if any(
+                target
+                not in ALLOWED_WORKER_TRANSITIONS[
+                    WorkerState(row["state"])
+                ]
+                for row in rows
+            ):
+                raise ValueError("invalid worker state transition")
+            cursor = self._connection.execute(
+                f"""
+                UPDATE workers
+                SET state = ?, updated_at = {_NOW}
+                WHERE worker_id IN ({placeholders})
+                  AND state IN (
+                    {",".join("?" for _ in expected_values)}
+                  )
+                """,
+                (target.value, *worker_ids, *expected_values),
+            )
+            if cursor.rowcount != len(worker_ids):
+                raise RuntimeError("worker batch transition failed")
+        records = tuple(self.load(worker_id) for worker_id in worker_ids)
+        if any(record is None for record in records):
+            raise RuntimeError("worker batch transition disappeared")
+        return tuple(record for record in records if record is not None)
+
 
 def _record_values(record: WorkerRecord) -> tuple[object, ...]:
     return (
@@ -240,6 +320,9 @@ def _record_values(record: WorkerRecord) -> tuple[object, ...]:
         record.summary,
         record.error,
         record.commit,
+        record.build_id,
+        record.plan_task_id,
+        record.candidate_index,
     )
 
 
@@ -278,6 +361,9 @@ def _from_row(row: sqlite3.Row) -> WorkerRecord:
         summary=row["summary"],
         error=row["error"],
         commit=row["commit_hash"],
+        build_id=row["build_id"],
+        plan_task_id=row["plan_task_id"],
+        candidate_index=int(row["candidate_index"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

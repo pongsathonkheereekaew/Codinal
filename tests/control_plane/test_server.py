@@ -466,3 +466,248 @@ def test_worker_http_lifecycle_survives_restart_before_adoption(
         parent_path / "runtime" / "owned.py"
     ).read_text() == "durable\n"
     assert (workspace / "runtime" / "owned.py").read_text() == "base\n"
+
+
+def test_plan_build_compares_three_isolated_candidates_and_adopts_selection(
+    tmp_path,
+) -> None:
+    class CandidateProvider(ProviderClient):
+        def __init__(self):
+            self.seen_content = []
+
+        def complete(self, *, messages, model, **_kwargs):
+            self.seen_content.extend(
+                str(message.get("content", ""))
+                for message in messages
+            )
+            if not any(
+                message.get("role") == "tool"
+                for message in messages
+            ):
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            f"write-{model.rsplit(':', 1)[-1]}",
+                            "write_file",
+                            {
+                                "path": "runtime/owned.py",
+                                "content": f"{model}\n",
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text=f"{model} candidate complete")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", workspace], check=True)
+    (workspace / "runtime").mkdir()
+    (workspace / "runtime" / "owned.py").write_text("base\n")
+    subprocess.run(["git", "-C", workspace, "add", "."], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            workspace,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.test",
+            "commit",
+            "-qm",
+            "initial",
+        ],
+        check=True,
+    )
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    provider = CandidateProvider()
+    first = build_services(config, provider=provider)
+    parent = first.sessions.get_engine(
+        "session-parent",
+        workspace=workspace,
+    )
+    assert parent is not None
+    parent.permissions.allow_tool_for_session("write_file")
+    parent.permissions.allow_command_for_session(
+        "printf inherited-authority"
+    )
+    parent.messages.append(
+        {"role": "user", "content": "parent-secret-marker"}
+    )
+    assert first.sessions.persist("session-parent")
+    plan_id = "a" * 32
+    first.plans.ensure_plan_artifact(
+        "session-parent",
+        plan_id,
+        "provider/plan-build",
+        {
+            "plan": "Compare parser implementations",
+            "tasks": [
+                {
+                    "id": "parser",
+                    "title": "Implement parser",
+                    "verification": "Parser suite passes",
+                }
+            ],
+        },
+    )
+    first.plans.save_plan_interaction_decision(
+        "session-parent",
+        "provider/plan-build",
+        "b" * 64,
+        {
+            "approved": True,
+            "mode": "interactive",
+            "plan": "Compare parser implementations",
+            "tasks": [
+                {
+                    "id": "parser",
+                    "title": "Implement parser",
+                    "verification": "Parser suite passes",
+                }
+            ],
+            "selected_task_ids": ["parser"],
+        },
+        plan_id,
+    )
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=first)
+    ) as client:
+        created = client.post(
+            "/v1/sessions/session-parent/plan-builds",
+            headers=auth,
+            json={
+                "plan_id": plan_id,
+                "tasks": [
+                    {
+                        "task_id": "parser",
+                        "ownership": ["runtime"],
+                        "candidates": [
+                            {"model": "openai:first"},
+                            {"model": "anthropic:second"},
+                            {"model": "gemini:third"},
+                        ],
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 202
+        build_id = created.json()["build_id"]
+        for _attempt in range(200):
+            builds = client.get(
+                "/v1/sessions/session-parent/plan-builds",
+                headers=auth,
+            ).json()
+            build = next(
+                item for item in builds if item["build_id"] == build_id
+            )
+            if build["state"] == "ready":
+                break
+            time.sleep(0.02)
+        assert build["state"] == "ready"
+        candidates = build["tasks"][0]["candidates"]
+        assert len(candidates) == 3
+        assert all(candidate["state"] == "succeeded" for candidate in candidates)
+        winner = candidates[1]["worker_id"]
+        loser = candidates[0]["worker_id"]
+        reviewed = client.get(
+            (
+                f"/v1/plan-builds/{build_id}/candidates/"
+                f"{winner}/diff"
+            ),
+            headers=auth,
+        )
+        assert reviewed.status_code == 200
+        assert "+anthropic:second" in reviewed.json()["diff"]
+        selected = client.post(
+            f"/v1/plan-builds/{build_id}/select",
+            headers=auth,
+            json={"worker_id": winner},
+        )
+        assert selected.status_code == 200
+        assert selected.json()["state"] == "selected"
+        for candidate in candidates:
+            child = first.plans.load(
+                f"session-{candidate['worker_id']}"
+            )
+            assert child is not None
+            assert child.grants == {"tools": [], "commands": []}
+            assert child.extra_roots == []
+        attacker = first.sessions.get_engine(
+            f"session-{candidates[0]['worker_id']}"
+        )
+        sibling = first.git.load(
+            f"session-{candidates[2]['worker_id']}"
+        )
+        assert attacker is not None
+        assert sibling is not None
+        escaped = sibling.worktree_path / "runtime" / "escaped.txt"
+        cross_write = attacker.registry.execute(
+            "run_shell",
+            {
+                "command": (
+                    "python3 -c \"from pathlib import Path; "
+                    f"Path({str(escaped)!r}).write_text('escaped')\""
+                )
+            },
+        )
+        assert cross_write["exit_code"] != 0
+        assert not escaped.exists()
+        assert all(
+            "parent-secret-marker" not in content
+            for content in provider.seen_content
+        )
+
+    restarted = build_services(config, provider=CandidateProvider())
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=restarted)
+    ) as client:
+        persisted = client.get(
+            "/v1/sessions/session-parent/plan-builds",
+            headers=auth,
+        ).json()[0]
+        bypass = client.post(
+            f"/v1/workers/{loser}/adopt",
+            headers=auth,
+        )
+        selected_bypass = client.post(
+            f"/v1/workers/{winner}/adopt",
+            headers=auth,
+        )
+        adopted = client.post(
+            f"/v1/plan-builds/{build_id}/adopt",
+            headers=auth,
+        )
+
+        assert persisted["state"] == "selected"
+        assert persisted["tasks"][0]["selected_worker_id"] == winner
+        assert bypass.status_code == 409
+        assert "plan build adoption" in bypass.json()["detail"]
+        assert selected_bypass.status_code == 409
+        assert "plan build adoption" in selected_bypass.json()["detail"]
+        assert adopted.status_code == 200
+        assert adopted.json()["state"] == "adopted"
+        workers = client.get(
+            "/v1/sessions/session-parent/workers",
+            headers=auth,
+        ).json()
+        states = {worker["worker_id"]: worker["state"] for worker in workers}
+        assert states[winner] == "adopted"
+        assert states[loser] == "succeeded"
+        parent_record = restarted.git.load("session-parent")
+        assert parent_record is not None
+        parent_path = parent_record.worktree_path
+
+    assert (parent_path / "runtime" / "owned.py").read_text() == (
+        "anthropic:second\n"
+    )
+    assert (workspace / "runtime" / "owned.py").read_text() == "base\n"

@@ -4,10 +4,12 @@ import platform
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from runtime.git import (
+    GitApplyUncertainError,
     CheckpointRestoreScope,
     CheckpointRestoreState,
     CheckpointState,
@@ -1006,6 +1008,247 @@ def test_apply_fast_forwards_recorded_source_branch_without_touching_main(
     assert not record.worktree_path.exists()
     assert service.load("apply-fast-forward") is None
     assert record.session_branch not in git(repo, "branch", "--list")
+
+
+@requires_seatbelt
+def test_apply_many_merges_selected_worktrees_in_one_parent_transaction(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    first = service.prepare("candidate-first", repo)
+    second = service.prepare("candidate-second", repo)
+    (first.worktree_path / "first.txt").write_text(
+        "first\n",
+        encoding="utf-8",
+    )
+    (second.worktree_path / "second.txt").write_text(
+        "second\n",
+        encoding="utf-8",
+    )
+    service.stage("candidate-first", "first.txt")
+    service.commit("candidate-first", "First candidate")
+    service.stage("candidate-second", "second.txt")
+    service.commit("candidate-second", "Second candidate")
+
+    applied = service.apply_many(
+        ("candidate-first", "candidate-second"),
+        (
+            git(first.worktree_path, "rev-parse", "HEAD"),
+            git(second.worktree_path, "rev-parse", "HEAD"),
+        ),
+    )
+
+    assert applied["ok"] is True
+    assert applied["strategy"] == "octopus"
+    assert (repo / "first.txt").read_text(encoding="utf-8") == "first\n"
+    assert (repo / "second.txt").read_text(encoding="utf-8") == "second\n"
+    assert service.load("candidate-first").state is WorktreeState.APPLIED
+    assert service.load("candidate-second").state is WorktreeState.APPLIED
+
+
+@requires_seatbelt
+def test_apply_many_conflict_leaves_parent_and_candidates_unchanged(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    first = service.prepare("conflicting-first", repo)
+    second = service.prepare("conflicting-second", repo)
+    (first.worktree_path / "tracked.txt").write_text(
+        "first\n",
+        encoding="utf-8",
+    )
+    (second.worktree_path / "tracked.txt").write_text(
+        "second\n",
+        encoding="utf-8",
+    )
+    for session_id in ("conflicting-first", "conflicting-second"):
+        service.stage(session_id, "tracked.txt")
+        service.commit(session_id, session_id)
+    source_head = git(repo, "rev-parse", "HEAD")
+
+    applied = service.apply_many(
+        ("conflicting-first", "conflicting-second"),
+        (
+            git(first.worktree_path, "rev-parse", "HEAD"),
+            git(second.worktree_path, "rev-parse", "HEAD"),
+        ),
+    )
+
+    assert applied["ok"] is False
+    assert applied["conflict"] is True
+    assert git(repo, "rev-parse", "HEAD") == source_head
+    assert git(repo, "status", "--porcelain") == ""
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "base\n"
+    assert service.load("conflicting-first").state is WorktreeState.ACTIVE
+    assert service.load("conflicting-second").state is WorktreeState.ACTIVE
+
+
+@requires_seatbelt
+def test_apply_many_reports_uncertain_when_conflict_abort_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    first = service.prepare("abort-failure-first", repo)
+    second = service.prepare("abort-failure-second", repo)
+    (first.worktree_path / "tracked.txt").write_text(
+        "first\n",
+        encoding="utf-8",
+    )
+    (second.worktree_path / "tracked.txt").write_text(
+        "second\n",
+        encoding="utf-8",
+    )
+    for session_id in ("abort-failure-first", "abort-failure-second"):
+        service.stage(session_id, "tracked.txt")
+        service.commit(session_id, session_id)
+    expected = (
+        git(first.worktree_path, "rev-parse", "HEAD"),
+        git(second.worktree_path, "rev-parse", "HEAD"),
+    )
+    run_registered = service._run_registered
+
+    def fail_abort(session_id, shell, command):
+        if "--abort" in command:
+            return SimpleNamespace(exit_code=1)
+        return run_registered(session_id, shell, command)
+
+    monkeypatch.setattr(service, "_run_registered", fail_abort)
+
+    with pytest.raises(
+        GitApplyUncertainError,
+        match="rollback failed",
+    ):
+        service.apply_many(
+            ("abort-failure-first", "abort-failure-second"),
+            expected,
+        )
+
+    assert (repo / ".git" / "MERGE_HEAD").exists()
+    git(repo, "merge", "--abort")
+
+
+@requires_seatbelt
+def test_apply_many_reports_uncertain_when_rollback_probe_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    first = service.prepare("probe-failure-first", repo)
+    second = service.prepare("probe-failure-second", repo)
+    (first.worktree_path / "tracked.txt").write_text(
+        "first\n",
+        encoding="utf-8",
+    )
+    (second.worktree_path / "tracked.txt").write_text(
+        "second\n",
+        encoding="utf-8",
+    )
+    for session_id in ("probe-failure-first", "probe-failure-second"):
+        service.stage(session_id, "tracked.txt")
+        service.commit(session_id, session_id)
+    expected = (
+        git(first.worktree_path, "rev-parse", "HEAD"),
+        git(second.worktree_path, "rev-parse", "HEAD"),
+    )
+    probe = service._probe
+    source_head_probes = 0
+
+    def fail_restored_head(root, *arguments):
+        nonlocal source_head_probes
+        if arguments == ("rev-parse", "HEAD"):
+            source_head_probes += 1
+            if source_head_probes == 2:
+                raise GitWorkspaceError("simulated probe failure")
+        return probe(root, *arguments)
+
+    monkeypatch.setattr(service, "_probe", fail_restored_head)
+
+    with pytest.raises(
+        GitApplyUncertainError,
+        match="could not be verified",
+    ):
+        service.apply_many(
+            ("probe-failure-first", "probe-failure-second"),
+            expected,
+        )
+
+    assert git(repo, "status", "--porcelain") == ""
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "base\n"
+
+
+@requires_seatbelt
+def test_apply_many_rejects_candidate_advanced_after_review(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("candidate-advanced", repo)
+    (record.worktree_path / "reviewed.txt").write_text(
+        "reviewed\n",
+        encoding="utf-8",
+    )
+    service.stage("candidate-advanced", "reviewed.txt")
+    service.commit("candidate-advanced", "Reviewed candidate")
+    reviewed_commit = git(record.worktree_path, "rev-parse", "HEAD")
+    (record.worktree_path / "unreviewed.txt").write_text(
+        "unreviewed\n",
+        encoding="utf-8",
+    )
+    service.stage("candidate-advanced", "unreviewed.txt")
+    service.commit("candidate-advanced", "Unreviewed change")
+    source_head = git(repo, "rev-parse", "HEAD")
+
+    with pytest.raises(
+        GitWorkspaceError,
+        match="changed after review",
+    ):
+        service.apply_many(
+            ("candidate-advanced",),
+            (reviewed_commit,),
+        )
+
+    assert git(repo, "rev-parse", "HEAD") == source_head
+    assert not (repo / "reviewed.txt").exists()
+    assert not (repo / "unreviewed.txt").exists()
+    assert service.load("candidate-advanced").state is WorktreeState.ACTIVE
+
+
+@requires_seatbelt
+def test_apply_many_reports_uncertain_after_post_merge_store_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("candidate-store-failure", repo)
+    (record.worktree_path / "selected.txt").write_text(
+        "selected\n",
+        encoding="utf-8",
+    )
+    service.stage("candidate-store-failure", "selected.txt")
+    service.commit("candidate-store-failure", "Selected candidate")
+    selected_commit = git(record.worktree_path, "rev-parse", "HEAD")
+
+    def fail_save(_record):
+        raise OSError("simulated metadata failure")
+
+    monkeypatch.setattr(service.store, "save", fail_save)
+
+    with pytest.raises(
+        GitApplyUncertainError,
+        match="metadata recovery required",
+    ):
+        service.apply_many(
+            ("candidate-store-failure",),
+            (selected_commit,),
+        )
+
+    assert (repo / "selected.txt").read_text(encoding="utf-8") == "selected\n"
 
 
 @requires_seatbelt

@@ -110,6 +110,10 @@ class GitWorkspaceError(RuntimeError):
     """A stable, user-displayable Git workspace lifecycle failure."""
 
 
+class GitApplyUncertainError(GitWorkspaceError):
+    """Git apply may have completed and requires idempotent recovery."""
+
+
 class DetachedHeadError(GitWorkspaceError):
     """The selected source worktree has no named branch to apply back to."""
 
@@ -1389,6 +1393,160 @@ class GitWorktreeService:
             "commit": commit,
             "branch": record.session_branch,
         }
+
+    def apply_many(
+        self,
+        session_ids: tuple[str, ...],
+        expected_commits: tuple[str, ...],
+    ) -> dict[str, object]:
+        """Atomically merge selected isolated branches into one parent."""
+        if (
+            not isinstance(session_ids, tuple)
+            or not 1 <= len(session_ids) <= 20
+            or len(session_ids) != len(set(session_ids))
+            or len(expected_commits) != len(session_ids)
+            or any(not commit for commit in expected_commits)
+        ):
+            raise GitWorkspaceError("invalid session selection")
+        records = [self._usable_record(session_id) for session_id in session_ids]
+        first = records[0]
+        if any(
+            record.source_root != first.source_root
+            or record.source_branch != first.source_branch
+            or record.git_common_dir != first.git_common_dir
+            for record in records
+        ):
+            raise GitWorkspaceError(
+                "selected worktrees do not share one parent"
+            )
+        if any(
+            not self._is_clean(record.worktree_path)
+            for record in records
+        ):
+            raise GitWorkspaceError(
+                "selected worktrees must be clean before apply"
+            )
+        if self._source_branch(first.source_root) != first.source_branch:
+            raise GitWorkspaceError("source branch changed since session start")
+        if not self._is_clean(first.source_root):
+            raise GitWorkspaceError(
+                "source worktree must be clean before apply"
+            )
+        source_head = self._probe(first.source_root, "rev-parse", "HEAD")
+        session_heads = [
+            self._probe(
+                record.worktree_path,
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            )
+            for record in records
+        ]
+        if tuple(session_heads) != expected_commits:
+            raise GitWorkspaceError(
+                "selected candidate changed after review"
+            )
+        if all(
+            self._is_ancestor(first.source_root, head, source_head)
+            for head in session_heads
+        ):
+            self._mark_many_applied(records)
+            return {
+                "ok": True,
+                "strategy": "already-applied",
+                "commit": source_head,
+            }
+
+        name = self._config_value(first.source_root, "user.name") or "Codinal"
+        email = (
+            self._config_value(first.source_root, "user.email")
+            or "codinal@localhost"
+        )
+        shell = self._apply_shell(first)
+        merged = self._run_registered(
+            first.session_id,
+            shell,
+            _git_command(
+                self.git_executable,
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                f"user.name={name}",
+                "-c",
+                f"user.email={email}",
+                "-C",
+                first.source_root,
+                "merge",
+                "--no-ff",
+                "--no-edit",
+                "--no-gpg-sign",
+                *session_heads,
+            ),
+        )
+        if merged.exit_code == 0:
+            commit = self._probe(first.source_root, "rev-parse", "HEAD")
+            self._mark_many_applied(records)
+            return {
+                "ok": True,
+                "strategy": (
+                    "merge" if len(records) == 1 else "octopus"
+                ),
+                "commit": commit,
+            }
+
+        if self._merge_in_progress(first.source_root):
+            aborted = self._run_registered(
+                first.session_id,
+                shell,
+                _git_command(
+                    self.git_executable,
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                    "-C",
+                    first.source_root,
+                    "merge",
+                    "--abort",
+                ),
+            )
+            if aborted.exit_code != 0:
+                raise GitApplyUncertainError("apply rollback failed")
+        try:
+            restored_head = self._probe(
+                first.source_root,
+                "rev-parse",
+                "HEAD",
+            )
+            restored_clean = self._is_clean(first.source_root)
+        except Exception as error:
+            raise GitApplyUncertainError(
+                "apply rollback could not be verified"
+            ) from error
+        if (
+            restored_head != source_head
+            or not restored_clean
+        ):
+            raise GitApplyUncertainError("apply rollback failed")
+        return {
+            "ok": False,
+            "conflict": True,
+            "error": "apply conflict; source was restored",
+        }
+
+    def _mark_many_applied(
+        self,
+        records: list[GitWorkspaceRecord],
+    ) -> None:
+        try:
+            for record in records:
+                self.store.save(
+                    replace(record, state=WorktreeState.APPLIED)
+                )
+        except Exception as error:
+            raise GitApplyUncertainError(
+                "apply completed; metadata recovery required"
+            ) from error
 
     def apply_back(self, session_id: str) -> dict[str, object]:
         record = self._usable_record(session_id)

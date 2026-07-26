@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 def owns_path(
@@ -32,4 +32,22 @@ def owns_path(
             return True
         except ValueError:
             continue
+    return False
+
+
+def scopes_overlap(
+    left: tuple[str, ...],
+    right: tuple[str, ...],
+) -> bool:
+    """Return whether two validated relative path scopes intersect."""
+    for first in left:
+        first_path = PurePosixPath(first)
+        for second in right:
+            second_path = PurePosixPath(second)
+            if (
+                first_path == second_path
+                or first_path in second_path.parents
+                or second_path in first_path.parents
+            ):
+                return True
     return False

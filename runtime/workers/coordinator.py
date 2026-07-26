@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+from runtime.git import GitApplyUncertainError
+from runtime.path_scope import scopes_overlap
 
 from .models import TERMINAL_WORKER_STATES, WorkerRecord, WorkerState
 from .protocol import (
@@ -36,6 +38,10 @@ class WorkerCoordinator:
         self._max_parallel = max_parallel
         self._monitors: dict[str, asyncio.Task[None]] = {}
         self._shutting_down = False
+        self._plan_builds: Any | None = None
+
+    def bind_plan_builds(self, plan_builds: Any) -> None:
+        self._plan_builds = plan_builds
 
     async def create(
         self,
@@ -46,6 +52,9 @@ class WorkerCoordinator:
         model: str,
         dependencies: tuple[str, ...] = (),
         worker_kind: str = "local",
+        build_id: str = "",
+        plan_task_id: str = "",
+        candidate_index: int = -1,
     ) -> WorkerRecord:
         if self._shutting_down:
             raise ValueError("worker coordinator is shutting down")
@@ -70,6 +79,9 @@ class WorkerCoordinator:
             worker_kind=hello.worker_kind,
             protocol_version=hello.version,
             capabilities=capabilities,
+            build_id=build_id,
+            plan_task_id=plan_task_id,
+            candidate_index=candidate_index,
         )
 
         def prepare_if_ready() -> dict[str, Any]:
@@ -122,8 +134,13 @@ class WorkerCoordinator:
         if len(active) >= self._max_parallel:
             raise ValueError("worker parallelism limit reached")
         if any(
-            _scopes_overlap(candidate.ownership, item.ownership)
+            scopes_overlap(candidate.ownership, item.ownership)
             and item.worker_id not in candidate.dependencies
+            and not (
+                candidate.build_id
+                and candidate.build_id == item.build_id
+                and candidate.plan_task_id == item.plan_task_id
+            )
             for item in active
         ):
             raise ValueError("worker ownership overlaps active work")
@@ -135,6 +152,29 @@ class WorkerCoordinator:
                 != candidate.parent_session_id
             ):
                 raise ValueError("invalid worker dependency")
+
+    def validate_plan_build(
+        self,
+        parent_session_id: str,
+        tasks: tuple[Any, ...],
+    ) -> None:
+        self._validate_parent_workspace(parent_session_id)
+        active = [
+            item
+            for item in self.store.list(parent_session_id)
+            if item.state not in TERMINAL_WORKER_STATES
+        ]
+        candidate_count = sum(
+            len(task.candidates) for task in tasks
+        )
+        if len(active) + candidate_count > self._max_parallel:
+            raise ValueError("worker parallelism limit reached")
+        if any(
+            scopes_overlap(task.ownership, worker.ownership)
+            for task in tasks
+            for worker in active
+        ):
+            raise ValueError("plan build ownership overlaps active work")
 
     def _validate_parent_workspace(self, parent_session_id: str) -> None:
         git_loader = getattr(self._git, "load", None)
@@ -202,6 +242,29 @@ class WorkerCoordinator:
     def list(self, parent_session_id: str) -> list[WorkerRecord]:
         return self.store.list(parent_session_id)
 
+    def comparison_diff(self, worker_id: str) -> dict[str, object]:
+        record = self._require(worker_id)
+        if (
+            not record.build_id
+            or record.state
+            not in {WorkerState.SUCCEEDED, WorkerState.ADOPTED}
+            or not record.commit
+        ):
+            raise ValueError("candidate result is unavailable")
+        result = self._git.diff(
+            record.child_session_id,
+            against_base=True,
+        )
+        if not result.get("ok"):
+            raise ValueError("candidate diff is unavailable")
+        return {
+            "worker_id": record.worker_id,
+            "commit": record.commit,
+            "summary": record.summary,
+            "diff": result.get("diff", ""),
+            "output_truncated": bool(result.get("output_truncated")),
+        }
+
     def steer(self, worker_id: str, text: str) -> bool:
         record = self._require(worker_id)
         if record.state is not WorkerState.RUNNING:
@@ -240,6 +303,12 @@ class WorkerCoordinator:
             }
         if record.state is not WorkerState.SUCCEEDED:
             raise ValueError("worker must have succeeded before adoption")
+        if (
+            record.build_id
+        ):
+            raise ValueError(
+                "comparison candidate requires plan build adoption"
+            )
         if not record.commit:
             raise ValueError("worker has no committed changes to adopt")
         if self._turns.is_active(record.parent_session_id):
@@ -253,6 +322,108 @@ class WorkerCoordinator:
             raise ValueError("worker adoption is already in progress")
         await self._publish(adopting)
         return await self._continue_adoption(adopting)
+
+    async def adopt_plan_build(
+        self,
+        build_id: str,
+        worker_ids: tuple[str, ...],
+    ) -> dict[str, object]:
+        if (
+            self._plan_builds is None
+            or not 1 <= len(worker_ids) <= 20
+            or len(worker_ids) != len(set(worker_ids))
+        ):
+            raise ValueError("invalid plan build adoption")
+        records = [self._require(worker_id) for worker_id in worker_ids]
+        parents = {record.parent_session_id for record in records}
+        if (
+            len(parents) != 1
+            or any(
+                record.build_id != build_id
+                or record.state
+                not in {
+                    WorkerState.SUCCEEDED,
+                    WorkerState.ADOPTING,
+                    WorkerState.ADOPTED,
+                }
+                or not record.commit
+                or not self._plan_builds.is_selected(
+                    build_id,
+                    record.worker_id,
+                )
+                for record in records
+            )
+        ):
+            raise ValueError("invalid selected plan build candidates")
+        parent_session_id = records[0].parent_session_id
+        if self._turns.is_active(parent_session_id):
+            raise ValueError("parent turn must be idle before adoption")
+        pending = [
+            record
+            for record in records
+            if record.state is not WorkerState.ADOPTED
+        ]
+        if not pending:
+            return {
+                "ok": True,
+                "strategy": "already-applied",
+                "commit": records[0].commit,
+            }
+        pending_states = {record.state for record in pending}
+        if pending_states == {WorkerState.SUCCEEDED}:
+            adopting = self.store.transition_many(
+                tuple(record.worker_id for record in pending),
+                expected={WorkerState.SUCCEEDED},
+                target=WorkerState.ADOPTING,
+            )
+            if adopting is None:
+                raise ValueError("plan build worker state changed")
+            for record in adopting:
+                await self._publish(record)
+            pending = list(adopting)
+        elif pending_states != {WorkerState.ADOPTING}:
+            raise ValueError("invalid selected plan build candidate states")
+
+        def apply_selection() -> dict[str, object]:
+            for record in pending:
+                status = self._git.status(record.child_session_id)
+                if not status.get("ok") or not status.get("clean"):
+                    raise ValueError("worker worktree is not clean")
+            result = self._git.apply_many(
+                tuple(record.child_session_id for record in pending),
+                tuple(record.commit for record in pending),
+            )
+            if not result.get("ok"):
+                raise ValueError("plan build adoption failed")
+            return result
+
+        try:
+            result = await self._turns.mutate_when_idle(
+                parent_session_id,
+                apply_selection,
+            )
+        except GitApplyUncertainError:
+            raise
+        except Exception:
+            restored = self.store.transition_many(
+                tuple(record.worker_id for record in pending),
+                expected={WorkerState.ADOPTING},
+                target=WorkerState.SUCCEEDED,
+            )
+            if restored is not None:
+                for record in restored:
+                    await self._publish(record)
+            raise
+        adopted = self.store.transition_many(
+            tuple(record.worker_id for record in pending),
+            expected={WorkerState.ADOPTING},
+            target=WorkerState.ADOPTED,
+        )
+        if adopted is None:
+            raise ValueError("plan build worker state changed")
+        for record in adopted:
+            await self._publish(record)
+        return result
 
     async def recover(self) -> int:
         recovered = 0
@@ -274,6 +445,8 @@ class WorkerCoordinator:
                 await self._finish(record)
                 recovered += 1
             elif record.state is WorkerState.ADOPTING:
+                if record.build_id:
+                    continue
                 try:
                     await self._continue_adoption(record)
                 except Exception:
@@ -549,23 +722,12 @@ def worker_to_dict(record: WorkerRecord) -> dict[str, object]:
         "summary": record.summary,
         "error": record.error,
         "commit": record.commit,
+        "build_id": record.build_id,
+        "plan_task_id": record.plan_task_id,
+        "candidate_index": record.candidate_index,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
-
-
-def _scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
-    for first in left:
-        first_path = Path(first)
-        for second in right:
-            second_path = Path(second)
-            if (
-                first_path == second_path
-                or first_path in second_path.parents
-                or second_path in first_path.parents
-            ):
-                return True
-    return False
 
 
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:

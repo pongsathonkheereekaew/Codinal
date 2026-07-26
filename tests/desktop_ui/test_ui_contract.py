@@ -29,6 +29,11 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="worker-task"' in html
     assert 'id="worker-ownership"' in html
     assert 'id="worker-dependencies"' in html
+    assert 'id="plan-build-panel"' in html
+    assert 'id="plan-build-list"' in html
+    assert 'id="plan-build-dialog"' in html
+    assert 'id="plan-build-tasks"' in html
+    assert 'id="plan-build-models"' in html
     assert 'id="new-task"' in html
     assert 'id="send-turn"' in html
     assert 'id="attach-files"' in html
@@ -120,6 +125,15 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "/adopt" in script
     assert "worker_status" in script
     assert "renderWorkers" in script
+    assert "/plan-builds" in script
+    assert "plan_build_status" in script
+    assert "renderPlanBuilds" in script
+    assert '(build) => build.state === "ready"' in script
+    assert "selected_worker_id" in script
+    assert "Start parallel comparison" in script
+    assert "/candidates/" in script
+    assert "Review diff" in script
+    assert "candidateDiffs" in script
     load_sessions = script.split(
         "async function loadSessions() {",
         1,

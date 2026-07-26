@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from runtime.events import EventHub
+from runtime.builds import MAX_PLAN_BUILD_CANDIDATES
 from runtime.git import (
     CheckpointRestoreScope,
     GitWorkspaceError,
@@ -31,6 +32,7 @@ from runtime.control_plane.input_validation import (
     valid_turn_input,
 )
 from runtime.policy import ApprovalOutcome, ApprovalPersistenceError
+from runtime.path_scope import scopes_overlap
 from runtime.sessions.context import make_project_context_item
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
@@ -65,6 +67,7 @@ MAX_INTERACTION_BODY_BYTES = 128 * 1024
 MAX_SESSION_FORK_BODY_BYTES = 1024
 MAX_ROOT_BODY_BYTES = 8 * 1024
 MAX_WORKER_BODY_BYTES = 64 * 1024
+MAX_PLAN_BUILD_BODY_BYTES = 256 * 1024
 
 
 class SettingsView(Protocol):
@@ -336,6 +339,32 @@ class PlanControl(Protocol):
     ) -> list[dict[str, Any]]: ...
 
 
+class PlanBuildControl(Protocol):
+    async def create(
+        self,
+        parent_session_id: str,
+        *,
+        plan_id: str,
+        tasks: tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]: ...
+
+    def list(self, parent_session_id: str) -> list[dict[str, Any]]: ...
+
+    def candidate_diff(
+        self,
+        build_id: str,
+        worker_id: str,
+    ) -> dict[str, Any]: ...
+
+    async def select(
+        self,
+        build_id: str,
+        worker_id: str,
+    ) -> dict[str, Any]: ...
+
+    async def adopt(self, build_id: str) -> dict[str, object]: ...
+
+
 class RestoreControl(Protocol):
     def restore(
         self,
@@ -361,6 +390,7 @@ class ControlPlaneServices(Protocol):
     interactions: InteractionControl | None
     plans: PlanControl | None
     workers: Any | None
+    builds: PlanBuildControl | None
 
 
 def create_control_plane_app(
@@ -381,8 +411,14 @@ def create_control_plane_app(
             workers = getattr(services, "workers", None)
             if workers is not None:
                 await workers.recover()
+            builds = getattr(services, "builds", None)
+            if builds is not None:
+                await builds.recover()
             yield
         finally:
+            builds = getattr(services, "builds", None)
+            if builds is not None:
+                await builds.shutdown()
             workers = getattr(services, "workers", None)
             if workers is not None:
                 await workers.shutdown()
@@ -402,6 +438,8 @@ def create_control_plane_app(
                     interactions.close()
                 if workers is not None:
                     workers.store.close()
+                if builds is not None:
+                    builds.store.close()
 
     app = FastAPI(
         title="Codinal Control Plane",
@@ -1000,6 +1038,99 @@ def create_control_plane_app(
         except (GitWorkspaceError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from None
 
+    @app.get("/v1/sessions/{session_id}/plan-builds")
+    async def list_plan_builds(
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        builds = getattr(services, "builds", None)
+        if builds is None:
+            return []
+        return await asyncio.to_thread(builds.list, session_id)
+
+    @app.post("/v1/sessions/{session_id}/plan-builds")
+    async def create_plan_build(
+        session_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _validate_public_session_id(session_id)
+        builds = getattr(services, "builds", None)
+        if builds is None:
+            raise HTTPException(
+                status_code=503,
+                detail="plan builds are unavailable",
+            )
+        body = await _read_plan_build_create(request)
+        try:
+            record = await builds.create(
+                session_id,
+                plan_id=body["plan_id"],
+                tasks=tuple(body["tasks"]),
+            )
+        except (KeyError, SessionBusyError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        return JSONResponse(record, status_code=202)
+
+    @app.post("/v1/plan-builds/{build_id}/select")
+    async def select_plan_build(
+        build_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(build_id)
+        builds = getattr(services, "builds", None)
+        if builds is None:
+            raise HTTPException(
+                status_code=503,
+                detail="plan builds are unavailable",
+            )
+        worker_id = await _read_plan_build_selection(request)
+        try:
+            return await builds.select(build_id, worker_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="plan build not found") from None
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+
+    @app.get("/v1/plan-builds/{build_id}/candidates/{worker_id}/diff")
+    async def plan_build_candidate_diff(
+        build_id: str,
+        worker_id: str,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(build_id)
+        _validate_public_session_id(worker_id)
+        builds = getattr(services, "builds", None)
+        if builds is None:
+            raise HTTPException(
+                status_code=503,
+                detail="plan builds are unavailable",
+            )
+        try:
+            return await asyncio.to_thread(
+                builds.candidate_diff,
+                build_id,
+                worker_id,
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="plan build not found") from None
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+
+    @app.post("/v1/plan-builds/{build_id}/adopt")
+    async def adopt_plan_build(build_id: str) -> dict[str, object]:
+        _validate_public_session_id(build_id)
+        builds = getattr(services, "builds", None)
+        if builds is None:
+            raise HTTPException(
+                status_code=503,
+                detail="plan builds are unavailable",
+            )
+        try:
+            return await builds.adopt(build_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="plan build not found") from None
+        except (GitWorkspaceError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+
     @app.post("/v1/sessions/{session_id}/interrupt")
     async def interrupt_turn(session_id: str) -> dict[str, Any]:
         _validate_public_session_id(session_id)
@@ -1408,6 +1539,113 @@ async def _read_worker_steer(request: Request) -> str:
     ):
         raise HTTPException(status_code=400, detail="invalid worker steering")
     return text.strip()
+
+
+async def _read_plan_build_create(request: Request) -> dict[str, Any]:
+    body = await _read_bounded_object(
+        request,
+        limit=MAX_PLAN_BUILD_BODY_BYTES,
+        detail="invalid plan build payload",
+    )
+    tasks = body.get("tasks")
+    if (
+        set(body) != {"plan_id", "tasks"}
+        or not isinstance(body.get("plan_id"), str)
+        or re.fullmatch(r"[a-f0-9]{32}", body["plan_id"]) is None
+        or not isinstance(tasks, list)
+        or not 1 <= len(tasks) <= 20
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid plan build payload",
+        )
+    task_ids: list[str] = []
+    scopes: list[tuple[str, ...]] = []
+    candidate_count = 0
+    for task in tasks:
+        if not isinstance(task, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid plan build payload",
+            )
+        ownership = task.get("ownership")
+        candidates = task.get("candidates")
+        if (
+            set(task) != {"task_id", "ownership", "candidates"}
+            or not isinstance(task.get("task_id"), str)
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}",
+                task["task_id"],
+            )
+            is None
+            or not isinstance(ownership, list)
+            or not 1 <= len(ownership) <= 32
+            or any(not isinstance(path, str) for path in ownership)
+            or len(set(ownership)) != len(ownership)
+            or any(not _valid_worker_path(path) for path in ownership)
+            or not isinstance(candidates, list)
+            or not 2 <= len(candidates) <= 4
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid plan build payload",
+            )
+        for candidate in candidates:
+            if (
+                not isinstance(candidate, dict)
+                or not {"model"} <= set(candidate) <= {"model", "instruction"}
+                or not _valid_utf8_text(
+                    candidate.get("model"),
+                    minimum=1,
+                    maximum=256,
+                )
+                or not _valid_utf8_text(
+                    candidate.get("instruction", ""),
+                    minimum=0,
+                    maximum=32 * 1024,
+                )
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="invalid plan build payload",
+                )
+        task_ids.append(task["task_id"])
+        scopes.append(tuple(ownership))
+        candidate_count += len(candidates)
+    if (
+        candidate_count > MAX_PLAN_BUILD_CANDIDATES
+        or len(set(task_ids)) != len(task_ids)
+        or any(
+        scopes_overlap(scopes[left], scopes[right])
+        for left in range(len(scopes))
+        for right in range(left + 1, len(scopes))
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid plan build payload",
+        )
+    return body
+
+
+async def _read_plan_build_selection(request: Request) -> str:
+    body = await _read_bounded_object(
+        request,
+        limit=1024,
+        detail="invalid plan build selection",
+    )
+    worker_id = body.get("worker_id")
+    if (
+        set(body) != {"worker_id"}
+        or not isinstance(worker_id, str)
+        or not worker_id.startswith("worker-")
+        or _SESSION_ID.fullmatch(worker_id) is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid plan build selection",
+        )
+    return worker_id
 
 
 async def _read_bounded_object(

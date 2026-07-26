@@ -13,6 +13,7 @@ from .models import (
 )
 from .service import (
     DetachedHeadError,
+    GitApplyUncertainError,
     GitWorkspaceError,
     GitWorktreeService,
     NotGitRepositoryError,
@@ -29,6 +30,7 @@ __all__ = [
     "CheckpointRestoreState",
     "CheckpointState",
     "CodeCheckpointRecord",
+    "GitApplyUncertainError",
     "GitWorkspaceError",
     "GitWorkspaceRecord",
     "GitWorktreeService",

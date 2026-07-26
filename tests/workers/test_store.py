@@ -1,3 +1,5 @@
+import sqlite3
+
 from runtime.workers import (
     WorkerRecord,
     WorkerState,
@@ -103,6 +105,51 @@ def test_worker_store_rejects_cross_parent_dependencies(tmp_path):
         raise AssertionError("cross-parent dependency was accepted")
 
 
+def test_worker_store_transitions_selected_workers_atomically(tmp_path):
+    store = WorkerStore(tmp_path)
+    for suffix in ("a", "b"):
+        store.create(
+            record(
+                worker_id=f"worker-{suffix}",
+                child_session_id=f"session-worker-{suffix}",
+            )
+        )
+        store.transition(
+            f"worker-{suffix}",
+            expected={WorkerState.QUEUED},
+            target=WorkerState.RUNNING,
+        )
+        store.transition(
+            f"worker-{suffix}",
+            expected={WorkerState.RUNNING},
+            target=WorkerState.FINALIZING,
+        )
+        store.transition(
+            f"worker-{suffix}",
+            expected={WorkerState.FINALIZING},
+            target=WorkerState.SUCCEEDED,
+            commit="a" * 40,
+        )
+
+    adopting = store.transition_many(
+        ("worker-a", "worker-b"),
+        expected={WorkerState.SUCCEEDED},
+        target=WorkerState.ADOPTING,
+    )
+    stale = store.transition_many(
+        ("worker-a", "worker-b"),
+        expected={WorkerState.SUCCEEDED},
+        target=WorkerState.ADOPTING,
+    )
+
+    assert adopting is not None
+    assert {item.state for item in adopting} == {WorkerState.ADOPTING}
+    assert stale is None
+    assert {
+        item.state for item in store.list("session-parent")
+    } == {WorkerState.ADOPTING}
+
+
 def test_worker_store_finds_child_session_and_non_terminal_records(tmp_path):
     store = WorkerStore(tmp_path)
     store.create(record(worker_id="worker-a"))
@@ -125,3 +172,31 @@ def test_worker_store_finds_child_session_and_non_terminal_records(tmp_path):
     assert [item.worker_id for item in store.list_non_terminal()] == [
         "worker-b"
     ]
+
+
+def test_worker_store_migrates_v1_records_to_comparison_metadata(tmp_path):
+    initial = WorkerStore(tmp_path)
+    initial.create(record())
+    initial.close()
+    connection = sqlite3.connect(tmp_path / "workers.db")
+    with connection:
+        connection.execute("DROP INDEX workers_build")
+        connection.execute(
+            "ALTER TABLE workers DROP COLUMN candidate_index"
+        )
+        connection.execute("ALTER TABLE workers DROP COLUMN plan_task_id")
+        connection.execute("ALTER TABLE workers DROP COLUMN build_id")
+        connection.execute("PRAGMA user_version = 1")
+    connection.close()
+
+    migrated = WorkerStore(tmp_path)
+    loaded = migrated.load("worker-a")
+    with sqlite3.connect(tmp_path / "workers.db") as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+
+    assert loaded is not None
+    assert loaded.build_id == ""
+    assert loaded.plan_task_id == ""
+    assert loaded.candidate_index == -1
+    assert version == 2
+    assert len(list((tmp_path / "backups").glob("*.pre-v1-to-v2-*.bak"))) == 1

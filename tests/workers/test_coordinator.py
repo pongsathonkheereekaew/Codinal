@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from runtime.git import GitApplyUncertainError
 from runtime.workers import (
     WorkerCoordinator,
     WorkerRecord,
@@ -79,6 +80,8 @@ class FakeGit:
     def __init__(self) -> None:
         self.staged: list[tuple[str, str]] = []
         self.adopted: list[str] = []
+        self.adopted_many: list[tuple[str, ...]] = []
+        self.uncertain_many = False
         self.clean: set[str] = set()
 
     def load(self, _session_id):
@@ -111,6 +114,13 @@ class FakeGit:
     def apply_back(self, session_id):
         self.adopted.append(session_id)
         return {"ok": True, "strategy": "cherry-pick", "commit": "a" * 40}
+
+    def apply_many(self, session_ids, expected_commits):
+        self.adopted_many.append(tuple(session_ids))
+        assert expected_commits == ("a" * 40,) * len(session_ids)
+        if self.uncertain_many:
+            raise GitApplyUncertainError("metadata recovery required")
+        return {"ok": True, "strategy": "octopus", "commit": "a" * 40}
 
 
 class FakeEvents:
@@ -168,6 +178,126 @@ def test_three_workers_run_in_parallel_and_commit_only_owned_paths(
     assert git.adopted == [records[1].child_session_id]
     assert coordinator.load(records[1].worker_id).state is WorkerState.ADOPTED
     assert len(turns.mutations) == mutations_before_adopt + 1
+
+
+def test_comparison_candidates_share_scope_but_only_selection_can_be_adopted(
+    tmp_path,
+):
+    class BuildGate:
+        def __init__(self):
+            self.selected = set()
+
+        def is_selected(self, build_id, worker_id):
+            return (build_id, worker_id) in self.selected
+
+    async def scenario():
+        turns = FakeTurns()
+        git = FakeGit()
+        coordinator = WorkerCoordinator(
+            store=WorkerStore(tmp_path / "state"),
+            sessions=FakeSessions(tmp_path),
+            turns=turns,
+            git=git,
+            events=FakeEvents(),
+        )
+        gate = BuildGate()
+        coordinator.bind_plan_builds(gate)
+        candidates = []
+        for index in range(2):
+            candidates.append(
+                await coordinator.create(
+                    "session-parent",
+                    task=f"Parser candidate {index}",
+                    ownership=("runtime/parser",),
+                    model=f"openai:candidate-{index}",
+                    build_id="build-comparison",
+                    plan_task_id="parser",
+                    candidate_index=index,
+                )
+            )
+        for event in turns.waiters.values():
+            event.set()
+        await coordinator.wait_idle()
+        return coordinator, gate, candidates
+
+    coordinator, gate, candidates = asyncio.run(scenario())
+    first, second = candidates
+    assert coordinator.load(first.worker_id).state is WorkerState.SUCCEEDED
+    assert coordinator.load(second.worker_id).state is WorkerState.SUCCEEDED
+
+    with pytest.raises(ValueError, match="plan build adoption"):
+        asyncio.run(coordinator.adopt(first.worker_id))
+
+    gate.selected.add(("build-comparison", second.worker_id))
+    with pytest.raises(ValueError, match="plan build adoption"):
+        asyncio.run(coordinator.adopt(second.worker_id))
+    adopted = asyncio.run(
+        coordinator.adopt_plan_build(
+            "build-comparison",
+            (second.worker_id,),
+        )
+    )
+    assert adopted["ok"] is True
+    assert coordinator._git.adopted_many == [
+        (second.child_session_id,)
+    ]
+    assert coordinator.load(first.worker_id).state is WorkerState.SUCCEEDED
+    assert coordinator.load(second.worker_id).state is WorkerState.ADOPTED
+
+
+def test_uncertain_post_apply_failure_keeps_candidate_adopting(tmp_path):
+    class BuildGate:
+        @staticmethod
+        def is_selected(build_id, worker_id):
+            return (
+                build_id == "build-comparison"
+                and worker_id == "worker-selected"
+            )
+
+    store = WorkerStore(tmp_path / "state")
+    store.create(
+        WorkerRecord(
+            worker_id="worker-selected",
+            parent_session_id="session-parent",
+            child_session_id="session-worker-selected",
+            task="Selected candidate",
+            ownership=("runtime/parser",),
+            dependencies=(),
+            model="openai:selected",
+            state=WorkerState.SUCCEEDED,
+            commit="a" * 40,
+            build_id="build-comparison",
+            plan_task_id="parser",
+            candidate_index=0,
+        )
+    )
+    git = FakeGit()
+    git.clean.add("session-worker-selected")
+    git.uncertain_many = True
+    coordinator = WorkerCoordinator(
+        store=store,
+        sessions=FakeSessions(tmp_path),
+        turns=FakeTurns(),
+        git=git,
+        events=FakeEvents(),
+    )
+    coordinator.bind_plan_builds(BuildGate())
+
+    with pytest.raises(
+        GitApplyUncertainError,
+        match="metadata recovery required",
+    ):
+        asyncio.run(
+            coordinator.adopt_plan_build(
+                "build-comparison",
+                ("worker-selected",),
+            )
+        )
+
+    assert (
+        coordinator.load("worker-selected").state
+        is WorkerState.ADOPTING
+    )
 
 
 def test_worker_supports_steering_cancellation_and_explicit_adoption(

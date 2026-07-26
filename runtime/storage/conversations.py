@@ -722,6 +722,23 @@ class ConversationStore:
             ).fetchall()
         return [_plan_from_row(row) for row in rows]
 
+    def load_plan_artifact(
+        self,
+        session_id: str,
+        plan_id: str,
+    ) -> dict[str, Any] | None:
+        _validate_session_id(session_id)
+        _validate_plan_id(plan_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT * FROM plan_artifacts
+                WHERE session_id = ? AND plan_id = ?
+                """,
+                (session_id, plan_id),
+            ).fetchone()
+        return _plan_from_row(row) if row is not None else None
+
     def list(
         self,
         *,

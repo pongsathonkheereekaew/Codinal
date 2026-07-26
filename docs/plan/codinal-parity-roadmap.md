@@ -151,7 +151,7 @@ Acceptance evidence:
   into execution without losing conversation context.
 - [x] Add background subagents with bounded ownership, dependency graph,
   status/notifications, steering, cancellation, and isolated worktrees.
-- [ ] Add plan-to-parallel-build and best-of-N comparison with explicit human
+- [x] Add plan-to-parallel-build and best-of-N comparison with explicit human
   selection before branch adoption.
 - [ ] Add persistent goals with time/token budgets, continuation, evidence
   ledger, and strict complete/blocked audits.

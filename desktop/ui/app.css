@@ -850,6 +850,112 @@ select:focus-visible,
   color: var(--text);
 }
 
+.plan-build-panel {
+  padding: 7px 16px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-subtle);
+}
+
+.plan-build-panel > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.plan-build-panel > header strong {
+  font-size: 11px;
+}
+
+.plan-build-panel > header span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.plan-build-list {
+  display: flex;
+  gap: 7px;
+  margin-top: 7px;
+  overflow-x: auto;
+}
+
+.plan-build-card {
+  display: grid;
+  min-width: min(440px, 88vw);
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.plan-build-task {
+  display: grid;
+  gap: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line);
+}
+
+.plan-build-task > small,
+.plan-build-candidate small,
+.plan-build-error {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.plan-build-candidate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+
+.plan-build-candidate.is-selected {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.plan-build-candidate-details {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.plan-build-candidate button {
+  min-height: 25px;
+  padding-inline: 8px;
+  font-size: 10px;
+}
+
+.candidate-diff {
+  display: grid;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--code-bg);
+}
+
+.candidate-diff pre {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+  color: var(--text);
+  font: 9.5px/1.45 var(--mono);
+  white-space: pre-wrap;
+}
+
+.plan-build-dialog-tasks {
+  display: grid;
+  gap: 8px;
+}
+
+.plan-build-dialog-task {
+  display: grid;
+  gap: 4px;
+}
+
 .conversation {
   min-height: 0;
   overflow-y: auto;

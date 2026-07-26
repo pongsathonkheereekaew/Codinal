@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,7 +24,30 @@ class RecoveryProvider(ProviderClient):
     def __init__(self):
         self.calls = 0
 
-    def complete(self, **_kwargs):
+    def complete(self, *, messages, model, **_kwargs):
+        candidate = any(
+            message.get("role") == "user"
+            and "Verification:" in str(message.get("content", ""))
+            for message in messages
+        )
+        if candidate:
+            if not any(
+                message.get("role") == "tool"
+                for message in messages
+            ):
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            f"write-{model.rsplit(':', 1)[-1]}",
+                            "write_file",
+                            {
+                                "path": "runtime/candidate.txt",
+                                "content": f"{model}\n",
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text=f"{model} candidate complete")
         self.calls += 1
         if self.calls == 1:
             return AssistantTurn(
@@ -105,6 +129,35 @@ def main() -> None:
     args = parser.parse_args()
     args.data_dir.mkdir(parents=True, exist_ok=True)
     args.workspace.mkdir(parents=True, exist_ok=True)
+    if not (args.workspace / ".git").exists():
+        subprocess.run(
+            ["git", "init", "-q", str(args.workspace)],
+            check=True,
+        )
+        (args.workspace / "runtime").mkdir()
+        (args.workspace / "runtime" / "candidate.txt").write_text(
+            "base\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "-C", str(args.workspace), "add", "."],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(args.workspace),
+                "-c",
+                "user.name=Codinal UI",
+                "-c",
+                "user.email=ui@example.test",
+                "commit",
+                "-qm",
+                "initial",
+            ],
+            check=True,
+        )
     services = build_services(
         ServerConfig(
             token=TOKEN,
