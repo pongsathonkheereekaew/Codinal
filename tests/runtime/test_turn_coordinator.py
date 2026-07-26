@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,7 @@ from runtime.providers import (
 from runtime.tools import ToolRegistry
 from runtime.turn_engine import TurnEngine
 from runtime.turns import (
+    CodeCheckpointError,
     ExportBusyError,
     SessionBusyError,
     SessionNotFoundError,
@@ -65,6 +67,9 @@ class FakeSessions:
             )
         return True
 
+    def list_sessions(self):
+        return []
+
 class ScriptedEngine:
     def __init__(self):
         self.messages = []
@@ -82,6 +87,43 @@ class ScriptedEngine:
 
     def request_interrupt(self):
         self.interrupted = True
+
+
+class FakeCodeCheckpoints:
+    def __init__(self, pending=None, actions=None):
+        self.begun = []
+        self.captured = []
+        self.finalized = []
+        self.pending = pending
+        self.actions = actions
+
+    def begin_checkpoint(self, session_id, *, message_count):
+        self.begun.append((session_id, message_count))
+        return SimpleNamespace(checkpoint_id="a" * 32)
+
+    def capture_checkpoint(
+        self,
+        session_id,
+        checkpoint_id,
+        *,
+        message_count,
+    ):
+        self.captured.append(
+            (session_id, checkpoint_id, message_count)
+        )
+        if self.actions is not None:
+            self.actions.append("capture")
+
+    def finalize_checkpoint(self, session_id, checkpoint_id):
+        self.finalized.append((session_id, checkpoint_id))
+        if self.actions is not None:
+            self.actions.append("finalize")
+
+    def pending_checkpoint(self, _session_id):
+        return self.pending
+
+    def pending_checkpoints(self):
+        return [self.pending] if self.pending is not None else []
 
 
 def test_turn_streams_wire_events_and_persists_session(tmp_path):
@@ -123,6 +165,95 @@ def test_turn_streams_wire_events_and_persists_session(tmp_path):
             "iterations": 1,
         },
     ]
+
+
+def test_turn_automatically_captures_code_and_conversation_checkpoint():
+    async def scenario():
+        actions = []
+        checkpoints = FakeCodeCheckpoints(actions=actions)
+        sessions = FakeSessions(ScriptedEngine())
+        original_persist = sessions.persist_checkpoint
+
+        def persist(*args, **kwargs):
+            if kwargs["checkpoint"].status is TurnStatus.IDLE:
+                actions.append("idle")
+            return original_persist(*args, **kwargs)
+
+        sessions.persist_checkpoint = persist
+        turns = TurnCoordinator(
+            sessions=sessions,
+            events=EventHub(),
+            code_checkpoints=checkpoints,
+        )
+        await turns.start("session-1", user_input="hello")
+        await turns.wait("session-1")
+        return checkpoints, actions
+
+    checkpoints, actions = asyncio.run(scenario())
+
+    assert checkpoints.begun == [("session-1", 0)]
+    assert checkpoints.captured == [
+        ("session-1", "a" * 32, 1)
+    ]
+    assert checkpoints.finalized == [
+        ("session-1", "a" * 32)
+    ]
+    assert actions == ["capture", "idle", "finalize"]
+
+
+def test_turn_does_not_finalize_code_checkpoint_when_idle_save_fails():
+    class FailingIdleSessions(FakeSessions):
+        def persist_checkpoint(self, session_id, *, checkpoint, **kwargs):
+            if checkpoint.status is TurnStatus.IDLE:
+                return False
+            return super().persist_checkpoint(
+                session_id,
+                checkpoint=checkpoint,
+                **kwargs,
+            )
+
+    async def scenario():
+        checkpoints = FakeCodeCheckpoints()
+        turns = TurnCoordinator(
+            sessions=FailingIdleSessions(ScriptedEngine()),
+            events=EventHub(),
+            code_checkpoints=checkpoints,
+        )
+        await turns.start("session-1", user_input="hello")
+        await turns.wait("session-1")
+        return checkpoints
+
+    checkpoints = asyncio.run(scenario())
+
+    assert checkpoints.captured == [
+        ("session-1", "a" * 32, 1)
+    ]
+    assert checkpoints.finalized == []
+
+
+def test_turn_never_starts_when_automatic_checkpoint_fails():
+    class FailingCheckpoints(FakeCodeCheckpoints):
+        def begin_checkpoint(self, session_id, *, message_count):
+            raise OSError("disk unavailable")
+
+    async def scenario():
+        engine = ScriptedEngine()
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+            code_checkpoints=FailingCheckpoints(),
+        )
+        with pytest.raises(
+            CodeCheckpointError,
+            match="checkpoint unavailable",
+        ):
+            await turns.start("session-1", user_input="must not run")
+        return engine, turns
+
+    engine, turns = asyncio.run(scenario())
+
+    assert engine.messages == []
+    assert turns.has_active_turns() is False
 
 
 def test_tool_execution_is_write_ahead_checkpointed():
@@ -325,6 +456,75 @@ def test_export_refuses_while_turn_is_active():
     asyncio.run(scenario())
 
 
+def test_checkpoint_restore_excludes_turn_start_until_mutation_finishes():
+    class ObservableSessions(FakeSessions):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.engine_requested = threading.Event()
+
+        def get_engine(self, session_id, *, workspace=None, agent="code"):
+            self.engine_requested.set()
+            return super().get_engine(
+                session_id,
+                workspace=workspace,
+                agent=agent,
+            )
+
+    async def scenario():
+        sessions = ObservableSessions(ScriptedEngine())
+        turns = TurnCoordinator(sessions=sessions, events=EventHub())
+        restore_started = threading.Event()
+        release_restore = threading.Event()
+
+        def restore():
+            restore_started.set()
+            release_restore.wait(timeout=2)
+            return {"ok": True}
+
+        restore_task = asyncio.create_task(
+            turns.restore_when_idle(restore)
+        )
+        while not restore_started.is_set():
+            await asyncio.sleep(0)
+        start_task = asyncio.create_task(
+            turns.start("session-1", user_input="after restore")
+        )
+        await asyncio.sleep(0)
+        assert sessions.engine_requested.is_set() is False
+        release_restore.set()
+        assert await restore_task == {"ok": True}
+        await start_task
+        await turns.wait("session-1")
+
+    asyncio.run(scenario())
+
+
+def test_checkpoint_restore_refuses_while_turn_is_active():
+    class BlockingEngine(ScriptedEngine):
+        def __init__(self):
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def run(self, user_input, *, source=None):
+            yield Event(EventType.TURN_START, {"input": user_input})
+            await self.release.wait()
+            yield Event(EventType.TURN_END, {"status": "completed"})
+
+    async def scenario():
+        engine = BlockingEngine()
+        turns = TurnCoordinator(
+            sessions=FakeSessions(engine),
+            events=EventHub(),
+        )
+        await turns.start("session-1", user_input="active")
+        with pytest.raises(SessionBusyError):
+            await turns.restore_when_idle(lambda: {"ok": True})
+        engine.release.set()
+        await turns.wait("session-1")
+
+    asyncio.run(scenario())
+
+
 def test_startup_recovery_resumes_durable_session_once(tmp_path):
     class RecoverableEngine(ScriptedEngine):
         def __init__(self):
@@ -369,6 +569,91 @@ def test_startup_recovery_resumes_durable_session_once(tmp_path):
     assert sessions.checkpoints == [
         ("session-1", "executing", ["call-1"]),
         ("session-1", "idle", []),
+    ]
+
+
+def test_startup_recovery_completes_pending_code_checkpoint(tmp_path):
+    class RecoverableEngine(ScriptedEngine):
+        async def resume_after_crash(self, *, active_tool_call_ids=None):
+            yield Event(EventType.TURN_START, {"input": "(recovered)"})
+            yield Event(EventType.TURN_END, {"status": "completed"})
+
+    class RecoverableSessions(FakeSessions):
+        def __init__(self, engine):
+            super().__init__(engine)
+            self.record = SessionRecord(
+                session_id="session-1",
+                workspace=str(tmp_path),
+                model="test-model",
+                mode="interactive",
+                turn_checkpoint=TurnCheckpoint(TurnStatus.RUNNING),
+            )
+
+        def recoverable_sessions(self):
+            return [self.record]
+
+    async def scenario():
+        checkpoints = FakeCodeCheckpoints(
+            pending=SimpleNamespace(
+                checkpoint_id="b" * 32,
+                session_id="session-1",
+                after_tree="",
+                after_message_count=0,
+            )
+        )
+        turns = TurnCoordinator(
+            sessions=RecoverableSessions(RecoverableEngine()),
+            events=EventHub(),
+            code_checkpoints=checkpoints,
+        )
+        assert await turns.recover() == 1
+        await turns.wait("session-1")
+        return checkpoints
+
+    checkpoints = asyncio.run(scenario())
+
+    assert checkpoints.captured == [
+        ("session-1", "b" * 32, 0)
+    ]
+    assert checkpoints.finalized == [
+        ("session-1", "b" * 32)
+    ]
+
+
+def test_startup_finalizes_captured_checkpoint_for_idle_session():
+    class IdleSessions(FakeSessions):
+        def recoverable_sessions(self):
+            return []
+
+        def list_sessions(self):
+            return [
+                {
+                    "session_id": "session-1",
+                    "messages": 2,
+                }
+            ]
+
+    async def scenario():
+        checkpoints = FakeCodeCheckpoints(
+            pending=SimpleNamespace(
+                checkpoint_id="c" * 32,
+                session_id="session-1",
+                after_tree="d" * 40,
+                after_message_count=2,
+            )
+        )
+        turns = TurnCoordinator(
+            sessions=IdleSessions(),
+            events=EventHub(),
+            code_checkpoints=checkpoints,
+        )
+        assert await turns.recover() == 0
+        return checkpoints
+
+    checkpoints = asyncio.run(scenario())
+
+    assert checkpoints.finalized == [
+        ("session-1", "c" * 32)
     ]
 
 

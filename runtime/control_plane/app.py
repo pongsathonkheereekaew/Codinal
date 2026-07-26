@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from runtime.events import EventHub
-from runtime.git import GitWorkspaceError
+from runtime.git import CheckpointState, GitWorkspaceError
 from runtime.mcp import MCPServerDef
 from runtime.control_plane.input_validation import (
     MAX_TURN_BODY_BYTES,
@@ -29,6 +29,7 @@ from runtime.control_plane.input_validation import (
 from runtime.policy import ApprovalOutcome, ApprovalPersistenceError
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
+    CodeCheckpointError,
     ExportBusyError,
     SessionBusyError,
     SessionNotFoundError,
@@ -48,6 +49,7 @@ DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:1420",
     "http://127.0.0.1:1420",
 )
+MAX_CHECKPOINT_RESTORE_BODY_BYTES = 1024
 
 
 class SettingsView(Protocol):
@@ -102,6 +104,11 @@ class TurnControl(Protocol):
         exporter: Any,
     ) -> dict[str, Any]: ...
 
+    async def restore_when_idle(
+        self,
+        restore: Any,
+    ) -> dict[str, Any]: ...
+
 
 class SessionControl(Protocol):
     def list_sessions(
@@ -134,6 +141,13 @@ class SessionControl(Protocol):
 
     def delete(self, session_id: str) -> dict[str, Any]: ...
 
+    def restore_conversation(
+        self,
+        session_id: str,
+        *,
+        message_count: int,
+    ) -> bool: ...
+
 
 class MCPControl(Protocol):
     async def connect(
@@ -162,6 +176,28 @@ class GitControl(Protocol):
     ) -> dict[str, object]: ...
 
     def apply_back(self, session_id: str) -> dict[str, object]: ...
+
+    def list_checkpoints(self, session_id: str) -> list[Any]: ...
+
+    def load_checkpoint(self, checkpoint_id: str) -> Any | None: ...
+
+    def restore_checkpoint_code(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+    ) -> dict[str, object]: ...
+
+    def reapply_checkpoint_code(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+    ) -> dict[str, object]: ...
+
+    def discard_checkpoint_history(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+    ) -> int: ...
 
     def close(self) -> None: ...
 
@@ -402,6 +438,11 @@ def create_control_plane_app(
                 status_code=409,
                 detail="session workspace preparation failed",
             ) from None
+        except CodeCheckpointError:
+            raise HTTPException(
+                status_code=409,
+                detail="automatic code checkpoint unavailable",
+            ) from None
         return JSONResponse(result, status_code=202)
 
     @app.post("/v1/sessions/{session_id}/interrupt")
@@ -554,6 +595,129 @@ def create_control_plane_app(
             status_code=200 if result.get("ok") else 409,
         )
 
+    @app.get("/v1/sessions/{session_id}/checkpoints")
+    async def list_checkpoints(
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Git session not found",
+            )
+        records = await asyncio.to_thread(
+            services.git.list_checkpoints,
+            session_id,
+        )
+        return [
+            {
+                "checkpoint_id": record.checkpoint_id,
+                "before_message_count": record.before_message_count,
+                "after_message_count": record.after_message_count,
+                "created_at": record.created_at,
+            }
+            for record in records
+        ]
+
+    @app.post(
+        "/v1/sessions/{session_id}/checkpoints/"
+        "{checkpoint_id}/restore"
+    )
+    async def restore_checkpoint(
+        session_id: str,
+        checkpoint_id: str,
+        request: Request,
+    ) -> JSONResponse:
+        _validate_public_session_id(session_id)
+        if re.fullmatch(r"[0-9a-f]{32}", checkpoint_id) is None:
+            raise HTTPException(
+                status_code=400,
+                detail="invalid checkpoint id",
+            )
+        scope = await _read_checkpoint_scope(request)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Git session not found",
+            )
+        checkpoint = await asyncio.to_thread(
+            services.git.load_checkpoint,
+            checkpoint_id,
+        )
+        if (
+            checkpoint is None
+            or checkpoint.session_id != session_id
+            or checkpoint.state is not CheckpointState.COMPLETED
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail="checkpoint not found",
+            )
+
+        def restore() -> dict[str, Any]:
+            code_restored = False
+            try:
+                if scope in {"code", "both"}:
+                    services.git.restore_checkpoint_code(
+                        session_id,
+                        checkpoint_id,
+                    )
+                    code_restored = True
+                if scope in {"conversation", "both"}:
+                    restored = services.sessions.restore_conversation(
+                        session_id,
+                        message_count=checkpoint.before_message_count,
+                    )
+                    if not restored:
+                        raise RuntimeError(
+                            "checkpoint conversation not found"
+                        )
+                    services.git.discard_checkpoint_history(
+                        session_id,
+                        checkpoint_id,
+                    )
+            except (GitWorkspaceError, ValueError, RuntimeError):
+                if code_restored and scope == "both":
+                    try:
+                        services.git.reapply_checkpoint_code(
+                            session_id,
+                            checkpoint_id,
+                        )
+                    except Exception:
+                        raise RuntimeError(
+                            "checkpoint rollback failed"
+                        ) from None
+                raise
+            return {
+                "ok": True,
+                "checkpoint_id": checkpoint_id,
+                "scope": scope,
+            }
+
+        try:
+            result = await services.turns.restore_when_idle(restore)
+        except SessionBusyError:
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            ) from None
+        except RuntimeError as error:
+            if str(error) == "checkpoint rollback failed":
+                raise HTTPException(
+                    status_code=500,
+                    detail="checkpoint rollback failed",
+                ) from None
+            raise HTTPException(
+                status_code=409,
+                detail=str(error),
+            ) from None
+        except (GitWorkspaceError, ValueError) as error:
+            raise HTTPException(
+                status_code=409,
+                detail=str(error),
+            ) from None
+        return JSONResponse(result)
+
     @app.websocket("/ws/events")
     async def global_events(websocket: WebSocket) -> None:
         await _serve_events(websocket, services.events.subscribe_global)
@@ -674,6 +838,40 @@ async def _read_approval(request: Request) -> ApprovalOutcome:
             status_code=400,
             detail="invalid approval payload",
         ) from None
+
+
+async def _read_checkpoint_scope(request: Request) -> str:
+    try:
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_CHECKPOINT_RESTORE_BODY_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="invalid checkpoint restore payload",
+                )
+            chunks.append(chunk)
+        body = json.loads(b"".join(chunks))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid checkpoint restore payload",
+        ) from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"scope"}
+        or body["scope"] not in {
+            "code",
+            "conversation",
+            "both",
+        }
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid checkpoint restore payload",
+        )
+    return str(body["scope"])
 
 
 async def _read_session_update(request: Request) -> dict[str, Any]:

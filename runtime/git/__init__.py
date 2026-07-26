@@ -1,6 +1,11 @@
 """Isolated Git worktree runtime."""
 
-from .models import GitWorkspaceRecord, WorktreeState
+from .models import (
+    CheckpointState,
+    CodeCheckpointRecord,
+    GitWorkspaceRecord,
+    WorktreeState,
+)
 from .service import (
     DetachedHeadError,
     GitWorkspaceError,
@@ -11,6 +16,8 @@ from .store import GitWorktreeStore
 
 __all__ = [
     "DetachedHeadError",
+    "CheckpointState",
+    "CodeCheckpointRecord",
     "GitWorkspaceError",
     "GitWorkspaceRecord",
     "GitWorktreeService",

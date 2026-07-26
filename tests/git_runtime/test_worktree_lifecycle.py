@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from runtime.git import (
+    CheckpointState,
     DetachedHeadError,
     GitWorkspaceError,
     GitWorktreeService,
@@ -181,6 +182,393 @@ def test_status_diff_stage_and_commit_stay_on_session_branch(
     ):
         service.cleanup("git-tools")
     assert record.worktree_path.is_dir()
+
+
+@requires_seatbelt
+def test_turn_checkpoint_restore_removes_only_agent_delta(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-turn", repo)
+
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-turn",
+        message_count=2,
+    )
+    assert checkpoint is not None
+    (record.worktree_path / "tracked.txt").write_text(
+        "agent edit\n",
+        encoding="utf-8",
+    )
+    (record.worktree_path / "generated.txt").write_text(
+        "agent generated\n",
+        encoding="utf-8",
+    )
+    completed = service.complete_checkpoint(
+        "checkpoint-turn",
+        checkpoint.checkpoint_id,
+        message_count=4,
+    )
+    (record.worktree_path / "manual.txt").write_text(
+        "manual after checkpoint\n",
+        encoding="utf-8",
+    )
+
+    restored = service.restore_checkpoint_code(
+        "checkpoint-turn",
+        checkpoint.checkpoint_id,
+    )
+
+    assert completed.before_message_count == 2
+    assert completed.after_message_count == 4
+    assert restored == {
+        "ok": True,
+        "checkpoint_id": checkpoint.checkpoint_id,
+        "scope": "code",
+    }
+    assert (record.worktree_path / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "base\n"
+    assert not (record.worktree_path / "generated.txt").exists()
+    assert (record.worktree_path / "manual.txt").read_text(
+        encoding="utf-8"
+    ) == "manual after checkpoint\n"
+    assert service.list_checkpoints("checkpoint-turn") == [
+        completed
+    ]
+
+
+@requires_seatbelt
+def test_checkpoint_capture_does_not_execute_repository_filters(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-filter", repo)
+    git(
+        repo,
+        "config",
+        "filter.untrusted.clean",
+        "touch filter-ran; cat",
+    )
+    git(repo, "config", "filter.untrusted.required", "true")
+    (record.worktree_path / ".gitattributes").write_text(
+        "tracked.txt filter=untrusted\n",
+        encoding="utf-8",
+    )
+
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-filter",
+        message_count=0,
+    )
+
+    assert checkpoint is not None
+    assert not (record.worktree_path / "filter-ran").exists()
+
+
+@requires_seatbelt
+def test_checkpoint_objects_are_private_to_codinal_storage(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-private", repo)
+    secret = record.worktree_path / "manual-secret.txt"
+    secret.write_text("private manual content\n", encoding="utf-8")
+    object_id = git(repo, "hash-object", secret)
+
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-private",
+        message_count=0,
+    )
+
+    assert checkpoint is not None
+    assert subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", object_id],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ).returncode != 0
+    assert (
+        git(
+            repo,
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/codinal/checkpoints/",
+        )
+        == ""
+    )
+
+
+@requires_seatbelt
+def test_next_checkpoint_finalizes_captured_pending_turn(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-reconcile", repo)
+    first = service.begin_checkpoint(
+        "checkpoint-reconcile",
+        message_count=0,
+    )
+    assert first is not None
+    (record.worktree_path / "generated.txt").write_text(
+        "generated\n",
+        encoding="utf-8",
+    )
+    captured = service.capture_checkpoint(
+        "checkpoint-reconcile",
+        first.checkpoint_id,
+        message_count=2,
+    )
+
+    second = service.begin_checkpoint(
+        "checkpoint-reconcile",
+        message_count=2,
+    )
+
+    assert captured.state is CheckpointState.PENDING
+    assert captured.after_tree
+    assert second is not None
+    assert second.checkpoint_id != first.checkpoint_id
+    completed = service.load_checkpoint(first.checkpoint_id)
+    assert completed is not None
+    assert completed.state is CheckpointState.COMPLETED
+    assert service.pending_checkpoint("checkpoint-reconcile") == second
+
+
+@requires_seatbelt
+def test_checkpoint_conflict_aborts_without_partial_restore(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-conflict", repo)
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-conflict",
+        message_count=0,
+    )
+    assert checkpoint is not None
+    (record.worktree_path / "tracked.txt").write_text(
+        "agent edit\n",
+        encoding="utf-8",
+    )
+    (record.worktree_path / "generated.txt").write_text(
+        "agent generated\n",
+        encoding="utf-8",
+    )
+    service.complete_checkpoint(
+        "checkpoint-conflict",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+    (record.worktree_path / "tracked.txt").write_text(
+        "manual conflicting edit\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        GitWorkspaceError,
+        match="conflicts with current edits",
+    ):
+        service.restore_checkpoint_code(
+            "checkpoint-conflict",
+            checkpoint.checkpoint_id,
+        )
+
+    assert (record.worktree_path / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "manual conflicting edit\n"
+    assert (record.worktree_path / "generated.txt").read_text(
+        encoding="utf-8"
+    ) == "agent generated\n"
+
+
+@requires_seatbelt
+def test_checkpoint_restore_preserves_later_nonoverlapping_manual_hunk(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    (repo / "tracked.txt").write_text(
+        "first\nsecond\nthird\nfourth\n",
+        encoding="utf-8",
+    )
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-m", "multiline base")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-hunks", repo)
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-hunks",
+        message_count=0,
+    )
+    assert checkpoint is not None
+    (record.worktree_path / "tracked.txt").write_text(
+        "agent first\nsecond\nthird\nfourth\n",
+        encoding="utf-8",
+    )
+    service.complete_checkpoint(
+        "checkpoint-hunks",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+    (record.worktree_path / "tracked.txt").write_text(
+        "agent first\nsecond\nthird\nmanual fourth\n",
+        encoding="utf-8",
+    )
+
+    service.restore_checkpoint_code(
+        "checkpoint-hunks",
+        checkpoint.checkpoint_id,
+    )
+
+    assert (record.worktree_path / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "first\nsecond\nthird\nmanual fourth\n"
+
+
+@requires_seatbelt
+def test_cleanup_removes_checkpoint_metadata_and_git_refs(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    service.prepare("checkpoint-cleanup", repo)
+    checkpoint = service.begin_checkpoint(
+        "checkpoint-cleanup",
+        message_count=0,
+    )
+    assert checkpoint is not None
+    service.complete_checkpoint(
+        "checkpoint-cleanup",
+        checkpoint.checkpoint_id,
+        message_count=2,
+    )
+    prefix = "refs/codinal/checkpoints/checkpoint-cleanup/"
+    assert (
+        git(repo, "for-each-ref", "--format=%(refname)", prefix)
+        == ""
+    )
+    assert any((tmp_path / "data" / "checkpoints").iterdir())
+
+    service.cleanup("checkpoint-cleanup")
+
+    assert not any((tmp_path / "data" / "checkpoints").iterdir())
+    assert service.load_checkpoint(checkpoint.checkpoint_id) is None
+
+
+@requires_seatbelt
+def test_restore_older_checkpoint_removes_later_agent_turns_only(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-history", repo)
+    first = service.begin_checkpoint(
+        "checkpoint-history",
+        message_count=0,
+    )
+    assert first is not None
+    (record.worktree_path / "tracked.txt").write_text(
+        "first agent turn\n",
+        encoding="utf-8",
+    )
+    service.complete_checkpoint(
+        "checkpoint-history",
+        first.checkpoint_id,
+        message_count=2,
+    )
+    (record.worktree_path / "manual.txt").write_text(
+        "manual between turns\n",
+        encoding="utf-8",
+    )
+    second = service.begin_checkpoint(
+        "checkpoint-history",
+        message_count=2,
+    )
+    assert second is not None
+    (record.worktree_path / "second-agent.txt").write_text(
+        "second agent turn\n",
+        encoding="utf-8",
+    )
+    service.complete_checkpoint(
+        "checkpoint-history",
+        second.checkpoint_id,
+        message_count=4,
+    )
+
+    service.restore_checkpoint_code(
+        "checkpoint-history",
+        first.checkpoint_id,
+    )
+
+    assert (record.worktree_path / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "base\n"
+    assert not (record.worktree_path / "second-agent.txt").exists()
+    assert (record.worktree_path / "manual.txt").read_text(
+        encoding="utf-8"
+    ) == "manual between turns\n"
+
+    service.reapply_checkpoint_code(
+        "checkpoint-history",
+        first.checkpoint_id,
+    )
+
+    assert (record.worktree_path / "tracked.txt").read_text(
+        encoding="utf-8"
+    ) == "first agent turn\n"
+    assert (record.worktree_path / "second-agent.txt").read_text(
+        encoding="utf-8"
+    ) == "second agent turn\n"
+    assert (record.worktree_path / "manual.txt").read_text(
+        encoding="utf-8"
+    ) == "manual between turns\n"
+
+
+@requires_seatbelt
+def test_discard_checkpoint_history_removes_target_and_newer_refs(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("checkpoint-discard", repo)
+    checkpoints = []
+    for index in range(3):
+        checkpoint = service.begin_checkpoint(
+            "checkpoint-discard",
+            message_count=index * 2,
+        )
+        assert checkpoint is not None
+        (record.worktree_path / f"turn-{index}.txt").write_text(
+            f"turn {index}\n",
+            encoding="utf-8",
+        )
+        checkpoints.append(
+            service.complete_checkpoint(
+                "checkpoint-discard",
+                checkpoint.checkpoint_id,
+                message_count=(index + 1) * 2,
+            )
+        )
+
+    discarded = service.discard_checkpoint_history(
+        "checkpoint-discard",
+        checkpoints[1].checkpoint_id,
+    )
+
+    assert discarded == 2
+    assert service.list_checkpoints("checkpoint-discard") == [
+        checkpoints[0]
+    ]
+    for checkpoint in checkpoints[1:]:
+        prefix = (
+            "refs/codinal/checkpoints/checkpoint-discard/"
+            f"{checkpoint.checkpoint_id}/"
+        )
+        assert (
+            git(repo, "for-each-ref", "--format=%(refname)", prefix)
+            == ""
+        )
 
 
 @requires_seatbelt

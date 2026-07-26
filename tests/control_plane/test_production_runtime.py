@@ -179,7 +179,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
         assert conversations.execute("PRAGMA user_version").fetchone()[0] == 3
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_production_startup_restores_latest_good_backups(tmp_path):
@@ -1274,6 +1274,166 @@ def test_production_git_session_mutates_only_isolated_worktree(
     assert engine.source_workspace == source.resolve()
     assert engine.roots[0].path == git_record.worktree_path
     restarted.git.close()
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
+    reason="production worktree creation uses macOS Seatbelt",
+)
+def test_turn_checkpoint_restores_code_and_conversation_after_restart(
+    tmp_path,
+):
+    class WriteThenAnswerProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "checkpoint-write",
+                            "write_file",
+                            {
+                                "path": "generated.txt",
+                                "content": "agent change\n",
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text="checkpointed")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    async def approve_once(_request):
+        return ApprovalOutcome.ONCE
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "feature", str(source)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "config",
+            "user.name",
+            "Codinal Test",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "config",
+            "user.email",
+            "codinal@example.invalid",
+        ],
+        check=True,
+    )
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(source), "add", "tracked.txt"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "-m", "base"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=WriteThenAnswerProvider(),
+        approver=approve_once,
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/checkpoint-e2e",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/checkpoint-e2e/turns",
+                headers=AUTH,
+                json={
+                    "input": "create generated.txt",
+                    "workspace": str(source),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+        git_record = services.git.load("checkpoint-e2e")
+        checkpoints = client.get(
+            "/v1/sessions/checkpoint-e2e/checkpoints",
+            headers=AUTH,
+        )
+        checkpoint_id = checkpoints.json()[0]["checkpoint_id"]
+    (git_record.worktree_path / "manual.txt").write_text(
+        "manual after checkpoint\n",
+        encoding="utf-8",
+    )
+    restarted = build_services(
+        config,
+        provider=WriteThenAnswerProvider(),
+        approver=approve_once,
+    )
+    with TestClient(
+        create_control_plane_app(
+            token=TOKEN,
+            services=restarted,
+        )
+    ) as client:
+        restarted_checkpoints = client.get(
+            "/v1/sessions/checkpoint-e2e/checkpoints",
+            headers=AUTH,
+        )
+        restored = client.post(
+            (
+                "/v1/sessions/checkpoint-e2e/checkpoints/"
+                f"{checkpoint_id}/restore"
+            ),
+            headers=AUTH,
+            json={"scope": "both"},
+        )
+        restored_messages = restarted.sessions.messages(
+            "checkpoint-e2e"
+        )
+
+    assert accepted.status_code == 202
+    assert checkpoints.status_code == 200
+    assert len(checkpoints.json()) == 1
+    assert restarted_checkpoints.json() == checkpoints.json()
+    assert restored.status_code == 200
+    assert restored.json()["scope"] == "both"
+    assert not (git_record.worktree_path / "generated.txt").exists()
+    assert (git_record.worktree_path / "manual.txt").read_text(
+        encoding="utf-8"
+    ) == "manual after checkpoint\n"
+    assert [message["role"] for message in restored_messages] == [
+        "system"
+    ]
 
 
 @pytest.mark.skipif(

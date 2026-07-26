@@ -15,6 +15,11 @@ class WorktreeState(str, Enum):
     FAILED = "failed"
 
 
+class CheckpointState(str, Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+
+
 @dataclass(frozen=True)
 class GitWorkspaceRecord:
     session_id: str
@@ -26,5 +31,18 @@ class GitWorkspaceRecord:
     session_branch: str
     source_dirty: bool
     state: WorktreeState
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class CodeCheckpointRecord:
+    checkpoint_id: str
+    session_id: str
+    before_tree: str
+    after_tree: str = ""
+    before_message_count: int = 0
+    after_message_count: int = 0
+    state: CheckpointState = CheckpointState.PENDING
     created_at: str = ""
     updated_at: str = ""

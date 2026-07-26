@@ -265,6 +265,37 @@ class SessionService:
             and record.turn_checkpoint.status is not TurnStatus.IDLE
         ]
 
+    def restore_conversation(
+        self,
+        session_id: str,
+        *,
+        message_count: int,
+    ) -> bool:
+        if (
+            not isinstance(message_count, int)
+            or message_count < 0
+        ):
+            raise ValueError("invalid checkpoint message count")
+        record = self._store.load(session_id)
+        if record is None:
+            return False
+        if record.turn_checkpoint.status is not TurnStatus.IDLE:
+            raise RuntimeError("session recovery is still active")
+        if message_count > len(record.messages):
+            raise ValueError("checkpoint exceeds conversation history")
+        restored_messages = list(record.messages[:message_count])
+        self._store.save(
+            replace(
+                record,
+                messages=restored_messages,
+                message_count=message_count,
+            )
+        )
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            engine.messages[:] = restored_messages
+        return True
+
     def clear_approval_decision(
         self,
         session_id: str,

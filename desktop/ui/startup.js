@@ -22,6 +22,7 @@ const state = {
   activities: new Map(),
   settings: null,
   diff: "",
+  checkpoints: [],
   managedSession: null,
   updateVersion: null,
   attachments: [],
@@ -42,6 +43,7 @@ const el = Object.fromEntries(
     "workspace-label", "agent-mode", "model-select", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
+    "checkpoint-select", "restore-scope", "restore-checkpoint",
     "model-summary", "update-status", "check-update", "install-update",
     "provider-list", "toast-region",
     "session-dialog", "session-title-input", "rename-session",
@@ -209,6 +211,7 @@ async function selectSession(session) {
   state.sessionId = session.session_id;
   state.workspace = session.workspace;
   state.messages = [];
+  state.checkpoints = [];
   invalidateAttachments();
   state.liveAssistant = null;
   state.activities.clear();
@@ -217,6 +220,7 @@ async function selectSession(session) {
   updateWorkspaceLabel();
   renderSessions();
   renderConversation();
+  renderCheckpoints();
   try {
     state.messages = await api(
       `/v1/sessions/${encodeURIComponent(state.sessionId)}/messages`
@@ -265,11 +269,13 @@ function switchWorkspace(workspace) {
   state.liveAssistant = null;
   state.activities.clear();
   state.diff = "";
+  state.checkpoints = [];
   el["task-title"].textContent = "New task";
   updateWorkspaceLabel();
   renderSessions();
   renderConversation();
   renderDiff();
+  renderCheckpoints();
   connectSocket();
   return true;
 }
@@ -333,6 +339,9 @@ function setBusy(busy) {
   el["agent-mode"].disabled = busy;
   el["new-task"].disabled = busy;
   el["choose-workspace"].disabled = busy;
+  el["restore-checkpoint"].disabled = (
+    busy || !el["checkpoint-select"].value
+  );
   el["stop-turn"].classList.toggle("is-hidden", !busy);
   el["send-turn"].classList.toggle("is-hidden", busy);
   setRuntimeStatus(busy ? "Codinal is working" : "Local runtime", busy ? "busy" : "online");
@@ -712,7 +721,93 @@ async function loadDiff(showPanel = true) {
     state.diff = "";
   }
   renderDiff();
+  await loadCheckpoints();
   if (showPanel) openReview();
+}
+
+async function loadCheckpoints() {
+  if (!state.sessionId) {
+    state.checkpoints = [];
+    renderCheckpoints();
+    return;
+  }
+  try {
+    state.checkpoints = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/checkpoints`
+    );
+  } catch (error) {
+    if (!error.message.includes("not found")) {
+      toast(error.message, "error");
+    }
+    state.checkpoints = [];
+  }
+  renderCheckpoints();
+}
+
+function renderCheckpoints() {
+  const selected = el["checkpoint-select"].value;
+  el["checkpoint-select"].replaceChildren();
+  if (!state.checkpoints.length) {
+    const option = node("option", "", "No checkpoints");
+    option.value = "";
+    el["checkpoint-select"].append(option);
+  } else {
+    for (const checkpoint of state.checkpoints) {
+      const option = node(
+        "option",
+        "",
+        `Turn ending at message ${checkpoint.after_message_count}`
+        + (checkpoint.created_at
+          ? ` · ${formatAge(checkpoint.created_at)}`
+          : "")
+      );
+      option.value = checkpoint.checkpoint_id;
+      el["checkpoint-select"].append(option);
+    }
+    if (state.checkpoints.some(
+      (checkpoint) => checkpoint.checkpoint_id === selected
+    )) {
+      el["checkpoint-select"].value = selected;
+    }
+  }
+  el["checkpoint-select"].disabled = !state.checkpoints.length;
+  el["restore-checkpoint"].disabled = (
+    state.busy || !el["checkpoint-select"].value
+  );
+}
+
+async function restoreCheckpoint() {
+  const checkpointId = el["checkpoint-select"].value;
+  const scope = el["restore-scope"].value;
+  if (!state.sessionId || !checkpointId || state.busy) return;
+  const description = {
+    both: "code and conversation",
+    code: "code",
+    conversation: "conversation",
+  }[scope];
+  if (!window.confirm(
+    `Restore ${description} to the selected turn checkpoint?`
+  )) return;
+  el["restore-checkpoint"].disabled = true;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}`
+      + `/checkpoints/${encodeURIComponent(checkpointId)}/restore`,
+      {
+        method: "POST",
+        body: JSON.stringify({ scope: scope }),
+      }
+    );
+    state.messages = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/messages`
+    );
+    renderConversation();
+    await Promise.all([loadSessions(), loadDiff(false)]);
+    toast(`Restored ${description}`);
+  } catch (error) {
+    toast(error.message, "error");
+    renderCheckpoints();
+  }
 }
 
 function renderDiff() {
@@ -995,6 +1090,14 @@ function wireEvents() {
   el["refresh-diff"].addEventListener("click", () => loadDiff(false));
   el["close-review"].addEventListener("click", closeReview);
   el["apply-changes"].addEventListener("click", applyChanges);
+  el["checkpoint-select"].addEventListener(
+    "change",
+    renderCheckpoints
+  );
+  el["restore-checkpoint"].addEventListener(
+    "click",
+    restoreCheckpoint
+  );
   for (const suggestion of document.querySelectorAll("[data-prompt]")) {
     suggestion.addEventListener("click", async () => {
       if (!state.workspace) await newTask();

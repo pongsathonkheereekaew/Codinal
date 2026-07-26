@@ -10,7 +10,11 @@ from runtime.control_plane.app import _read_turn
 from runtime.events import EventHub
 from runtime.oauth import OAuthCoordinator
 from runtime.secrets import ProviderSecretService
-from runtime.turns import SessionBusyError, SessionNotFoundError
+from runtime.turns import (
+    CodeCheckpointError,
+    SessionBusyError,
+    SessionNotFoundError,
+)
 
 
 TOKEN = "test-session-token-with-at-least-32-characters"
@@ -266,6 +270,9 @@ def test_turn_route_maps_missing_and_busy_without_exception_details():
     busy_client, _ = make_client(
         FailingTurns(SessionBusyError("secret-state"))
     )
+    checkpoint_client, _ = make_client(
+        FailingTurns(CodeCheckpointError("secret-disk-path"))
+    )
 
     missing = missing_client.post(
         "/v1/sessions/session-1/turns",
@@ -273,6 +280,11 @@ def test_turn_route_maps_missing_and_busy_without_exception_details():
         json={"input": "hello"},
     )
     busy = busy_client.post(
+        "/v1/sessions/session-1/turns",
+        headers=AUTH,
+        json={"input": "hello"},
+    )
+    checkpoint = checkpoint_client.post(
         "/v1/sessions/session-1/turns",
         headers=AUTH,
         json={"input": "hello"},
@@ -286,3 +298,8 @@ def test_turn_route_maps_missing_and_busy_without_exception_details():
         "detail": "session already has an active turn"
     }
     assert "secret-state" not in busy.text
+    assert checkpoint.status_code == 409
+    assert checkpoint.json() == {
+        "detail": "automatic code checkpoint unavailable"
+    }
+    assert "secret-disk-path" not in checkpoint.text

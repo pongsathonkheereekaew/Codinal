@@ -153,7 +153,11 @@ def compose_runtime(
         default_model=default_model,
         default_model_provider=lambda: str(settings.view()["model"]),
     )
-    turns = TurnCoordinator(sessions=sessions, events=events)
+    turns = TurnCoordinator(
+        sessions=sessions,
+        events=events,
+        code_checkpoints=git_service,
+    )
     mcp = (
         MCPService(
             manager=mcp_manager,

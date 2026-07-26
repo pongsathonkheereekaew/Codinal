@@ -157,6 +157,20 @@
         </div>
         <pre id="diff-view" class="diff-view" tabindex="0"></pre>
         <div class="review-footer">
+          <div class="checkpoint-controls">
+            <label for="checkpoint-select">Turn checkpoint</label>
+            <select id="checkpoint-select" disabled>
+              <option value="">No checkpoints</option>
+            </select>
+            <label for="restore-scope">Restore</label>
+            <select id="restore-scope">
+              <option value="both">Code and conversation</option>
+              <option value="code">Code only</option>
+              <option value="conversation">Conversation only</option>
+            </select>
+            <button id="restore-checkpoint" class="secondary-button"
+              type="button" disabled>Restore checkpoint</button>
+          </div>
           <button id="apply-changes" class="primary-button" type="button"
             disabled>Apply to workspace</button>
           <p>Applying uses a fast-forward or verified merge.</p>

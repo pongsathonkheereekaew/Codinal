@@ -16,11 +16,16 @@ from runtime.storage.migrations import (
     secure_file,
 )
 
-from .models import GitWorkspaceRecord, WorktreeState
+from .models import (
+    CheckpointState,
+    CodeCheckpointRecord,
+    GitWorkspaceRecord,
+    WorktreeState,
+)
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 def _migrate_to_v1(connection: sqlite3.Connection) -> None:
@@ -43,7 +48,38 @@ def _migrate_to_v1(connection: sqlite3.Connection) -> None:
     )
 
 
-_MIGRATIONS = {1: _migrate_to_v1}
+def _migrate_to_v2(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS code_checkpoints (
+            checkpoint_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            before_tree TEXT NOT NULL,
+            after_tree TEXT NOT NULL DEFAULT '',
+            before_message_count INTEGER NOT NULL,
+            after_message_count INTEGER NOT NULL DEFAULT 0,
+            state TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT ({_NOW}),
+            updated_at TEXT NOT NULL DEFAULT ({_NOW}),
+            FOREIGN KEY (session_id) REFERENCES git_worktrees(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS
+            one_pending_checkpoint_per_session
+        ON code_checkpoints(session_id)
+        WHERE state = 'pending'
+        """
+    )
+
+
+_MIGRATIONS = {
+    1: _migrate_to_v1,
+    2: _migrate_to_v2,
+}
 
 
 class GitWorktreeStore:
@@ -65,6 +101,7 @@ class GitWorktreeStore:
             check_same_thread=False,
         )
         self._connection.row_factory = sqlite3.Row
+        self._connection.execute("PRAGMA foreign_keys = ON")
         self._connection.execute("PRAGMA journal_mode = DELETE")
         self._connection.execute("PRAGMA synchronous = FULL")
         run_sqlite_migrations(
@@ -138,6 +175,128 @@ class GitWorktreeStore:
             )
             return cursor.rowcount == 1
 
+    def save_checkpoint(
+        self,
+        record: CodeCheckpointRecord,
+    ) -> CodeCheckpointRecord:
+        _validate_checkpoint(record)
+        with self._lock, self._connection:
+            self._connection.execute(
+                f"""
+                INSERT INTO code_checkpoints (
+                    checkpoint_id, session_id, before_tree, after_tree,
+                    before_message_count, after_message_count, state,
+                    created_at, updated_at
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?,
+                    COALESCE(NULLIF(?, ''), {_NOW}),
+                    {_NOW}
+                )
+                ON CONFLICT(checkpoint_id) DO UPDATE SET
+                    after_tree = excluded.after_tree,
+                    after_message_count = excluded.after_message_count,
+                    state = excluded.state,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    record.checkpoint_id,
+                    record.session_id,
+                    record.before_tree,
+                    record.after_tree,
+                    record.before_message_count,
+                    record.after_message_count,
+                    record.state.value,
+                    record.created_at,
+                ),
+            )
+            stored = self._load_checkpoint(record.checkpoint_id)
+        assert stored is not None
+        return stored
+
+    def load_checkpoint(
+        self,
+        checkpoint_id: str,
+    ) -> Optional[CodeCheckpointRecord]:
+        _validate_checkpoint_id(checkpoint_id)
+        with self._lock:
+            return self._load_checkpoint(checkpoint_id)
+
+    def pending_checkpoint(
+        self,
+        session_id: str,
+    ) -> Optional[CodeCheckpointRecord]:
+        _validate_session_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT * FROM code_checkpoints
+                WHERE session_id = ? AND state = 'pending'
+                """,
+                (session_id,),
+            ).fetchone()
+        return _checkpoint_from_row(row) if row is not None else None
+
+    def pending_checkpoints(self) -> list[CodeCheckpointRecord]:
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM code_checkpoints
+                WHERE state = 'pending'
+                ORDER BY created_at, rowid
+                """
+            ).fetchall()
+        return [_checkpoint_from_row(row) for row in rows]
+
+    def list_checkpoints(
+        self,
+        session_id: str,
+    ) -> list[CodeCheckpointRecord]:
+        _validate_session_id(session_id)
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM code_checkpoints
+                WHERE session_id = ? AND state = 'completed'
+                ORDER BY created_at DESC, rowid DESC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [_checkpoint_from_row(row) for row in rows]
+
+    def discard_checkpoint_history(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+    ) -> list[CodeCheckpointRecord]:
+        _validate_session_id(session_id)
+        _validate_checkpoint_id(checkpoint_id)
+        with self._lock, self._connection:
+            rows = self._connection.execute(
+                """
+                SELECT * FROM code_checkpoints
+                WHERE session_id = ? AND state = 'completed'
+                ORDER BY created_at DESC, rowid DESC
+                """,
+                (session_id,),
+            ).fetchall()
+            records = [_checkpoint_from_row(row) for row in rows]
+            try:
+                target_index = next(
+                    index
+                    for index, record in enumerate(records)
+                    if record.checkpoint_id == checkpoint_id
+                )
+            except StopIteration:
+                raise ValueError("checkpoint not found") from None
+            discarded = records[: target_index + 1]
+            for record in discarded:
+                self._connection.execute(
+                    "DELETE FROM code_checkpoints WHERE checkpoint_id = ?",
+                    (record.checkpoint_id,),
+                )
+        return discarded
+
     def _load(self, session_id: str) -> Optional[GitWorkspaceRecord]:
         row = self._connection.execute(
             "SELECT * FROM git_worktrees WHERE session_id = ?",
@@ -158,6 +317,18 @@ class GitWorktreeStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    def _load_checkpoint(
+        self,
+        checkpoint_id: str,
+    ) -> Optional[CodeCheckpointRecord]:
+        row = self._connection.execute(
+            """
+            SELECT * FROM code_checkpoints WHERE checkpoint_id = ?
+            """,
+            (checkpoint_id,),
+        ).fetchone()
+        return _checkpoint_from_row(row) if row is not None else None
 
 
 def _validate_session_id(session_id: str) -> None:
@@ -193,3 +364,57 @@ def _validate_record(record: GitWorkspaceRecord) -> None:
         or not isinstance(record.state, WorktreeState)
     ):
         raise ValueError("invalid Git workspace record")
+
+
+def _validate_checkpoint_id(checkpoint_id: str) -> None:
+    if (
+        not isinstance(checkpoint_id, str)
+        or re.fullmatch(r"[0-9a-f]{32}", checkpoint_id) is None
+    ):
+        raise ValueError("invalid checkpoint id")
+
+
+def _validate_checkpoint(record: CodeCheckpointRecord) -> None:
+    _validate_checkpoint_id(record.checkpoint_id)
+    _validate_session_id(record.session_id)
+    if (
+        not re.fullmatch(r"[0-9a-f]{40,64}", record.before_tree)
+        or (
+            record.after_tree
+            and re.fullmatch(r"[0-9a-f]{40,64}", record.after_tree)
+            is None
+        )
+        or not isinstance(record.before_message_count, int)
+        or record.before_message_count < 0
+        or not isinstance(record.after_message_count, int)
+        or record.after_message_count < 0
+        or not isinstance(record.state, CheckpointState)
+        or (
+            record.after_tree
+            and record.after_message_count
+            < record.before_message_count
+        )
+        or (
+            not record.after_tree
+            and record.after_message_count != 0
+        )
+        or (
+            record.state is CheckpointState.COMPLETED
+            and not record.after_tree
+        )
+    ):
+        raise ValueError("invalid code checkpoint")
+
+
+def _checkpoint_from_row(row: sqlite3.Row) -> CodeCheckpointRecord:
+    return CodeCheckpointRecord(
+        checkpoint_id=row["checkpoint_id"],
+        session_id=row["session_id"],
+        before_tree=row["before_tree"],
+        after_tree=row["after_tree"],
+        before_message_count=int(row["before_message_count"]),
+        after_message_count=int(row["after_message_count"]),
+        state=CheckpointState(row["state"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )

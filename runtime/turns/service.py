@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, Protocol
 
 from runtime.events import Event, EventHub, EventType
 from runtime.sessions import (
@@ -30,6 +30,37 @@ class ExportBusyError(RuntimeError):
     pass
 
 
+class CodeCheckpointError(RuntimeError):
+    pass
+
+
+class CodeCheckpointControl(Protocol):
+    def begin_checkpoint(
+        self,
+        session_id: str,
+        *,
+        message_count: int,
+    ) -> Any | None: ...
+
+    def capture_checkpoint(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+        *,
+        message_count: int,
+    ) -> Any: ...
+
+    def finalize_checkpoint(
+        self,
+        session_id: str,
+        checkpoint_id: str,
+    ) -> Any: ...
+
+    def pending_checkpoint(self, session_id: str) -> Any | None: ...
+
+    def pending_checkpoints(self) -> list[Any]: ...
+
+
 _SHUTDOWN_TIMEOUT_SECONDS = 2.0
 
 
@@ -39,9 +70,11 @@ class TurnCoordinator:
         *,
         sessions: SessionService,
         events: EventHub,
+        code_checkpoints: CodeCheckpointControl | None = None,
     ) -> None:
         self._sessions = sessions
         self._events = events
+        self._code_checkpoints = code_checkpoints
         self._active: dict[str, asyncio.Task[None]] = {}
         self._engines: dict[str, Any] = {}
         self._retired_engines: list[Any] = []
@@ -112,17 +145,31 @@ class TurnCoordinator:
             self._starting.discard(session_id)
         if engine is None:
             raise SessionNotFoundError(session_id)
+        self._starting.add(session_id)
+        try:
+            try:
+                code_checkpoint_id = await self._begin_code_checkpoint(
+                    session_id,
+                    engine,
+                )
+            except Exception:
+                raise CodeCheckpointError(
+                    "automatic code checkpoint unavailable"
+                ) from None
 
-        task = asyncio.create_task(
-            self._run(
-                session_id,
-                engine,
-                user_input,
-                source=source,
+            task = asyncio.create_task(
+                self._run(
+                    session_id,
+                    engine,
+                    user_input,
+                    source=source,
+                    code_checkpoint_id=code_checkpoint_id,
+                )
             )
-        )
-        self._active[session_id] = task
-        self._engines[session_id] = engine
+            self._active[session_id] = task
+            self._engines[session_id] = engine
+        finally:
+            self._starting.discard(session_id)
         return {"ok": True, "session_id": session_id}
 
     async def export_when_idle(
@@ -136,6 +183,18 @@ class TurnCoordinator:
                     "cannot export while a turn is active"
                 )
             return await asyncio.to_thread(exporter)
+
+    async def restore_when_idle(
+        self,
+        restore: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Restore durable state while excluding concurrent turn starts."""
+        async with self._snapshot_barrier:
+            if self.has_active_turns():
+                raise SessionBusyError(
+                    "session already has an active turn"
+                )
+            return await asyncio.to_thread(restore)
 
     def has_active_turns(self) -> bool:
         return bool(self._starting) or any(
@@ -197,6 +256,12 @@ class TurnCoordinator:
             records = await asyncio.to_thread(
                 self._sessions.recoverable_sessions
             )
+            recoverable_ids = {
+                record.session_id for record in records
+            }
+            await self._finalize_idle_checkpoints(
+                recoverable_ids
+            )
             for record in records:
                 session_id = record.session_id
                 if self.is_active(session_id):
@@ -240,17 +305,74 @@ class TurnCoordinator:
                 self._executing[session_id] = set(
                     active_tool_call_ids
                 )
+                pending_code_checkpoint = (
+                    await asyncio.to_thread(
+                        self._code_checkpoints.pending_checkpoint,
+                        session_id,
+                    )
+                    if self._code_checkpoints is not None
+                    else None
+                )
                 task = asyncio.create_task(
                     self._resume(
                         session_id,
                         engine,
                         active_tool_call_ids=active_tool_call_ids,
+                        code_checkpoint_id=(
+                            str(
+                                pending_code_checkpoint.checkpoint_id
+                            )
+                            if pending_code_checkpoint is not None
+                            else None
+                        ),
                     )
                 )
                 self._active[session_id] = task
                 self._engines[session_id] = engine
                 recovered += 1
         return recovered
+
+    async def _finalize_idle_checkpoints(
+        self,
+        recoverable_ids: set[str],
+    ) -> None:
+        if self._code_checkpoints is None:
+            return
+        sessions = await asyncio.to_thread(
+            self._sessions.list_sessions
+        )
+        message_counts = {
+            str(session["session_id"]): int(session["messages"])
+            for session in sessions
+        }
+        pending = await asyncio.to_thread(
+            self._code_checkpoints.pending_checkpoints
+        )
+        for checkpoint in pending:
+            session_id = str(checkpoint.session_id)
+            if (
+                session_id in recoverable_ids
+                or not checkpoint.after_tree
+                or message_counts.get(session_id)
+                != checkpoint.after_message_count
+            ):
+                continue
+            try:
+                await asyncio.to_thread(
+                    self._code_checkpoints.finalize_checkpoint,
+                    session_id,
+                    str(checkpoint.checkpoint_id),
+                )
+            except Exception:
+                await self._events.publish_session(
+                    session_id,
+                    {
+                        "type": "error",
+                        "error": (
+                            "code checkpoint recovery failed"
+                        ),
+                    },
+                )
 
     async def _run(
         self,
@@ -259,11 +381,13 @@ class TurnCoordinator:
         user_input: str | list[dict[str, Any]],
         *,
         source: dict[str, Any] | None,
+        code_checkpoint_id: str | None,
     ) -> None:
         await self._drive(
             session_id,
             engine,
             engine.run(user_input, source=source),
+            code_checkpoint_id=code_checkpoint_id,
         )
 
     async def _resume(
@@ -272,6 +396,7 @@ class TurnCoordinator:
         engine: Any,
         *,
         active_tool_call_ids: list[str],
+        code_checkpoint_id: str | None,
     ) -> None:
         await self._drive(
             session_id,
@@ -279,6 +404,7 @@ class TurnCoordinator:
             engine.resume_after_crash(
                 active_tool_call_ids=active_tool_call_ids
             ),
+            code_checkpoint_id=code_checkpoint_id,
         )
 
     async def _drive(
@@ -286,6 +412,8 @@ class TurnCoordinator:
         session_id: str,
         engine: Any,
         events: AsyncIterator[Event],
+        *,
+        code_checkpoint_id: str | None,
     ) -> None:
         terminal: dict[str, Any] | None = None
         cancelled = False
@@ -359,14 +487,61 @@ class TurnCoordinator:
                     or terminal is not None
                 )
             ):
-                try:
-                    persisted = await asyncio.to_thread(
-                    self._sessions.persist_checkpoint,
-                    session_id,
-                    checkpoint=TurnCheckpoint(),
-                    )
-                except Exception:
+                checkpoint_captured = True
+                if (
+                    code_checkpoint_id is not None
+                    and self._code_checkpoints is not None
+                ):
+                    try:
+                        await asyncio.to_thread(
+                            self._code_checkpoints.capture_checkpoint,
+                            session_id,
+                            code_checkpoint_id,
+                            message_count=len(engine.messages),
+                        )
+                    except Exception:
+                        checkpoint_captured = False
+                        await self._events.publish_session(
+                            session_id,
+                            {
+                                "type": "error",
+                                "error": (
+                                    "code checkpoint persistence failed"
+                                ),
+                            },
+                        )
+                if not checkpoint_captured:
                     persisted = False
+                else:
+                    try:
+                        persisted = await asyncio.to_thread(
+                            self._sessions.persist_checkpoint,
+                            session_id,
+                            checkpoint=TurnCheckpoint(),
+                        )
+                    except Exception:
+                        persisted = False
+                if (
+                    persisted
+                    and code_checkpoint_id is not None
+                    and self._code_checkpoints is not None
+                ):
+                    try:
+                        await asyncio.to_thread(
+                            self._code_checkpoints.finalize_checkpoint,
+                            session_id,
+                            code_checkpoint_id,
+                        )
+                    except Exception:
+                        await self._events.publish_session(
+                            session_id,
+                            {
+                                "type": "error",
+                                "error": (
+                                    "code checkpoint persistence failed"
+                                ),
+                            },
+                        )
                 if not persisted:
                     await self._events.publish_session(
                         session_id,
@@ -384,6 +559,24 @@ class TurnCoordinator:
                     self._retired_engines.append(engine)
             if terminal is not None:
                 await self._events.publish_session(session_id, terminal)
+
+    async def _begin_code_checkpoint(
+        self,
+        session_id: str,
+        engine: Any,
+    ) -> str | None:
+        if self._code_checkpoints is None:
+            return None
+        checkpoint = await asyncio.to_thread(
+            self._code_checkpoints.begin_checkpoint,
+            session_id,
+            message_count=len(engine.messages),
+        )
+        return (
+            str(checkpoint.checkpoint_id)
+            if checkpoint is not None
+            else None
+        )
 
     def _checkpoint_for_event(
         self,

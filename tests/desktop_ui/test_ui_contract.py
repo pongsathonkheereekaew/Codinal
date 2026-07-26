@@ -19,6 +19,9 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="attach-files"' in html
     assert 'id="attachment-input"' in html
     assert 'id="attachment-list"' in html
+    assert 'id="checkpoint-select"' in html
+    assert 'id="restore-scope"' in html
+    assert 'id="restore-checkpoint"' in html
     assert 'accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"' in html
     assert 'data-tauri-drag-region' in html
     assert "<style" not in html
@@ -33,6 +36,9 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "always_command" in script
     assert "/git/diff?against_base=true" in script
     assert "/git/apply" in script
+    assert "/checkpoints" in script
+    assert "/restore" in script
+    assert 'JSON.stringify({ scope:' in script
     assert 'JSON.stringify({ model:' in script
     assert "delete_provider_secret" in script
     assert '"DELETE"' in script

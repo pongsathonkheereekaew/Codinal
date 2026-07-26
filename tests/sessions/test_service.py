@@ -242,6 +242,38 @@ def test_persist_checkpoint_atomically_records_recovery_state(tmp_path):
     ]
 
 
+def test_restore_conversation_truncates_persisted_and_live_messages(
+    tmp_path,
+):
+    original = SessionRecord(
+        session_id="s1",
+        workspace=str(tmp_path),
+        model="test-model",
+        mode="interactive",
+        messages=[
+            {"role": "user", "content": "keep"},
+            {"role": "assistant", "content": "kept"},
+            {"role": "user", "content": "revert"},
+            {"role": "assistant", "content": "reverted"},
+        ],
+    )
+    store = MemorySessionStore(original)
+
+    class Engine:
+        messages = list(original.messages)
+
+    engine = Engine()
+    service = SessionService(
+        store,
+        scratch_base=tmp_path / "scratch",
+    )
+    service.attach_engine("s1", engine)
+
+    assert service.restore_conversation("s1", message_count=2)
+    assert store.load("s1").messages == original.messages[:2]
+    assert engine.messages == original.messages[:2]
+
+
 def test_recovery_failure_notice_is_idempotent_and_preserves_checkpoint(
     tmp_path,
 ):

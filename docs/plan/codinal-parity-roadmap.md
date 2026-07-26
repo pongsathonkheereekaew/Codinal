@@ -49,7 +49,8 @@ acceptance evidence is recorded from the real product surface.
 | Multi-root and artifacts | Service methods exist; complete API/UI workflows missing | `runtime/sessions/service.py` |
 | Plan/question/directory prompts | Engine primitives exist; production callbacks/UI missing | `runtime/turn_engine/engine.py` |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
-| Checkpoints, semantic index, parallel subagents, PR/CI, browser | Missing | no product evidence |
+| Checkpoints | Git-worktree baseline implemented with private object storage; non-Git/ignored-file coverage, content-minimized attribution, and a crash-consistent composite restore journal remain open | automatic lifecycle, restart restore, conflict-abort, and post-turn manual-edit E2Es |
+| Semantic index, parallel subagents, PR/CI, browser | Missing | no product evidence |
 
 ## Execution map
 
@@ -218,8 +219,10 @@ Acceptance evidence:
 
 ## Immediate frontier
 
-1. Implement automatic per-turn checkpoints before adding more autonomous
-   execution.
+1. Extend automatic per-turn checkpoints to non-Git workspaces and ignored
+   files, then add content-minimized mutation attribution that neither stores
+   nor reverts unrelated manual edits made during an active turn; journal
+   multi-scope restores so crash recovery completes or rolls them back.
 2. Complete plan/question/directory prompts, because their engine contracts
    already exist and they unblock safe plan-to-build.
 3. Build searchable/forkable sessions and explicit context/file-tree surfaces.

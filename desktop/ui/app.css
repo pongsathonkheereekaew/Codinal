@@ -991,6 +991,27 @@ body.is-dragging .drop-hint {
   border-top: 1px solid var(--line);
 }
 
+.checkpoint-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.checkpoint-controls label {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.checkpoint-controls select {
+  min-width: 0;
+}
+
+.checkpoint-controls .secondary-button {
+  grid-column: 1 / -1;
+}
+
 .review-footer .primary-button {
   width: 100%;
 }
