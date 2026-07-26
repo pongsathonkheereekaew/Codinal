@@ -142,7 +142,38 @@ class GitWorktreeService:
         self.store.close()
 
     def load(self, session_id: str) -> Optional[GitWorkspaceRecord]:
+        if self.store.is_plain_workspace(session_id):
+            return None
         return self.store.load(session_id)
+
+    def prepare_plain(
+        self,
+        session_id: str,
+        workspace: str | Path,
+    ) -> Path:
+        root = Path(workspace).expanduser().resolve()
+        with self._lock:
+            existing = self.store.load_plain_workspace(session_id)
+            if existing is not None:
+                if existing != root:
+                    raise GitWorkspaceError(
+                        "session workspace does not match state"
+                    )
+                return existing
+            if self.store.load(session_id) is not None:
+                raise GitWorkspaceError(
+                    "session already has a Git workspace"
+                )
+            return self.store.save_plain_workspace(
+                session_id,
+                root,
+            )
+
+    def has_checkpoint_session(self, session_id: str) -> bool:
+        return self.store.load(session_id) is not None
+
+    def is_plain_session(self, session_id: str) -> bool:
+        return self.store.is_plain_workspace(session_id)
 
     def status(self, session_id: str) -> dict[str, object]:
         record = self._usable_record(session_id)
@@ -199,7 +230,14 @@ class GitWorktreeService:
                     raise GitWorkspaceError(
                         "session already has a pending checkpoint"
                     )
-            record = self._usable_record(session_id)
+            record = self._checkpoint_record(session_id)
+            if (
+                self.store.is_plain_workspace(session_id)
+                and not attributed
+            ):
+                raise GitWorkspaceError(
+                    "plain workspace checkpoints require attribution"
+                )
             checkpoint_id = secrets.token_hex(16)
             capture_mode = (
                 CheckpointCaptureMode.ATTRIBUTED
@@ -240,7 +278,7 @@ class GitWorktreeService:
         path: Path,
     ) -> None:
         with self._lock:
-            record = self._usable_record(session_id)
+            record = self._checkpoint_record(session_id)
             checkpoint = self.store.pending_checkpoint(session_id)
             if checkpoint is None:
                 raise GitWorkspaceError(
@@ -266,15 +304,31 @@ class GitWorktreeService:
             }
             if relative in existing:
                 return
-            blob, mode = self._capture_file_blob(record, path)
-            self.store.save_checkpoint_file(
-                CheckpointFileRecord(
-                    checkpoint_id=checkpoint.checkpoint_id,
-                    path=relative,
-                    before_blob=blob,
-                    before_mode=mode,
+            try:
+                blob, mode = self._capture_file_blob(record, path)
+                self.store.save_checkpoint_file(
+                    CheckpointFileRecord(
+                        checkpoint_id=checkpoint.checkpoint_id,
+                        path=relative,
+                        before_blob=blob,
+                        before_mode=mode,
+                    )
                 )
-            )
+                self._refresh_attributed_before_tree(
+                    record,
+                    checkpoint.checkpoint_id,
+                )
+            except Exception:
+                self.store.delete_checkpoint_files(
+                    checkpoint.checkpoint_id,
+                    (relative,),
+                )
+                self._refresh_attributed_before_tree(
+                    record,
+                    checkpoint.checkpoint_id,
+                )
+                self._prune_checkpoint_repository(record)
+                raise
 
     def apply_file_delta(
         self,
@@ -321,10 +375,21 @@ class GitWorktreeService:
                         checkpoint.checkpoint_id,
                         added,
                     )
+                    if added:
+                        record = self._checkpoint_record(session_id)
+                        self._refresh_attributed_before_tree(
+                            record,
+                            checkpoint.checkpoint_id,
+                        )
+                        self._prune_checkpoint_repository(record)
 
     def record_shell_fallback(self, session_id: str) -> None:
         with self._lock:
-            record = self._usable_record(session_id)
+            if self.store.is_plain_workspace(session_id):
+                raise GitWorkspaceError(
+                    "plain workspace shell requires a transaction"
+                )
+            record = self._checkpoint_record(session_id)
             checkpoint = self.store.pending_checkpoint(session_id)
             if checkpoint is None:
                 raise GitWorkspaceError(
@@ -372,7 +437,7 @@ class GitWorktreeService:
         message_count: int,
     ) -> CodeCheckpointRecord:
         with self._lock:
-            record = self._usable_record(session_id)
+            record = self._checkpoint_record(session_id)
             checkpoint = self.store.load_checkpoint(checkpoint_id)
             if (
                 checkpoint is None
@@ -522,7 +587,7 @@ class GitWorktreeService:
         self,
         session_id: str,
     ) -> list[CodeCheckpointRecord]:
-        self._usable_record(session_id)
+        self._checkpoint_record(session_id)
         return self.store.list_checkpoints(session_id)
 
     def load_checkpoint(
@@ -548,7 +613,7 @@ class GitWorktreeService:
                 raise GitWorkspaceError(
                     "session already has a pending checkpoint restore"
                 )
-            record = self._usable_record(session_id)
+            record = self._checkpoint_record(session_id)
             checkpoint, history = self._restore_checkpoint_history(
                 session_id,
                 checkpoint_id,
@@ -671,7 +736,7 @@ class GitWorktreeService:
                 raise GitWorkspaceError(
                     "checkpoint restore not found"
                 )
-            record = self._usable_record(restore.session_id)
+            record = self._checkpoint_record(restore.session_id)
             if not self._ensure_restore_refs(record, restore):
                 raise GitWorkspaceError(
                     "unable to retain checkpoint restore"
@@ -724,7 +789,7 @@ class GitWorktreeService:
                 raise GitWorkspaceError(
                     "checkpoint restore not found"
                 )
-            record = self._usable_record(restore.session_id)
+            record = self._checkpoint_record(restore.session_id)
             for checkpoint_id in restore.discard_checkpoint_ids:
                 before_deleted = self._delete_checkpoint_ref(
                     record,
@@ -750,7 +815,7 @@ class GitWorktreeService:
             restore = self.store.load_restore(operation_id)
             if restore is None:
                 return False
-            record = self._usable_record(restore.session_id)
+            record = self._checkpoint_record(restore.session_id)
             if not self._delete_restore_refs(
                 record,
                 operation_id,
@@ -766,7 +831,7 @@ class GitWorktreeService:
         checkpoint_id: str,
     ) -> int:
         with self._lock:
-            record = self._usable_record(session_id)
+            record = self._checkpoint_record(session_id)
             try:
                 discarded = self.store.discard_checkpoint_history(
                     session_id,
@@ -840,7 +905,7 @@ class GitWorktreeService:
         reverse: bool,
     ) -> dict[str, object]:
         with self._lock:
-            record = self._usable_record(session_id)
+            record = self._checkpoint_record(session_id)
             checkpoint = self.store.load_checkpoint(checkpoint_id)
             if (
                 checkpoint is None
@@ -1175,6 +1240,15 @@ class GitWorktreeService:
     def cleanup(self, session_id: str) -> None:
         """Remove only a clean worktree whose commits are retained in source."""
         with self._lock:
+            if self.store.is_plain_workspace(session_id):
+                record = self.store.load(session_id)
+                if record is None:
+                    return
+                self.interrupt(session_id)
+                self._remove_checkpoint_repository(record)
+                self._remove_session_sandbox(session_id)
+                self.store.delete(session_id)
+                return
             record = self.store.load(session_id)
             if record is None:
                 return
@@ -1522,7 +1596,7 @@ class GitWorktreeService:
             )
         try:
             relative = candidate.relative_to(record.worktree_path)
-            if ".." in relative.parts:
+            if ".." in relative.parts or ".git" in relative.parts:
                 raise ValueError
             ancestor = candidate.parent
             while True:
@@ -1547,6 +1621,57 @@ class GitWorktreeService:
         if not value or len(value.encode("utf-8")) > 4096:
             raise GitWorkspaceError("invalid checkpoint path")
         return value
+
+    def _refresh_attributed_before_tree(
+        self,
+        record: GitWorkspaceRecord,
+        checkpoint_id: str,
+    ) -> None:
+        checkpoint = self.store.load_checkpoint(checkpoint_id)
+        if (
+            checkpoint is None
+            or checkpoint.capture_mode
+            is not CheckpointCaptureMode.ATTRIBUTED
+            or checkpoint.state is not CheckpointState.PENDING
+        ):
+            raise GitWorkspaceError(
+                "pending attributed checkpoint not found"
+            )
+        files = self.store.list_checkpoint_files(checkpoint_id)
+        if files:
+            before_tree = self._checkpoint_file_tree(
+                record,
+                checkpoint_id,
+                files,
+                phase="before",
+            )
+        else:
+            if not self._delete_checkpoint_ref(
+                record,
+                checkpoint_id,
+                "before",
+            ):
+                raise GitWorkspaceError(
+                    "unable to release checkpoint files"
+                )
+            before_tree = ""
+        self.store.save_checkpoint(
+            replace(checkpoint, before_tree=before_tree)
+        )
+
+    def _prune_checkpoint_repository(
+        self,
+        record: GitWorkspaceRecord,
+    ) -> None:
+        result = self._checkpoint_git(
+            record,
+            "prune",
+            "--expire=now",
+        )
+        if result.exit_code != 0:
+            raise GitWorkspaceError(
+                "unable to remove discarded checkpoint data"
+            )
 
     def _capture_file_blob(
         self,
@@ -1823,6 +1948,14 @@ class GitWorktreeService:
                 raise GitWorkspaceError(
                     "unable to initialize checkpoint storage"
                 )
+        if self.store.is_plain_workspace(record.session_id):
+            try:
+                os.chmod(repository, 0o700)
+            except OSError:
+                raise GitWorkspaceError(
+                    "unable to secure checkpoint storage"
+                ) from None
+            return repository
         source_objects = record.git_common_dir / "objects"
         if (
             "\n" in str(source_objects)
@@ -1964,7 +2097,12 @@ class GitWorktreeService:
         checkpoints: list[CodeCheckpointRecord],
         operation_id: str,
     ) -> str:
-        current_tree = self._capture_tree(record, operation_id)
+        plain = self.store.is_plain_workspace(record.session_id)
+        current_tree = (
+            ""
+            if plain
+            else self._capture_tree(record, operation_id)
+        )
         identity = hashlib.sha256(
             record.session_id.encode("utf-8")
         ).hexdigest()
@@ -1979,7 +2117,7 @@ class GitWorktreeService:
                 record,
                 index_path,
                 "read-tree",
-                current_tree,
+                *(("--empty",) if plain else (current_tree,)),
             )
             if initialized.exit_code != 0:
                 raise GitWorkspaceError(
@@ -2251,6 +2389,29 @@ class GitWorktreeService:
             raise GitWorkspaceError("Git session workspace is unavailable")
         self._validate_active(record)
         return record
+
+    def _checkpoint_record(
+        self,
+        session_id: str,
+    ) -> GitWorkspaceRecord:
+        plain = self.store.load_plain_workspace(session_id)
+        if plain is None:
+            return self._usable_record(session_id)
+        if not plain.is_dir():
+            raise GitWorkspaceError(
+                "plain session workspace is unavailable"
+            )
+        return GitWorkspaceRecord(
+            session_id=session_id,
+            source_root=plain,
+            git_common_dir=self.checkpoint_base,
+            source_branch="codinal-plain",
+            base_commit="0" * 40,
+            worktree_path=plain,
+            session_branch="codinal-plain",
+            source_dirty=False,
+            state=WorktreeState.ACTIVE,
+        )
 
     def _execute_worktree(
         self,

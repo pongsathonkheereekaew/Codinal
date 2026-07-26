@@ -257,11 +257,23 @@ class _WritablePaths:
         if not self._inside_writable_root(parent):
             return None, "path is outside writable roots"
         target_path = parent / candidate.name
+        if self._contains_protected_git_path(target_path):
+            return None, "Git metadata is not writable"
         try:
             display = str(target_path.relative_to(primary))
         except ValueError:
             display = str(target_path)
         return _Target(parent=parent, name=candidate.name, display=display), ""
+
+    def _contains_protected_git_path(self, candidate: Path) -> bool:
+        for root in self._roots:
+            try:
+                relative = candidate.relative_to(_root_path(root))
+            except ValueError:
+                continue
+            if ".git" in relative.parts:
+                return True
+        return False
 
     def _inside_writable_root(self, candidate: Path) -> bool:
         for root in self._roots:

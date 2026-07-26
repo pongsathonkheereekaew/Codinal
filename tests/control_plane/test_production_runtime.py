@@ -186,7 +186,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
         assert conversations.execute("PRAGMA user_version").fetchone()[0] == 3
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_production_startup_restores_latest_good_backups(tmp_path):
@@ -1506,6 +1506,157 @@ def test_turn_checkpoint_reconciles_ambiguous_restore_after_restart(
     assert [message["role"] for message in restored_messages] == [
         "system"
     ]
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
+    reason="transactional shell requires macOS Seatbelt",
+)
+def test_plain_workspace_checkpoint_restores_after_restart(
+    tmp_path,
+):
+    class PlainWriteProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "plain-write",
+                            "write_file",
+                            {
+                                "path": "agent.txt",
+                                "content": "direct\n",
+                            },
+                        )
+                    ]
+                )
+            if self.calls == 2:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "plain-shell",
+                            "run_shell",
+                            {
+                                "command": (
+                                    "/usr/bin/perl -e "
+                                    "\"mkdir 'generated'; "
+                                    "open(F,'>generated/output.txt'); "
+                                    "print F qq(shell\\\\n); close(F)\""
+                                ),
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text="plain checkpointed")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    async def approve_once(_request):
+        return ApprovalOutcome.ONCE
+
+    workspace = tmp_path / "plain-workspace"
+    workspace.mkdir()
+    (workspace / "baseline.txt").write_text(
+        "baseline\n",
+        encoding="utf-8",
+    )
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "plain-data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=PlainWriteProvider(),
+        approver=approve_once,
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/plain-checkpoint",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/plain-checkpoint/turns",
+                headers=AUTH,
+                json={
+                    "input": "write in the plain workspace",
+                    "workspace": str(workspace),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+        checkpoints = client.get(
+            "/v1/sessions/plain-checkpoint/checkpoints",
+            headers=AUTH,
+        )
+        checkpoint_id = checkpoints.json()[0]["checkpoint_id"]
+        attributed_paths = {
+            item.path
+            for item in services.git.store.list_checkpoint_files(
+                checkpoint_id
+            )
+        }
+        plain_has_no_git = services.git.load("plain-checkpoint") is None
+        plain_has_checkpoints = services.git.has_checkpoint_session(
+            "plain-checkpoint"
+        )
+    assert plain_has_no_git
+    assert plain_has_checkpoints
+    manual = workspace / "manual.txt"
+    manual.write_text("manual\n", encoding="utf-8")
+    interrupted = build_services(
+        config,
+        provider=PlainWriteProvider(),
+        approver=approve_once,
+    )
+    operation = interrupted.git.begin_restore(
+        "plain-checkpoint",
+        checkpoint_id,
+        CheckpointRestoreScope.BOTH,
+    )
+    interrupted.git.resume_restore_code(operation.operation_id)
+    interrupted.git.close()
+
+    restarted = build_services(
+        config,
+        provider=PlainWriteProvider(),
+        approver=approve_once,
+    )
+    with TestClient(
+        create_control_plane_app(
+            token=TOKEN,
+            services=restarted,
+        )
+    ) as client:
+        remaining = client.get(
+            "/v1/sessions/plain-checkpoint/checkpoints",
+            headers=AUTH,
+        )
+
+    assert accepted.status_code == 202
+    assert checkpoints.status_code == 200
+    assert attributed_paths == {
+        "agent.txt",
+        "generated/output.txt",
+    }
+    assert remaining.json() == []
+    assert not (workspace / "agent.txt").exists()
+    assert not (workspace / "generated/output.txt").exists()
+    assert manual.read_text(encoding="utf-8") == "manual\n"
+    assert not (workspace / ".git").exists()
 
 
 @pytest.mark.skipif(

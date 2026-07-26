@@ -641,10 +641,16 @@ def create_control_plane_app(
         session_id: str,
     ) -> list[dict[str, Any]]:
         _validate_public_session_id(session_id)
-        if services.git is None or services.git.load(session_id) is None:
+        if (
+            services.git is None
+            or not _has_checkpoint_session(
+                services.git,
+                session_id,
+            )
+        ):
             raise HTTPException(
                 status_code=404,
-                detail="Git session not found",
+                detail="checkpoint session not found",
             )
         records = await asyncio.to_thread(
             services.git.list_checkpoints,
@@ -676,10 +682,16 @@ def create_control_plane_app(
                 detail="invalid checkpoint id",
             )
         scope = await _read_checkpoint_scope(request)
-        if services.git is None or services.git.load(session_id) is None:
+        if (
+            services.git is None
+            or not _has_checkpoint_session(
+                services.git,
+                session_id,
+            )
+        ):
             raise HTTPException(
                 status_code=404,
-                detail="Git session not found",
+                detail="checkpoint session not found",
             )
         restores = getattr(services, "restores", None)
         if restores is None:
@@ -837,6 +849,13 @@ async def _read_approval(request: Request) -> ApprovalOutcome:
             status_code=400,
             detail="invalid approval payload",
         ) from None
+
+
+def _has_checkpoint_session(git: Any, session_id: str) -> bool:
+    checker = getattr(git, "has_checkpoint_session", None)
+    if callable(checker):
+        return bool(checker(session_id))
+    return git.load(session_id) is not None
 
 
 async def _read_checkpoint_scope(request: Request) -> str:

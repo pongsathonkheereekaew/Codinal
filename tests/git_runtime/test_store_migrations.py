@@ -49,7 +49,7 @@ def test_legacy_git_state_is_versioned_and_backed_up(tmp_path):
 
     assert store.load("legacy-session").source_branch == "main"
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
         assert {
             row[1]
             for row in migrated.execute(
@@ -105,7 +105,7 @@ def test_legacy_git_state_is_versioned_and_backed_up(tmp_path):
         }
     backups = list(
         (tmp_path / "backups").glob(
-            "git-worktrees.db.pre-v0-to-v4-*.bak"
+            "git-worktrees.db.pre-v0-to-v5-*.bak"
         )
     )
     assert len(backups) == 1
@@ -186,11 +186,11 @@ def test_v1_git_state_adds_durable_code_checkpoints(tmp_path):
     assert store.load("retained-v1").base_commit == "a" * 40
     assert store.list_checkpoints("retained-v1") == []
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "git-worktrees.db.pre-v1-to-v4-*.bak"
+                "git-worktrees.db.pre-v1-to-v5-*.bak"
             )
         )
     ) == 1
@@ -250,11 +250,11 @@ def test_v2_git_state_retains_checkpoints_as_whole_tree(tmp_path):
     assert checkpoint.capture_mode.value == "whole_tree"
     assert store.list_checkpoint_files(checkpoint_id) == []
     with sqlite3.connect(database) as migrated:
-        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert migrated.execute("PRAGMA user_version").fetchone()[0] == 5
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "git-worktrees.db.pre-v2-to-v4-*.bak"
+                "git-worktrees.db.pre-v2-to-v5-*.bak"
             )
         )
     ) == 1
@@ -272,11 +272,40 @@ def test_v3_git_state_adds_restore_journal(tmp_path):
 
     assert migrated.pending_restores() == []
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
     assert len(
         list(
             (tmp_path / "backups").glob(
-                "git-worktrees.db.pre-v3-to-v4-*.bak"
+                "git-worktrees.db.pre-v3-to-v5-*.bak"
+            )
+        )
+    ) == 1
+
+
+def test_v4_git_state_adds_plain_workspace_registry(tmp_path):
+    database = tmp_path / "git-worktrees.db"
+    store = GitWorktreeStore(tmp_path)
+    store.close()
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP TABLE plain_workspaces")
+        connection.execute("PRAGMA user_version = 4")
+
+    migrated = GitWorktreeStore(tmp_path)
+
+    assert migrated.load_plain_workspace("missing-session") is None
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        columns = {
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(plain_workspaces)"
+            )
+        }
+        assert columns == {"session_id", "workspace_path"}
+    assert len(
+        list(
+            (tmp_path / "backups").glob(
+                "git-worktrees.db.pre-v4-to-v5-*.bak"
             )
         )
     ) == 1

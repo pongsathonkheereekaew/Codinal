@@ -146,6 +146,17 @@ class TransactionalShell:
                 or self._cancelled.is_set()
             ):
                 return _interrupted(result)
+            if _protected_git_state(
+                before,
+                cancelled=self._cancelled.is_set,
+            ) != _protected_git_state(
+                after,
+                cancelled=self._cancelled.is_set,
+            ):
+                return _failed(
+                    result,
+                    "shell transaction changed protected Git metadata",
+                )
             changed = _changed_paths(
                 self.git_executable,
                 transaction,
@@ -156,8 +167,7 @@ class TransactionalShell:
             if not changed:
                 return result
             if any(
-                path == ".git"
-                or path.startswith(".git/")
+                ".git" in PurePosixPath(path).parts
                 for path in changed
             ):
                 return _failed(
@@ -443,6 +453,46 @@ def _changed_paths(
             raise ValueError("invalid shell change path")
         changed.append(relative)
     return sorted(set(changed))
+
+
+def _protected_git_state(
+    root: Path,
+    *,
+    cancelled: Callable[[], bool],
+) -> dict[str, tuple[str, int, str]]:
+    protected: dict[str, tuple[str, int, str]] = {}
+    for directory, names, files in os.walk(
+        root,
+        topdown=True,
+        followlinks=False,
+    ):
+        if cancelled():
+            raise _TransactionInterrupted
+        base = Path(directory)
+        for name in (*names, *files):
+            path = base / name
+            relative = path.relative_to(root)
+            if ".git" not in relative.parts:
+                continue
+            metadata = path.lstat()
+            mode = stat.S_IMODE(metadata.st_mode)
+            if stat.S_ISREG(metadata.st_mode):
+                digest = _file_state(
+                    path,
+                    cancelled=cancelled,
+                ).digest
+                kind = "file"
+            elif stat.S_ISDIR(metadata.st_mode):
+                digest = ""
+                kind = "directory"
+            elif stat.S_ISLNK(metadata.st_mode):
+                digest = os.readlink(path)
+                kind = "symlink"
+            else:
+                digest = ""
+                kind = "other"
+            protected[relative.as_posix()] = (kind, mode, digest)
+    return protected
 
 
 def _file_state(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 import threading
@@ -31,7 +32,7 @@ from .models import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 
 def _migrate_to_v1(connection: sqlite3.Connection) -> None:
@@ -150,11 +151,25 @@ def _migrate_to_v4(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v5(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS plain_workspaces (
+            session_id TEXT PRIMARY KEY,
+            workspace_path TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES git_worktrees(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }
 
 
@@ -241,6 +256,71 @@ class GitWorktreeStore:
         _validate_session_id(session_id)
         with self._lock:
             return self._load(session_id)
+
+    def save_plain_workspace(
+        self,
+        session_id: str,
+        workspace_path: Path,
+    ) -> Path:
+        _validate_session_id(session_id)
+        workspace = Path(workspace_path)
+        if (
+            not workspace.is_absolute()
+            or not workspace.is_dir()
+            or len(str(workspace)) > 4096
+        ):
+            raise ValueError("invalid plain workspace path")
+        identity = hashlib.sha256(
+            session_id.encode("utf-8")
+        ).hexdigest()
+        marker = self.base / "plain-workspaces" / identity
+        with self._lock, self._connection:
+            self._connection.execute(
+                f"""
+                INSERT INTO git_worktrees (
+                    session_id, source_root, git_common_dir, source_branch,
+                    base_commit, worktree_path, session_branch, source_dirty,
+                    state, created_at, updated_at
+                )
+                VALUES (
+                    ?, ?, ?, 'codinal-plain',
+                    '0000000000000000000000000000000000000000',
+                    ?, 'codinal-plain', 0, 'active', {_NOW}, {_NOW}
+                )
+                """,
+                (
+                    session_id,
+                    str(workspace),
+                    str(marker),
+                    str(marker),
+                ),
+            )
+            self._connection.execute(
+                """
+                INSERT INTO plain_workspaces (
+                    session_id, workspace_path
+                )
+                VALUES (?, ?)
+                """,
+                (session_id, str(workspace)),
+            )
+        return workspace
+
+    def load_plain_workspace(self, session_id: str) -> Path | None:
+        _validate_session_id(session_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT workspace_path
+                FROM plain_workspaces
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        return Path(row["workspace_path"]) if row is not None else None
+
+    def is_plain_workspace(self, session_id: str) -> bool:
+        return self.load_plain_workspace(session_id) is not None
 
     def delete(self, session_id: str) -> bool:
         _validate_session_id(session_id)

@@ -241,6 +241,23 @@ def test_write_file_refuses_traversal_symlinks_and_missing_parent(
     assert list(outside.iterdir()) == []
 
 
+def test_write_file_refuses_nested_git_metadata(tmp_path: Path) -> None:
+    nested_git = tmp_path / "nested" / ".git"
+    nested_git.mkdir(parents=True)
+    registry, _ = build_registry(tmp_path)
+
+    result = registry.execute(
+        "write_file",
+        {"path": "nested/.git/config", "content": "secret"},
+    )
+
+    assert result == {
+        "ok": False,
+        "error": "Git metadata is not writable",
+    }
+    assert not (nested_git / "config").exists()
+
+
 def test_read_only_extra_root_cannot_be_written(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     read_only = tmp_path / "reference"

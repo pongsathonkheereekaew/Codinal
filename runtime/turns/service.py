@@ -350,6 +350,31 @@ class TurnCoordinator:
                     if self._code_checkpoints is not None
                     else None
                 )
+                if (
+                    pending_code_checkpoint is None
+                    and self._code_checkpoints is not None
+                ):
+                    before_message_count = next(
+                        (
+                            index
+                            for index in range(
+                                len(record.messages) - 1,
+                                -1,
+                                -1,
+                            )
+                            if record.messages[index].get("role")
+                            == "user"
+                        ),
+                        len(record.messages),
+                    )
+                    pending_code_checkpoint = (
+                        await asyncio.to_thread(
+                            self._code_checkpoints.begin_checkpoint,
+                            session_id,
+                            message_count=before_message_count,
+                            attributed=True,
+                        )
+                    )
                 _prepare_engine_turn(engine)
                 task = asyncio.create_task(
                     self._resume(

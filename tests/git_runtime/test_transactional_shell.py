@@ -168,6 +168,28 @@ def test_transactional_shell_never_applies_protected_git_changes(
 
 
 @requires_seatbelt
+def test_transactional_shell_rejects_nested_git_metadata(
+    tmp_path: Path,
+) -> None:
+    recorded = []
+    shell, workspace = _shell(tmp_path, recorded.append)
+
+    result = shell.run(
+        (
+            "/usr/bin/perl -e "
+            "\"mkdir 'nested'; mkdir 'nested/.git'; "
+            "open(F,'>nested/.git/config'); "
+            "print F qq(secret); close(F)\""
+        )
+    )
+
+    assert result.exit_code == 1
+    assert "protected Git metadata" in result.stderr
+    assert not (workspace / "nested").exists()
+    assert recorded == []
+
+
+@requires_seatbelt
 def test_transactional_shell_allows_read_only_git_status(
     tmp_path: Path,
 ) -> None:

@@ -122,6 +122,9 @@ def build_services(
 
     def build_engine(context):
         git_record = git_service.load(context.request.session_id)
+        checkpoint_enabled = git_service.has_checkpoint_session(
+            context.request.session_id
+        )
         shell = (
             TransactionalShell(
                 workspace=context.roots[0].path,
@@ -130,7 +133,11 @@ def build_services(
                     / "shell-transactions"
                 ),
                 git_executable=git_service.git_executable,
-                git_read_root=git_record.git_common_dir,
+                git_read_root=(
+                    git_record.git_common_dir
+                    if git_record is not None
+                    else None
+                ),
                 apply_attributed_delta=lambda paths, apply_delta: (
                     git_service.apply_file_delta(
                         context.request.session_id,
@@ -139,7 +146,7 @@ def build_services(
                     )
                 ),
             )
-            if git_record is not None
+            if checkpoint_enabled
             else SandboxedShell(
                 workspace=context.roots[0].path,
                 temp_dir=sandbox_directory(
@@ -156,10 +163,7 @@ def build_services(
                 git_service.mutation_recorder(
                     context.request.session_id
                 )
-                if git_service.load(
-                    context.request.session_id
-                )
-                is not None
+                if checkpoint_enabled
                 else None
             ),
         )
@@ -194,13 +198,21 @@ def build_services(
         return engine
 
     def prepare_workspace(request) -> Path:
+        if git_service.is_plain_session(request.session_id):
+            return git_service.prepare_plain(
+                request.session_id,
+                request.workspace,
+            )
         try:
             return git_service.prepare(
                 request.session_id,
                 request.workspace,
             ).worktree_path
         except NotGitRepositoryError:
-            return request.workspace
+            return git_service.prepare_plain(
+                request.session_id,
+                request.workspace,
+            )
 
     def snapshot(session_id: str, engine: Any) -> SessionRecord:
         existing = store.load(session_id)
