@@ -315,6 +315,14 @@ def test_production_startup_restores_latest_good_backups(tmp_path):
     ) == 3
 
 
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
+    reason=(
+        "exercises the production PDF-attachment pipeline, which spawns the "
+        "isolated pdf_worker subprocess over the embedded-Python bundle; this "
+        "flow ships only in the macOS .app and is not supported on Linux CI"
+    ),
+)
 def test_production_attachments_survive_restart_and_model_switch(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
