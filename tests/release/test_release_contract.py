@@ -13,8 +13,8 @@ def test_release_builder_pins_and_verifies_embedded_python():
     assert 'PYTHON_VERSION="3.12.13"' in script
     assert 'PYTHON_BUILD="20260718"' in script
     assert (
-        'PYTHON_SHA256="9a1e9e06175c10efd8378b904b07fa21'
-        'bd791ab3345d7cdffeb4a76c9ff55903"'
+        'PYTHON_SHA256="62aeee6161d57303a71a138b75fd5cc6f'
+        'b8c89c4b1d9c7f0a052d89fa0b6652b"'
     ) in script
     assert "--require-hashes" in script
     assert "codesign --verify --deep --strict" in script
