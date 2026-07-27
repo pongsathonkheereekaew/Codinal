@@ -39,6 +39,7 @@ const state = {
   activities: new Map(),
   settings: null,
   diff: "",
+  selectedFiles: new Set(),
   checkpoints: [],
   managedSession: null,
   updateVersion: null,
@@ -1749,6 +1750,7 @@ function switchWorkspace(workspace) {
   state.liveAssistant = null;
   state.activities.clear();
   state.diff = "";
+  state.selectedFiles.clear();
   state.checkpoints = [];
   state.workers = [];
   state.workerGeneration += 1;
@@ -3727,25 +3729,90 @@ async function restoreCheckpoint() {
 
 function renderDiff() {
   const lines = state.diff ? state.diff.split("\n") : [];
-  const files = lines.filter((line) => line.startsWith("diff --git ")).length;
+  el["diff-view"].replaceChildren();
+  // Group lines into per-file blocks with a checkbox for selective apply.
+  const blocks = [];
+  let current = null;
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+      const path = match ? match[2] : "";
+      current = { path, lines: [line] };
+      blocks.push(current);
+    } else if (current) {
+      current.lines.push(line);
+    } else {
+      // Header lines before any file (e.g. empty diff).
+      if (!blocks.length) {
+        current = { path: "", lines: [] };
+        blocks.push(current);
+      }
+      blocks[0].lines.push(line);
+    }
+  }
+  const fileBlocks = blocks.filter((b) => b.path);
+  const files = fileBlocks.length;
   el["change-count"].textContent = String(files);
   el["change-count"].classList.toggle("is-hidden", files === 0);
   el["review-button"].disabled = !state.sessionId;
   el["review-summary"].textContent = files
     ? `${files} changed ${files === 1 ? "file" : "files"}`
     : "No un-applied changes";
-  el["apply-changes"].disabled = !state.diff;
-  el["diff-view"].replaceChildren();
-  if (!lines.length) {
-    el["diff-view"].append(node("span", "diff-line", "No changes to review."));
+
+  if (!lines.length || !fileBlocks.length) {
+    el["diff-view"].append(
+      node("span", "diff-line", "No changes to review.")
+    );
+    updateApplyButton();
     return;
   }
-  for (const line of lines) {
-    let kind = "";
-    if (line.startsWith("diff --git ") || line.startsWith("@@")) kind = "header";
-    else if (line.startsWith("+") && !line.startsWith("+++")) kind = "add";
-    else if (line.startsWith("-") && !line.startsWith("---")) kind = "delete";
-    el["diff-view"].append(node("span", `diff-line ${kind}`.trim(), line));
+
+  for (const block of fileBlocks) {
+    const wrap = node("div", "diff-file-block");
+    const header = node("div", "diff-file-header");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "diff-file-select";
+    checkbox.dataset.path = block.path;
+    checkbox.checked = state.selectedFiles.has(block.path);
+    checkbox.setAttribute(
+      "aria-label",
+      `Select ${block.path} for apply`
+    );
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        state.selectedFiles.add(block.path);
+      } else {
+        state.selectedFiles.delete(block.path);
+      }
+      updateApplyButton();
+    });
+    header.append(
+      checkbox,
+      node("span", "diff-file-path", block.path)
+    );
+    wrap.append(header);
+    for (const line of block.lines) {
+      let kind = "";
+      if (line.startsWith("diff --git ") || line.startsWith("@@"))
+        kind = "header";
+      else if (line.startsWith("+") && !line.startsWith("+++")) kind = "add";
+      else if (line.startsWith("-") && !line.startsWith("---")) kind = "delete";
+      wrap.append(node("span", `diff-line ${kind}`.trim(), line));
+    }
+    el["diff-view"].append(wrap);
+  }
+  updateApplyButton();
+}
+
+function updateApplyButton() {
+  const selected = state.selectedFiles.size;
+  if (selected > 0) {
+    el["apply-changes"].textContent = `Apply selected (${selected})`;
+    el["apply-changes"].disabled = !state.sessionId;
+  } else {
+    el["apply-changes"].textContent = "Apply to workspace";
+    el["apply-changes"].disabled = !state.diff;
   }
 }
 
@@ -3762,15 +3829,26 @@ function closeReview() {
 async function applyChanges() {
   if (!state.sessionId || !state.diff) return;
   el["apply-changes"].disabled = true;
+  const paths = state.selectedFiles.size
+    ? { paths: Array.from(state.selectedFiles) }
+    : {};
   try {
     await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/git/apply`, {
       method: "POST",
+      body: Object.keys(paths).length
+        ? JSON.stringify(paths)
+        : undefined,
     });
-    toast("Changes applied to the source workspace");
+    toast(
+      state.selectedFiles.size
+        ? `Applied ${state.selectedFiles.size} selected file(s)`
+        : "Changes applied to the source workspace"
+    );
+    state.selectedFiles.clear();
     await loadDiff(false);
   } catch (error) {
     toast(error.message, "error");
-    el["apply-changes"].disabled = false;
+    updateApplyButton();
   }
 }
 

@@ -382,6 +382,14 @@ class GitControl(Protocol):
 
     def apply_back(self, session_id: str) -> dict[str, object]: ...
 
+    def apply_selected(
+        self,
+        session_id: str,
+        paths: list[str],
+    ) -> dict[str, object]: ...
+
+    def changed_files(self, session_id: str) -> dict[str, object]: ...
+
     def list_checkpoints(self, session_id: str) -> list[Any]: ...
 
     def load_checkpoint(self, checkpoint_id: str) -> Any | None: ...
@@ -2227,15 +2235,22 @@ def create_control_plane_app(
         return result
 
     @app.post("/v1/sessions/{session_id}/git/apply")
-    async def git_apply(session_id: str) -> JSONResponse:
+    async def git_apply(
+        session_id: str,
+        request: Request,
+    ) -> JSONResponse:
         _validate_public_session_id(session_id)
         if services.git is None or services.git.load(session_id) is None:
             raise HTTPException(status_code=404, detail="Git session not found")
+        selection = await _read_apply_selection(request)
+
+        def _apply() -> dict[str, object]:
+            if selection is None:
+                return services.git.apply_back(session_id)
+            return services.git.apply_selected(session_id, selection)
+
         try:
-            result = await services.turns.mutate_when_idle(
-                session_id,
-                lambda: services.git.apply_back(session_id),
-            )
+            result = await services.turns.mutate_when_idle(session_id, _apply)
         except SessionBusyError as error:
             raise HTTPException(
                 status_code=409,
@@ -2250,6 +2265,22 @@ def create_control_plane_app(
             result,
             status_code=200 if result.get("ok") else 409,
         )
+
+    @app.get("/v1/sessions/{session_id}/git/files")
+    async def git_changed_files(session_id: str) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        try:
+            return await asyncio.to_thread(
+                services.git.changed_files,
+                session_id,
+            )
+        except GitWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="Git files unavailable",
+            ) from None
 
     @app.get("/v1/sessions/{session_id}/checkpoints")
     async def list_checkpoints(
@@ -3468,6 +3499,36 @@ async def _read_git_commit(request: Request) -> str:
             detail="invalid Git commit message",
         )
     return body["message"]
+
+
+async def _read_apply_selection(request: Request) -> list[str] | None:
+    """Read the optional {paths: [...]} body for selective apply.
+
+    Returns the validated path list, or None when the body is absent/empty
+    (meaning "apply all" — the legacy whole-branch behavior).
+    """
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # No body or invalid JSON → apply all (backward-compatible).
+        return None
+    if body is None or body == {}:
+        return None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"paths"}
+        or not isinstance(body.get("paths"), list)
+        or not all(
+            isinstance(p, str) and 1 <= len(p) <= 4096 and "\x00" not in p
+            for p in body["paths"]
+        )
+        or not 1 <= len(body["paths"]) <= 1000
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid apply selection",
+        )
+    return list(body["paths"])
 
 
 async def _read_git_push(request: Request) -> dict[str, Any]:

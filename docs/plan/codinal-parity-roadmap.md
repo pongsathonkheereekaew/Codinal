@@ -82,8 +82,11 @@ Resolve these before their dependent implementation:
 - [ ] Add automatic per-turn checkpoints for Agent-authored files plus
   conversation position; restore code, conversation, or both without reverting
   manual edits.
-- [ ] Add selective file/hunk accept/reject and preserve the existing
-  conflict-abort invariant.
+- [x] Add selective file/hunk accept/reject and preserve the existing
+  conflict-abort invariant. (Phase 33: file-level selective apply via
+  `git checkout <branch> -- <paths>` + commit; per-file checkboxes in the
+  review panel; "Apply selected (N)" vs "Apply all". Hunk-level deferred —
+  needs unified-diff parsing + `git apply`.)
 - [ ] Add an integrated terminal with visible history, interrupt/takeover, and
   the same sandbox/approval policy as model-requested shell calls.
 

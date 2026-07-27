@@ -216,6 +216,11 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "commitChanges" in script
     assert "pushBranch" in script
     assert "loadCommitDiff" in script
+    assert "diff-file-select" in script
+    assert "diff-file-block" in css
+    assert "selectedFiles" in script
+    assert "Apply selected" in script
+    assert "updateApplyButton" in script
     assert "loadArtifacts" in script
     assert "renderArtifacts" in script
     assert "readArtifact" in script

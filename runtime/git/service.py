@@ -1798,6 +1798,171 @@ class GitWorktreeService:
             "error": "apply conflict; source was restored",
         }
 
+    def changed_files(self, session_id: str) -> dict[str, object]:
+        """List files changed on the session branch vs base_commit."""
+        record = self._usable_record(session_id)
+        result = self._probe_result(
+            record.worktree_path,
+            "diff",
+            "--name-status",
+            f"{record.base_commit}..HEAD",
+        )
+        if result.returncode != 0:
+            return {"ok": False, "error": "git diff --name-status failed"}
+        files: list[dict[str, str]] = []
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            status_code, path = parts[0], parts[-1]
+            # R/C status carry a rename source; we only report the target.
+            status = {
+                "A": "added",
+                "M": "modified",
+                "D": "deleted",
+            }.get(status_code[0], "modified")
+            files.append({"path": path, "status": status})
+        return {"ok": True, "files": files}
+
+    def apply_selected(
+        self,
+        session_id: str,
+        paths: list[str],
+    ) -> dict[str, object]:
+        """Apply a subset of the session branch's files to source.
+
+        Produces a single new commit on source_branch containing only the
+        selected paths. On any failure, source is restored to its pre-apply
+        HEAD (the existing conflict-abort invariant holds — source is never
+        left dirty or half-applied).
+        """
+        record = self._usable_record(session_id)
+        if not isinstance(paths, list) or not paths:
+            return {"ok": False, "error": "no paths selected"}
+        if len(paths) > 1000:
+            return {"ok": False, "error": "too many paths selected"}
+        if not self._is_clean(record.worktree_path):
+            raise GitWorkspaceError(
+                "session worktree must be clean before apply"
+            )
+        if self._source_branch(record.source_root) != record.source_branch:
+            raise GitWorkspaceError("source branch changed since session start")
+        if not self._is_clean(record.source_root):
+            raise GitWorkspaceError(
+                "source worktree must be clean before apply"
+            )
+        # Validate paths against the session branch's changed files and the
+        # worktree path-spec guard (rejects escapes).
+        changed = self.changed_files(session_id)
+        if not changed.get("ok"):
+            raise GitWorkspaceError("unable to enumerate changed files")
+        known = {entry["path"] for entry in changed.get("files", [])}
+        for path in paths:
+            if not isinstance(path, str) or path not in known:
+                return {"ok": False, "error": f"unknown path: {path}"}
+
+        source_head = self._probe(
+            record.source_root,
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        )
+
+        def _restore() -> None:
+            self._probe_result(
+                record.source_root, "checkout", "--", "."
+            )
+            self._probe_result(
+                record.source_root, "reset", "--hard", source_head
+            )
+
+        checkout = self._probe_result(
+            record.source_root,
+            "checkout",
+            record.session_branch,
+            "--",
+            *paths,
+        )
+        if checkout.returncode != 0:
+            try:
+                _restore()
+            except Exception:
+                pass
+            self.store.save(replace(record, state=WorktreeState.CONFLICT))
+            return {
+                "ok": False,
+                "conflict": True,
+                "error": "selective apply checkout failed; source restored",
+            }
+        # Verify something actually staged.
+        staged_check = self._probe_result(
+            record.source_root,
+            "diff",
+            "--cached",
+            "--quiet",
+            "--exit-code",
+        )
+        if staged_check.returncode == 0:
+            _restore()
+            return {"ok": False, "error": "no selected files changed"}
+        if staged_check.returncode != 1:
+            _restore()
+            raise GitWorkspaceError("unable to inspect staged changes")
+
+        name = self._config_value(record.source_root, "user.name") or "Codinal"
+        email = (
+            self._config_value(record.source_root, "user.email")
+            or "codinal@localhost"
+        )
+        commit = self._probe_result(
+            record.source_root,
+            "-c",
+            f"user.name={name}",
+            "-c",
+            f"user.email={email}",
+            "commit",
+            "--no-verify",
+            "--no-gpg-sign",
+            "-m",
+            f"Apply selected files from {record.session_branch}",
+        )
+        if commit.returncode != 0:
+            try:
+                _restore()
+            except Exception:
+                pass
+            restored_head = self._probe(
+                record.source_root,
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            )
+            if restored_head != source_head or not self._is_clean(
+                record.source_root
+            ):
+                raise GitWorkspaceError("apply rollback failed")
+            self.store.save(replace(record, state=WorktreeState.CONFLICT))
+            return {
+                "ok": False,
+                "conflict": True,
+                "error": "selective apply commit failed; source restored",
+            }
+        new_head = self._probe(
+            record.source_root,
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        )
+        self.store.save(replace(record, state=WorktreeState.APPLIED))
+        return {
+            "ok": True,
+            "strategy": "selective",
+            "files": list(paths),
+            "commit": new_head,
+        }
+
     def reconcile_crashed_applies(self) -> int:
         """Abort stale merges left by a crashed apply_back/apply_many.
 
