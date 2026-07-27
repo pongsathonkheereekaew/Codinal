@@ -1778,6 +1778,100 @@ body.is-dragging .drop-hint {
   margin-left: auto;
 }
 
+.git-graph-wrap {
+  padding: 8px 16px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.git-graph-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.git-branch-name {
+  font: 600 12px/1.4 var(--mono);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-graph {
+  margin: 0;
+  padding: 0 0 10px;
+  overflow: auto;
+  max-height: 140px;
+  color: var(--muted);
+  font: 10.5px/1.5 var(--mono);
+  white-space: pre;
+}
+.commit-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.commit-message {
+  resize: vertical;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: 12px/1.4 var(--mono);
+}
+.commit-actions {
+  display: flex;
+  gap: 8px;
+}
+.git-log {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow: auto;
+  border-bottom: 1px solid var(--hairline);
+}
+.git-log-empty {
+  padding: 6px 8px;
+  color: var(--muted);
+  font: 11px/1.4 var(--sans);
+}
+.commit-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.commit-row:hover,
+.commit-row:focus-visible {
+  background: var(--surface);
+  outline: none;
+}
+.commit-row:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.commit-sha {
+  font: 600 10.5px/1.4 var(--mono);
+  color: var(--accent);
+}
+.commit-subject {
+  font: 12px/1.4 var(--sans);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-author {
+  font: 10.5px/1.4 var(--sans);
+  color: var(--muted);
+}
+
 .diff-view {
   margin: 0;
   padding: 12px 0 30px;

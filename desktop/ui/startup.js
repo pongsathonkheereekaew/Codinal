@@ -101,6 +101,8 @@ const el = Object.fromEntries(
     "terminal-stop",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
     "checkpoint-select", "restore-scope", "restore-checkpoint",
+    "git-branch", "git-graph", "git-push",
+    "commit-message", "git-stage", "git-commit", "git-log",
     "model-summary", "model-catalog", "update-status", "check-update",
     "install-update",
     "provider-list", "toast-region",
@@ -3532,7 +3534,12 @@ async function loadDiff(showPanel = true) {
     state.diff = "";
   }
   renderDiff();
-  await loadCheckpoints(sessionId);
+  await Promise.all([
+    loadCheckpoints(sessionId),
+    loadGitGraph(sessionId),
+    loadGitLog(sessionId),
+    loadGitStatus(sessionId),
+  ]);
   if (showPanel && state.sessionId === sessionId) openReview();
 }
 
@@ -3670,6 +3677,185 @@ async function applyChanges() {
   } catch (error) {
     toast(error.message, "error");
     el["apply-changes"].disabled = false;
+  }
+}
+
+async function loadGitStatus(sessionId = state.sessionId) {
+  if (!sessionId) return;
+  try {
+    const status = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/git/status`
+    );
+    if (state.sessionId !== sessionId) return;
+    state.gitStatus = status;
+    renderGitStatus();
+  } catch (error) {
+    if (state.sessionId !== sessionId) return;
+    state.gitStatus = null;
+    renderGitStatus();
+  }
+}
+
+function renderGitStatus() {
+  const status = state.gitStatus;
+  el["git-branch"].textContent = status?.branch || "—";
+  const clean = Boolean(status?.clean);
+  el["git-stage"].disabled = (
+    !state.sessionId || clean || state.busy
+  );
+  el["git-commit"].disabled = (
+    !state.sessionId || !el["commit-message"].value.trim() || state.busy
+  );
+  el["git-push"].disabled = !state.sessionId || state.busy;
+}
+
+async function loadGitGraph(sessionId = state.sessionId) {
+  if (!sessionId) {
+    state.gitGraph = "";
+    renderGitGraph();
+    return;
+  }
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/git/graph?limit=50`
+    );
+    if (state.sessionId !== sessionId) return;
+    state.gitGraph = typeof result.graph === "string" ? result.graph : "";
+  } catch (error) {
+    if (state.sessionId !== sessionId) return;
+    state.gitGraph = "";
+  }
+  renderGitGraph();
+}
+
+function renderGitGraph() {
+  el["git-graph"].textContent = state.gitGraph || "No commits yet";
+}
+
+async function loadGitLog(sessionId = state.sessionId) {
+  if (!sessionId) {
+    state.gitLog = [];
+    renderGitLog();
+    return;
+  }
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/git/log?limit=50`
+    );
+    if (state.sessionId !== sessionId) return;
+    state.gitLog = Array.isArray(result.commits) ? result.commits : [];
+  } catch (error) {
+    if (state.sessionId !== sessionId) return;
+    state.gitLog = [];
+  }
+  renderGitLog();
+}
+
+function renderGitLog() {
+  el["git-log"].replaceChildren();
+  if (!state.gitLog.length) {
+    el["git-log"].append(node("li", "git-log-empty", "No commits on this branch yet"));
+    return;
+  }
+  for (const commit of state.gitLog) {
+    const row = node("li", "commit-row");
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute(
+      "aria-label",
+      `Review commit ${commit.sha?.slice(0, 8) || ""} ${commit.subject || ""}`
+    );
+    const short = (commit.sha || "").slice(0, 8);
+    row.append(
+      node("span", "commit-sha", short),
+      node("span", "commit-subject", commit.subject || ""),
+      node("span", "commit-author", commit.author || "")
+    );
+    const sha = commit.sha;
+    row.addEventListener("click", () => {
+      loadCommitDiff(sha).catch((error) => toast(error.message, "error"));
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        loadCommitDiff(sha).catch((error) => toast(error.message, "error"));
+      }
+    });
+    el["git-log"].append(row);
+  }
+}
+
+async function loadCommitDiff(sha) {
+  if (!state.sessionId || !sha) return;
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}`
+        + `/git/diff?commit=${encodeURIComponent(sha)}`
+    );
+    state.diff = typeof result.diff === "string" ? result.diff : "";
+    renderDiff();
+    openReview();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function stageAll() {
+  if (!state.sessionId || state.busy) return;
+  el["git-stage"].disabled = true;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/git/stage`,
+      { method: "POST", body: JSON.stringify({ path: "." }) }
+    );
+    toast("Staged all changes");
+    await loadGitStatus(state.sessionId);
+  } catch (error) {
+    toast(error.message, "error");
+    renderGitStatus();
+  }
+}
+
+async function commitChanges() {
+  const message = el["commit-message"].value.trim();
+  if (!state.sessionId || !message || state.busy) return;
+  el["git-commit"].disabled = true;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/git/commit`,
+      { method: "POST", body: JSON.stringify({ message }) }
+    );
+    el["commit-message"].value = "";
+    toast("Committed to session branch");
+    await Promise.all([
+      loadGitLog(state.sessionId),
+      loadGitGraph(state.sessionId),
+      loadDiff(false),
+    ]);
+  } catch (error) {
+    toast(error.message, "error");
+    renderGitStatus();
+  }
+}
+
+async function pushBranch() {
+  if (!state.sessionId || state.busy) return;
+  const branch = state.gitStatus?.branch || "session branch";
+  if (!window.confirm(`Push ${branch} to origin?`)) return;
+  el["git-push"].disabled = true;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/git/push`,
+      {
+        method: "POST",
+        body: JSON.stringify({ remote: "origin", set_upstream: false }),
+      }
+    );
+    toast(`Pushed ${branch} to origin`);
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    renderGitStatus();
   }
 }
 
@@ -4023,6 +4209,16 @@ function wireEvents() {
   el["refresh-diff"].addEventListener("click", () => loadDiff(false));
   el["close-review"].addEventListener("click", closeReview);
   el["apply-changes"].addEventListener("click", applyChanges);
+  el["git-stage"].addEventListener("click", () => {
+    stageAll().catch((error) => toast(error.message, "error"));
+  });
+  el["git-commit"].addEventListener("click", () => {
+    commitChanges().catch((error) => toast(error.message, "error"));
+  });
+  el["git-push"].addEventListener("click", () => {
+    pushBranch().catch((error) => toast(error.message, "error"));
+  });
+  el["commit-message"].addEventListener("input", renderGitStatus);
   el["checkpoint-select"].addEventListener(
     "change",
     renderCheckpoints

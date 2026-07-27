@@ -108,6 +108,62 @@ class FakeGit:
             "output_truncated": False,
         }
 
+    def stage(self, _session_id, path="."):
+        return {"ok": True, "path": path}
+
+    def commit(self, _session_id, message):
+        return {
+            "ok": True,
+            "commit": "deadbeef" * 5,
+            "branch": "codinal/session-1",
+        }
+
+    def log(self, _session_id, *, limit=50):
+        return {
+            "ok": True,
+            "branch": "codinal/session-1",
+            "base_commit": "abc123",
+            "head_commit": "deadbeef" * 5,
+            "commits": [
+                {
+                    "sha": "deadbeef" * 5,
+                    "parents": ["abc123"],
+                    "author": "Codinal Test",
+                    "email": "codinal@example.invalid",
+                    "date": "2026-07-27T00:00:00+00:00",
+                    "subject": "Apply change",
+                }
+            ],
+            "output_truncated": False,
+        }
+
+    def graph(self, _session_id, *, limit=50):
+        return {
+            "ok": True,
+            "branch": "codinal/session-1",
+            "base_commit": "abc123",
+            "graph": "* deadbeef (HEAD) Apply change\n",
+            "commits": [
+                {
+                    "sha": "deadbeef" * 5,
+                    "parents": [],
+                    "author": "Codinal Test",
+                    "email": "codinal@example.invalid",
+                    "date": "2026-07-27T00:00:00+00:00",
+                    "subject": "Apply change",
+                }
+            ],
+            "output_truncated": False,
+        }
+
+    def push(self, _session_id, *, remote="origin", set_upstream=False):
+        return {
+            "ok": True,
+            "remote": remote,
+            "branch": "codinal/session-1",
+            "summary": "To refs/heads/codinal/session-1\n",
+        }
+
     def context_snapshot(self, _session_id, *, root, expected_identity):
         self.context_roots.append(root)
         return {
@@ -558,6 +614,7 @@ def make_client(
         approvals=approvals,
         mcp=None,
         git=git,
+        audit=None,
     )
     return (
         TestClient(create_control_plane_app(token=TOKEN, services=services)),
@@ -1792,3 +1849,151 @@ def test_mcp_patch_route_returns_503_when_mcp_unavailable():
 
     assert response.status_code == 503
     assert response.json()["detail"] == "MCP unavailable"
+
+
+def test_git_stage_route_stages_path():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/git/stage",
+            headers=AUTH,
+            json={"path": "src/main.py"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "path": "src/main.py"}
+
+
+def test_git_commit_route_commits_message():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/git/commit",
+            headers=AUTH,
+            json={"message": "Apply change"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["branch"] == "codinal/session-1"
+
+
+def test_git_commit_route_rejects_empty_message():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/git/commit",
+            headers=AUTH,
+            json={"message": "   "},
+        )
+
+    assert response.status_code == 400
+
+
+def test_git_log_and_graph_routes_return_history():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        log = client.get(
+            "/v1/sessions/session-1/git/log",
+            headers=AUTH,
+        )
+        graph = client.get(
+            "/v1/sessions/session-1/git/graph",
+            headers=AUTH,
+        )
+
+    assert log.status_code == 200
+    assert log.json()["commits"][0]["subject"] == "Apply change"
+    assert graph.status_code == 200
+    assert "* " in graph.json()["graph"]
+
+
+def test_git_diff_route_accepts_commit_param():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.get(
+            "/v1/sessions/session-1/git/diff?commit=abc1234",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+
+
+def test_git_push_route_pushes_and_audits(tmp_path):
+    from runtime.audit import AuditLedger
+
+    git = FakeGit()
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        routing=None,
+        secrets=ProviderSecretService(),
+        oauth=OAuthCoordinator(),
+        turns=FakeTurns(),
+        sessions=FakeSessions(),
+        approvals=None,
+        mcp=None,
+        git=git,
+        audit=AuditLedger(tmp_path),
+    )
+    client = TestClient(create_control_plane_app(token=TOKEN, services=services))
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/git/push",
+            headers=AUTH,
+            json={"remote": "origin", "set_upstream": False},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["remote"] == "origin"
+    events = services.audit.list(domain="git")
+    assert [event["action"] for event in events] == ["push"]
+    assert events[0]["payload"]["remote"] == "origin"
+
+
+def test_git_push_route_rejects_invalid_remote():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/git/push",
+            headers=AUTH,
+            json={"remote": "bad remote!", "set_upstream": False},
+        )
+
+    assert response.status_code == 400
+
+
+def test_git_routes_404_when_session_not_a_git_session():
+    class NoGit:
+        def load(self, _session_id):
+            return None
+
+        def close(self):
+            return None
+
+    client, _sessions, _turns = make_client(git=NoGit())
+
+    with client:
+        for path in [
+            "/v1/sessions/session-1/git/log",
+            "/v1/sessions/session-1/git/graph",
+        ]:
+            response = client.get(path, headers=AUTH)
+            assert response.status_code == 404
+        for path, body in [
+            ("/v1/sessions/session-1/git/stage", {"path": "."}),
+            ("/v1/sessions/session-1/git/commit", {"message": "x"}),
+            ("/v1/sessions/session-1/git/push", {"remote": "origin", "set_upstream": False}),
+        ]:
+            response = client.post(path, headers=AUTH, json=body)
+            assert response.status_code == 404

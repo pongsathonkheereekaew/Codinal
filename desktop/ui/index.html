@@ -294,6 +294,27 @@
           <button id="refresh-diff" class="icon-button" type="button"
             aria-label="Refresh diff">↻</button>
         </div>
+        <section class="git-graph-wrap" aria-label="Branch graph">
+          <div class="git-graph-header">
+            <span id="git-branch" class="git-branch-name">—</span>
+            <button id="git-push" class="secondary-button" type="button"
+              disabled>Push</button>
+          </div>
+          <pre id="git-graph" class="git-graph" tabindex="0"
+            aria-label="Commit graph"></pre>
+        </section>
+        <section class="commit-composer" aria-label="Commit changes">
+          <label for="commit-message" class="sr-only">Commit message</label>
+          <textarea id="commit-message" class="commit-message"
+            placeholder="Commit message" rows="2"></textarea>
+          <div class="commit-actions">
+            <button id="git-stage" class="secondary-button" type="button"
+              disabled>Stage all</button>
+            <button id="git-commit" class="primary-button" type="button"
+              disabled>Commit</button>
+          </div>
+        </section>
+        <ol id="git-log" class="git-log" aria-label="Commit history"></ol>
         <pre id="diff-view" class="diff-view" tabindex="0"></pre>
         <div class="review-footer">
           <div class="checkpoint-controls">

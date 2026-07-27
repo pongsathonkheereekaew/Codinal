@@ -150,6 +150,26 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "/terminal/interrupt" in script
     assert "/mcp/servers" in script
     assert "/artifacts" in script
+    assert 'id="git-graph"' in html
+    assert 'id="git-branch"' in html
+    assert 'id="git-push"' in html
+    assert 'id="commit-message"' in html
+    assert 'id="git-stage"' in html
+    assert 'id="git-commit"' in html
+    assert 'id="git-log"' in html
+    assert "/git/log" in script
+    assert "/git/graph" in script
+    assert "/git/stage" in script
+    assert "/git/commit" in script
+    assert "/git/push" in script
+    assert "loadGitGraph" in script
+    assert "loadGitLog" in script
+    assert "loadGitStatus" in script
+    assert "renderGitLog" in script
+    assert "stageAll" in script
+    assert "commitChanges" in script
+    assert "pushBranch" in script
+    assert "loadCommitDiff" in script
     assert "loadArtifacts" in script
     assert "renderArtifacts" in script
     assert "readArtifact" in script

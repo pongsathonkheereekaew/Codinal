@@ -169,7 +169,9 @@ Acceptance evidence:
 
 ### P1 — Ship loop and remote continuity
 
-- [ ] Add branch graph, stage/commit/push UI and commit-level review.
+- [x] Add branch graph, stage/commit/push UI and commit-level review. (Phase 28:
+  log/graph/push service + routes, per-commit diff, review-panel composer +
+  graph + commit list; push audited. GitHub PR/CI remains a separate item.)
 - [ ] Add GitHub PR creation/review, review comments, CI status/logs, opt-in
   auto-fix, merge, and post-merge cleanup through scoped credentials.
 - [ ] Add local/SSH worker handoff with explicit trust boundary and artifact
