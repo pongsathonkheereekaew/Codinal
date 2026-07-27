@@ -73,6 +73,7 @@ class RuntimeServices:
     builds: PlanBuildCoordinator | None = None
     goals: GoalCoordinator | None = None
     audit: AuditLedger | None = None
+    github: Any = None
 
 
 def compose_runtime(
@@ -100,6 +101,7 @@ def compose_runtime(
     goal_store: GoalStore | None = None,
     mcp_store: MCPStore | None = None,
     audit: AuditLedger | None = None,
+    github: Any = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -267,4 +269,5 @@ def compose_runtime(
         builds=builds,
         goals=goals,
         audit=audit,
+        github=github,
     )

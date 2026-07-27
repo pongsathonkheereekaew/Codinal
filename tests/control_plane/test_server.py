@@ -107,6 +107,7 @@ def test_runtime_secrets_ignore_unmarked_stdin(
         {"provider": "anthropic", "configured": False},
         {"provider": "gemini", "configured": False},
         {"provider": "openai", "configured": False},
+        {"provider": "github", "configured": False},
     ]
 
 
@@ -144,6 +145,7 @@ def test_runtime_secrets_marked_channel_is_one_shot(
         {"provider": "anthropic", "configured": False},
         {"provider": "gemini", "configured": False},
         {"provider": "openai", "configured": False},
+        {"provider": "github", "configured": False},
     ]
 
 

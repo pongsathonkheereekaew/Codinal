@@ -189,7 +189,9 @@ Acceptance evidence:
   log/graph/push service + routes, per-commit diff, review-panel composer +
   graph + commit list; push audited. GitHub PR/CI remains a separate item.)
 - [ ] Add GitHub PR creation/review, review comments, CI status/logs, opt-in
-  auto-fix, merge, and post-merge cleanup through scoped credentials.
+  auto-fix, merge, and post-merge cleanup through scoped credentials. (Phase 34:
+  PR create + CI status read + GitHub PAT credential flow + Create PR UI.
+  Review comments / auto-fix / merge / post-merge cleanup remain.)
 - [ ] Add local/SSH worker handoff with explicit trust boundary and artifact
   pull-down.
 - [ ] Add browser/dev-server preview, screenshots, console/network evidence, and

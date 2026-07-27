@@ -1819,6 +1819,18 @@ body.is-dragging .drop-hint {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.github-pr-status {
+  margin: 4px 0 0;
+  font: 11px/1.4 var(--sans);
+  color: var(--faint);
+}
+.github-pr-status a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.github-pr-status a:hover {
+  text-decoration: underline;
+}
 .git-graph {
   margin: 0;
   padding: 0 0 10px;
