@@ -2107,6 +2107,9 @@ class _FakeGitWithRecord:
 class _FakeGitHub:
     def __init__(self):
         self.created = None
+        self.merged = None
+        self.commented = None
+        self.cleaned_up = None
 
     def create_pr(self, source_root, branch, *, title, body="", base=""):
         self.created = (title, body, base)
@@ -2117,6 +2120,18 @@ class _FakeGitHub:
 
     def list_checks(self, source_root, ref):
         return {"total": 0, "runs": []}
+
+    def merge_pr(self, source_root, branch, *, method="squash"):
+        self.merged = (branch, method)
+        return {"ok": True, "sha": "abc123", "message": "merged"}
+
+    def add_review_comment(self, source_root, branch, *, body):
+        self.commented = body
+        return {"ok": True}
+
+    def post_merge_cleanup(self, source_root, branch):
+        self.cleaned_up = branch
+        return {"ok": True, "branch": branch}
 
 
 def _github_client(git, github):
@@ -2312,3 +2327,66 @@ def test_preview_evidence_503_when_unavailable():
             kwargs = {"json": {"kind": "console", "content": "x"}} if method == "POST" else {}
             response = client.request(method, path, headers=AUTH, **kwargs)
             assert response.status_code == 503
+
+
+def test_github_merge_route_merges_pr():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/github/merge",
+            headers=AUTH,
+            json={"method": "squash"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert github.merged == ("feature", "squash")
+
+
+def test_github_comment_route_adds_review_comment():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/github/comment",
+            headers=AUTH,
+            json={"body": "Looks good!"},
+        )
+
+    assert response.status_code == 200
+    assert github.commented == "Looks good!"
+
+
+def test_github_cleanup_route_deletes_branch():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/github/cleanup",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    assert github.cleaned_up == "feature"
+
+
+def test_github_merge_rejects_invalid_method():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/github/merge",
+            headers=AUTH,
+            json={"method": "bomb"},
+        )
+
+    assert response.status_code == 400

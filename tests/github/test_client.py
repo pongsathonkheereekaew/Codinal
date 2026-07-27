@@ -134,3 +134,56 @@ def test_transport_failure_raises_github_error():
     with _client(_mock(handler)) as client:
         with pytest.raises(GitHubError, match="request failed"):
             client.get_pr("owner", "repo", 1)
+
+
+def test_merge_pr_sends_put_merge():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"sha": "abc123", "merged": True, "message": "Pull request successfully merged"})
+
+    with _client(_mock(handler)) as client:
+        result = client.merge_pr("owner", "repo", 42, method="squash")
+
+    assert captured["method"] == "PUT"
+    assert "/repos/owner/repo/pulls/42/merge" in captured["url"]
+    assert captured["body"]["merge_method"] == "squash"
+    assert result["merged"] is True
+
+
+def test_add_review_comment_posts_review():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": 1, "state": "COMMENTED"})
+
+    with _client(_mock(handler)) as client:
+        client.add_review_comment("owner", "repo", 42, body="LGTM")
+
+    assert "/repos/owner/repo/pulls/42/reviews" in captured["url"]
+    assert captured["body"]["body"] == "LGTM"
+    assert captured["body"]["event"] == "COMMENT"
+
+
+def test_delete_branch_returns_true_on_204():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(204)
+
+    with _client(_mock(handler)) as client:
+        result = client.delete_branch("owner", "repo", "feature")
+
+    assert result is True
+
+
+def test_delete_branch_returns_false_on_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "not found"})
+
+    with _client(_mock(handler)) as client:
+        with pytest.raises(GitHubError):
+            client.delete_branch("owner", "repo", "missing")

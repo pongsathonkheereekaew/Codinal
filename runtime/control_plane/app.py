@@ -444,6 +444,32 @@ class GitHubControl(Protocol):
         remote: str = "origin",
     ) -> dict[str, object]: ...
 
+    def merge_pr(
+        self,
+        source_root: Any,
+        session_branch: str,
+        *,
+        method: str = "squash",
+        remote: str = "origin",
+    ) -> dict[str, object]: ...
+
+    def add_review_comment(
+        self,
+        source_root: Any,
+        session_branch: str,
+        *,
+        body: str,
+        remote: str = "origin",
+    ) -> dict[str, object]: ...
+
+    def post_merge_cleanup(
+        self,
+        source_root: Any,
+        session_branch: str,
+        *,
+        remote: str = "origin",
+    ) -> dict[str, object]: ...
+
 
 class PreviewControl(Protocol):
     def add_evidence(
@@ -2519,6 +2545,92 @@ def create_control_plane_app(
                 status_code=502,
                 detail=str(error),
             ) from None
+
+    @app.post("/v1/sessions/{session_id}/github/merge")
+    async def github_merge_pr(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        github = getattr(services, "github", None)
+        if github is None:
+            raise HTTPException(status_code=503, detail="GitHub unavailable")
+        record = services.git.load(session_id)
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = {}
+        method = body.get("method", "squash") if isinstance(body, dict) else "squash"
+        if method not in ("squash", "merge", "rebase"):
+            raise HTTPException(status_code=400, detail="method must be squash, merge, or rebase")
+
+        def _merge() -> dict[str, object]:
+            return github.merge_pr(
+                record.source_root,
+                record.session_branch,
+                method=method,
+            )
+
+        try:
+            result = await services.turns.mutate_when_idle(session_id, _merge)
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        _audit_action(services, "github", "merge", subject=record.session_branch)
+        return result
+
+    @app.post("/v1/sessions/{session_id}/github/comment")
+    async def github_add_comment(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        github = getattr(services, "github", None)
+        if github is None:
+            raise HTTPException(status_code=503, detail="GitHub unavailable")
+        record = services.git.load(session_id)
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="invalid request") from None
+        comment_body = body.get("body") if isinstance(body, dict) else None
+        if not isinstance(comment_body, str) or not comment_body.strip():
+            raise HTTPException(status_code=400, detail="body is required")
+        try:
+            return await asyncio.to_thread(
+                github.add_review_comment,
+                record.source_root,
+                record.session_branch,
+                body=comment_body[:65_536],
+            )
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=str(error)) from None
+
+    @app.post("/v1/sessions/{session_id}/github/cleanup")
+    async def github_post_merge_cleanup(session_id: str) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        github = getattr(services, "github", None)
+        if github is None:
+            raise HTTPException(status_code=503, detail="GitHub unavailable")
+        record = services.git.load(session_id)
+
+        def _cleanup() -> dict[str, object]:
+            return github.post_merge_cleanup(
+                record.source_root,
+                record.session_branch,
+            )
+
+        try:
+            result = await services.turns.mutate_when_idle(session_id, _cleanup)
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        _audit_action(services, "github", "cleanup", subject=record.session_branch)
+        return result
 
     @app.post("/v1/sessions/{session_id}/preview/evidence")
     async def add_preview_evidence(
