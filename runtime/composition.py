@@ -76,6 +76,7 @@ class RuntimeServices:
     github: Any = None
     preview: Any = None
     managed_policy: Any = None
+    extensions: Any = None
 
 
 def compose_runtime(
@@ -106,6 +107,7 @@ def compose_runtime(
     github: Any = None,
     preview: Any = None,
     managed_policy: Any = None,
+    extensions: Any = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -277,4 +279,5 @@ def compose_runtime(
         github=github,
         preview=preview,
         managed_policy=managed_policy,
+        extensions=extensions,
     )

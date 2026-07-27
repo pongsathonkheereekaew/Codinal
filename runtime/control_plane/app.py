@@ -571,6 +571,8 @@ class ControlPlaneServices(Protocol):
     builds: PlanBuildControl | None
     goals: GoalControl | None
     audit: Any | None
+    extensions: Any | None
+    managed_policy: Any | None
 
 
 def create_control_plane_app(
@@ -722,6 +724,74 @@ def create_control_plane_app(
         if policy is None:
             return {"active": False}
         return policy.to_dict()
+
+    @app.get("/v1/extensions")
+    async def list_extensions() -> list[dict[str, Any]]:
+        ext = getattr(services, "extensions", None)
+        if ext is None:
+            raise HTTPException(status_code=503, detail="extensions unavailable")
+        return [pkg.to_dict() for pkg in ext.list()]
+
+    @app.post("/v1/extensions")
+    async def register_extension(request: Request) -> dict[str, Any]:
+        ext = getattr(services, "extensions", None)
+        if ext is None:
+            raise HTTPException(status_code=503, detail="extensions unavailable")
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="invalid extension manifest") from None
+        manifest = body.get("manifest") if isinstance(body, dict) else None
+        if not isinstance(manifest, dict):
+            raise HTTPException(status_code=400, detail="manifest is required")
+        try:
+            pkg = await asyncio.to_thread(ext.register, manifest)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+        _audit_action(services, "extension", "register", subject=pkg.id)
+        return pkg.to_dict()
+
+    @app.patch("/v1/extensions/{package_id}")
+    async def toggle_extension(
+        package_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        ext = getattr(services, "extensions", None)
+        if ext is None:
+            raise HTTPException(status_code=503, detail="extensions unavailable")
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="invalid request") from None
+        enabled = body.get("enabled") if isinstance(body, dict) else None
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=400, detail="enabled must be a boolean")
+        updated = await asyncio.to_thread(ext.set_enabled, package_id, enabled)
+        if not updated:
+            raise HTTPException(status_code=404, detail="extension not found")
+        _audit_action(services, "extension", "enable" if enabled else "disable", subject=package_id)
+        return {"ok": True, "id": package_id, "enabled": enabled}
+
+    @app.delete("/v1/extensions/{package_id}")
+    async def remove_extension(package_id: str) -> dict[str, Any]:
+        ext = getattr(services, "extensions", None)
+        if ext is None:
+            raise HTTPException(status_code=503, detail="extensions unavailable")
+        removed = await asyncio.to_thread(ext.remove, package_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail="extension not found")
+        _audit_action(services, "extension", "remove", subject=package_id)
+        return {"ok": True, "id": package_id}
+
+    @app.get("/v1/extensions/{package_id}/verify")
+    async def verify_extension(package_id: str) -> dict[str, Any]:
+        ext = getattr(services, "extensions", None)
+        if ext is None:
+            raise HTTPException(status_code=503, detail="extensions unavailable")
+        result = await asyncio.to_thread(ext.verify, package_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="extension not found")
+        return {"id": package_id, "verified": result}
 
     @app.get("/v1/settings")
     async def settings() -> dict[str, Any]:

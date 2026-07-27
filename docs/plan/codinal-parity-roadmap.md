@@ -215,9 +215,11 @@ Acceptance evidence:
 
 ### P1 — Ecosystem and governance
 
-- [ ] Manage skills, plugins, hooks, MCP servers, and agent definitions with
+- [x] Manage skills, plugins, hooks, MCP servers, and agent definitions with
   signed provenance, versioning, requested permissions, enable/disable, update,
-  and removal.
+  and removal. (Phase 38: package manifest + provenance hash verification +
+  enable/disable/remove registry + 5 routes. Marketplace/update/code-loading
+  deferred.)
 - [x] Add organization model/provider/repository/tool allowlists and managed
   policy that local users cannot silently weaken. (Phase 37: ManagedPolicy
   loaded from JSON file, deny precedence in permission engine + provider
