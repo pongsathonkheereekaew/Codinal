@@ -19,7 +19,7 @@ from .mcp import MCPManager, MCPService, MCPStore
 from .oauth import OAuthCoordinator
 from .policy import ApprovalBroker, Approver, Mode, PermissionEngine, deny_all
 from .routing import ModelRoutingService
-from .secrets import ProviderSecretService
+from .secrets import ProviderSecretService, SecretRedactor
 from .sessions import EngineRequest, RootDir, SessionService
 from .sessions.service import (
     ArtifactOpener,
@@ -111,6 +111,7 @@ def compose_runtime(
         curated_models=curated_models,
     )
     secrets = provider_secrets or ProviderSecretService()
+    redactor = SecretRedactor(secrets)
     routing = ModelRoutingService(
         lambda: list(settings.view()["models"]),
         secrets,
@@ -206,6 +207,7 @@ def compose_runtime(
             turns=turns,
             store=mcp_store,
             audit=audit,
+            redactor=redactor,
         )
         if mcp_manager is not None
         else None

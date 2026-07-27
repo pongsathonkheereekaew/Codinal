@@ -37,7 +37,10 @@ from runtime.policy import (
 from runtime.policy.permissions import INTERACTIVE_CONSENT_TOOLS
 from runtime.providers import AssistantTurn, ProviderClient, ToolCall
 from runtime.providers.errors import friendly_model_error
+from runtime.secrets import SecretRedactor
 from runtime.tools import ToolRegistry
+
+from .content_fence import UNTRUSTED_SYSTEM_GUIDANCE, fence_tool_result
 
 _ATTACHMENT_EXECUTOR = ThreadPoolExecutor(
     max_workers=2,
@@ -78,6 +81,7 @@ class TurnEngine:
         # executor's kill for a running shell command.
         interrupt_hooks: Optional[list[Callable[[], None]]] = None,
         turn_start_hooks: Optional[list[Callable[[], None]]] = None,
+        redactor: Optional[SecretRedactor] = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -112,11 +116,18 @@ class TurnEngine:
         # that can't ask (the tool then no-ops).
         self.question_asker = question_asker
         self.interaction_id_factory = interaction_id_factory
+        self.redactor = redactor
         self.audit_context: dict[str, Any] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
         ):
-            self.messages.insert(0, {"role": "system", "content": instructions})
+            self.messages.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": f"{instructions}\n\n{UNTRUSTED_SYSTEM_GUIDANCE}",
+                },
+            )
         self._cancel = asyncio.Event()
         # Each pending steering message: (text, optional MessageSource sidecar dict).
         self._steering: list[tuple[str, Optional[dict[str, Any]]]] = []
@@ -1205,22 +1216,25 @@ class TurnEngine:
         context = (
             self.context_provider() if self.context_provider is not None else ""
         ) or ""
-        if not context:
-            return out
-        block = f"\n\n<system-context>\n{context}\n</system-context>"
-        for i in range(len(out) - 1, -1, -1):
-            if out[i].get("role") != "user":
-                continue
-            msg = dict(out[i])
-            content = msg.get("content")
-            if isinstance(content, str):
-                msg["content"] = content + block
-            elif isinstance(content, list):  # content-parts (text + images)
-                msg["content"] = [*content, {"type": "text", "text": block}]
-            else:
-                msg["content"] = block
-            out[i] = msg
-            break
+        if context:
+            block = f"\n\n<system-context>\n{context}\n</system-context>"
+            for i in range(len(out) - 1, -1, -1):
+                if out[i].get("role") != "user":
+                    continue
+                msg = dict(out[i])
+                content = msg.get("content")
+                if isinstance(content, str):
+                    msg["content"] = content + block
+                elif isinstance(content, list):  # content-parts (text + images)
+                    msg["content"] = [*content, {"type": "text", "text": block}]
+                else:
+                    msg["content"] = block
+                out[i] = msg
+                break
+        # Scrub registered secrets from the outbound copy only; the in-memory
+        # transcript keeps fidelity for the user.
+        if self.redactor is not None:
+            out = self.redactor.redact_messages(out)
         return out
 
 
@@ -1255,7 +1269,7 @@ def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:
     return {
         "role": "tool",
         "tool_call_id": tool_call.id,
-        "content": content,
+        "content": fence_tool_result(content),
         "ts": time.time(),
     }
 
@@ -1264,7 +1278,9 @@ def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:
     return {
         "role": "tool",
         "tool_call_id": tool_call.id,
-        "content": json.dumps({"error": "tool call not executed", "reason": reason}),
+        "content": fence_tool_result(
+            json.dumps({"error": "tool call not executed", "reason": reason})
+        ),
         "ts": time.time(),
     }
 

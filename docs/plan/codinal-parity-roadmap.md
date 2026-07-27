@@ -103,9 +103,12 @@ Acceptance evidence:
   completed tool call or losing an awaiting approval.
 - [ ] Add structured redacted diagnostics, local support bundle, crash reports
   with explicit consent, health/status UI, and actionable provider/tool errors.
-- [ ] Add prompt-injection and secret-exfiltration adversarial suites for
+- [x] Add prompt-injection and secret-exfiltration adversarial suites for
   repository content, MCP, web/browser content, terminal output, attachments,
-  and remote messages.
+  and remote messages. (Phase 29: untrusted-content fence on every tool result
+  + system guidance; secret-aware redaction on provider feed / audit ledger /
+  MCP arguments; 17-test adversarial corpus. Web/browser + remote-worker
+  channels remain — they are not present in v1.)
 - [ ] Set measurable cold-start, memory, indexing, streaming, diff, and
   large-history budgets; enforce regressions in CI.
 - [ ] Make all primary workflows keyboard- and screen-reader-operable with

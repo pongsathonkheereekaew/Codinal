@@ -1,5 +1,6 @@
 """Secret boundaries for the Codinal runtime."""
 
+from .redaction import SecretRedactor
 from .service import (
     MAX_BOOTSTRAP_BYTES,
     MAX_API_KEY_BYTES,
@@ -13,5 +14,6 @@ __all__ = [
     "MAX_API_KEY_BYTES",
     "SUPPORTED_PROVIDERS",
     "ProviderSecretService",
+    "SecretRedactor",
     "load_secret_bootstrap",
 ]

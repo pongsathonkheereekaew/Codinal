@@ -28,12 +28,14 @@ class MCPService:
         turns: TurnCoordinator,
         store: Optional[MCPStore] = None,
         audit: Optional[AuditLedger] = None,
+        redactor: Any = None,
     ) -> None:
         self._manager = manager
         self._sessions = sessions
         self._turns = turns
         self._store = store
         self._audit = audit
+        self._redactor = redactor
         self._attached: dict[
             tuple[str, str],
             tuple[MCPServerDef, list[str]],
@@ -92,16 +94,20 @@ class MCPService:
         if engine is None:
             raise SessionNotFoundError(session_id)
         loop = asyncio.get_running_loop()
+
+        def _call_mcp(tool, arguments):
+            # Redact registered secrets from arguments before they leave the
+            # local trust boundary (MCP transport = live network/subprocess).
+            if self._redactor is not None and arguments:
+                arguments = self._redactor.redact_payload(arguments)
+            return self._manager.call(server.name, tool, arguments)
+
         names = register_mcp_tools(
             registry=engine.registry,
             manifest=engine.registry.manifest,
             server=server,
             mcp_tools=remote_tools,
-            call_async=lambda tool, arguments: self._manager.call(
-                server.name,
-                tool,
-                arguments,
-            ),
+            call_async=_call_mcp,
             loop=loop,
         )
         self._attached[(session_id, server.name)] = (server, names)

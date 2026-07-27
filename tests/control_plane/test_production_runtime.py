@@ -17,6 +17,25 @@ import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+
+def _unfence(content):
+    """Strip the untrusted-content fence from a tool result in provider captures.
+
+    Phase 29 wraps every tool result the provider receives in a
+    <tool_result><content>...</content></tool_result> fence. Tests that assert
+    on provider-received JSON unwrap it here so the assertion reads the real
+    payload. The fence itself is exercised by the adversarial suite.
+    """
+    if not isinstance(content, str):
+        return content
+    open_tag = "<tool_result>\n<content>\n"
+    close_tag = "\n</content>\n</tool_result>"
+    if content.startswith(open_tag) and content.endswith(close_tag):
+        return content[len(open_tag) : -len(close_tag)].replace(
+            "&lt;/content&gt;", "</content>"
+        )
+    return content
+
 # This module is the production integration suite: it drives the full control
 # plane against real subprocess-spawning mechanics (sandbox-exec seatbelt for
 # isolated mutations, the isolated pdf_worker over the embedded-Python bundle,
@@ -1849,7 +1868,7 @@ def test_graceful_restart_preserves_live_waiting_interaction(
             for message in recovery_provider.messages
             if message.get("role") == "tool"
         )
-        result = json.loads(tool_result["content"])
+        result = json.loads(_unfence(tool_result["content"]))
         assert result["selected_task_ids"] == ["implement"]
         assert result["selected_tasks"][0]["verification"] == (
             "Restart E2E passes"
@@ -2345,7 +2364,7 @@ def test_production_plan_edits_and_selected_tasks_reach_same_turn(
         for message in provider.follow_up_messages
         if message.get("role") == "tool"
     )
-    result = json.loads(tool_result["content"])
+    result = json.loads(_unfence(tool_result["content"]))
     assert result["selected_task_ids"] == ["tests"]
     assert result["selected_tasks"][0]["title"] == "Add regression tests"
     assert any(
