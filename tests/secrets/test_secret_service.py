@@ -204,3 +204,56 @@ def test_omniroute_base_url_round_trips_through_bootstrap() -> None:
 
     assert service.get_base_url("omniroute") == "http://gateway:20128/v1"
     assert service.get("provider:omniroute")["api_key"] == "omni-key"
+
+
+def test_custom_provider_round_trip() -> None:
+    service = ProviderSecretService()
+    service.set_custom_provider(
+        "openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="sk-or-test",
+        failover_eligible=True,
+    )
+
+    assert service.custom_providers() == [
+        {
+            "slug": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "failover_eligible": True,
+        }
+    ]
+    assert service.is_failover_eligible("custom:openrouter") is True
+
+
+def test_custom_provider_delete() -> None:
+    service = ProviderSecretService()
+    service.set_custom_provider(
+        "x", base_url="http://localhost:8080/v1", api_key="k"
+    )
+    assert service.custom_providers()
+
+    service.delete_custom_provider("x")
+
+    assert service.custom_providers() == []
+
+
+def test_custom_provider_rejects_invalid_slug() -> None:
+    service = ProviderSecretService()
+    with pytest.raises(ValueError, match="slug"):
+        service.set_custom_provider(
+            "Bad Slug!", base_url="http://x/v1", api_key="k"
+        )
+
+
+def test_custom_provider_requires_base_url() -> None:
+    service = ProviderSecretService()
+    with pytest.raises(ValueError, match="base_url"):
+        service.set_custom_provider("x", base_url="", api_key="k")
+
+
+def test_custom_provider_rejects_invalid_url() -> None:
+    service = ProviderSecretService()
+    with pytest.raises(ValueError, match="base_url"):
+        service.set_custom_provider(
+            "x", base_url="ftp://bad/v1", api_key="k"
+        )

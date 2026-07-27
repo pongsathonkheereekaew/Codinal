@@ -139,6 +139,62 @@ fn delete_provider_secret(
 }
 
 #[tauri::command]
+fn list_custom_providers(
+    state: State<'_, DesktopState>,
+) -> Result<Vec<secrets::CustomProviderRecord>, String> {
+    secrets::list_custom_providers(&state.vault).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_custom_provider(
+    slug: String,
+    base_url: String,
+    api_key: String,
+    failover_eligible: bool,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    let slug_for_sync = slug.clone();
+    let base_url_for_sync = base_url.clone();
+    let api_key = Zeroizing::new(api_key);
+    secrets::set_custom_provider(
+        &state.vault,
+        &slug,
+        &base_url,
+        &api_key,
+        failover_eligible,
+        || {
+            control_client::sync_custom_provider(
+                state.port,
+                &state.token,
+                &state.secret_sync_token,
+                &slug_for_sync,
+                &base_url_for_sync,
+                Some(&api_key),
+                failover_eligible,
+            )
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn delete_custom_provider(slug: String, state: State<'_, DesktopState>) -> Result<bool, String> {
+    let slug_for_sync = slug.clone();
+    secrets::delete_custom_provider(&state.vault, &slug, || {
+        control_client::sync_custom_provider(
+            state.port,
+            &state.token,
+            &state.secret_sync_token,
+            &slug_for_sync,
+            "",
+            None,
+            false,
+        )
+    })
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn pick_workspace() -> Result<String, String> {
     choose_workspace()
         .map(|path| path.to_string_lossy().into_owned())
@@ -273,6 +329,9 @@ pub fn run() {
             list_provider_secret_status,
             set_provider_secret,
             delete_provider_secret,
+            list_custom_providers,
+            set_custom_provider,
+            delete_custom_provider,
             pick_workspace,
             check_for_update,
             install_update,

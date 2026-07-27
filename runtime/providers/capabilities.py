@@ -41,6 +41,14 @@ def capabilities_for(model: str) -> ModelCapabilities:
         return ModelCapabilities(
             streaming=True,
         )
+    if provider.startswith("custom:"):
+        # User-registered OpenAI-compatible gateway. Conservative defaults:
+        # tools + streaming on; vision/PDF off until live conformance proves
+        # otherwise. Caps only gate UI hints + degradation notices.
+        return ModelCapabilities(
+            tools=True,
+            streaming=True,
+        )
     if name.startswith(("gpt-5", "gpt-4")):
         return ModelCapabilities(
             vision=True,
