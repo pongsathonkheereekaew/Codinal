@@ -144,3 +144,59 @@ class GitHubClient:
             "GET",
             f"/repos/{owner}/{repo}/commits/{ref}/check-runs",
         )
+
+    def merge_pr(
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        *,
+        method: str = "squash",
+    ) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            f"/repos/{owner}/{repo}/pulls/{number}/merge",
+            json={"merge_method": method},
+        )
+
+    def add_review_comment(
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        *,
+        body: str,
+        sha: str = "",
+        path: str = "",
+        line: int = 0,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"body": body, "event": "COMMENT"}
+        if sha and path and line:
+            payload["comments"] = [
+                {"path": path, "line": line, "body": body}
+            ]
+            payload["commit_id"] = sha
+            payload["body"] = body
+            del payload["event"]
+            return self._request(
+                "POST",
+                f"/repos/{owner}/{repo}/pulls/{number}/reviews",
+                json=payload,
+            )
+        return self._request(
+            "POST",
+            f"/repos/{owner}/{repo}/pulls/{number}/reviews",
+            json={"body": body, "event": "COMMENT"},
+        )
+
+    def delete_branch(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+    ) -> bool:
+        result = self._request(
+            "DELETE",
+            f"/repos/{owner}/{repo}/git/refs/heads/{branch}",
+        )
+        return result is None  # 204 No Content

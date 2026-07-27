@@ -152,6 +152,58 @@ class GitHubService:
             return result.stdout.strip().split("/")[-1]
         return "main"
 
+    def merge_pr(
+        self,
+        source_root: Path,
+        session_branch: str,
+        *,
+        method: str = "squash",
+        remote: str = "origin",
+    ) -> dict[str, Any]:
+        token = self._resolve_token()
+        owner, repo = self._resolve_owner_repo(source_root, remote)
+        with self._client_factory(token) as client:
+            pr = client.find_pr(owner, repo, session_branch)
+            if pr is None:
+                return {"ok": False, "error": "no open PR for this branch"}
+            result = client.merge_pr(owner, repo, pr["number"], method=method)
+        return {
+            "ok": result.get("merged", False),
+            "sha": result.get("sha", ""),
+            "message": result.get("message", ""),
+        }
+
+    def add_review_comment(
+        self,
+        source_root: Path,
+        session_branch: str,
+        *,
+        body: str,
+        remote: str = "origin",
+    ) -> dict[str, Any]:
+        token = self._resolve_token()
+        owner, repo = self._resolve_owner_repo(source_root, remote)
+        with self._client_factory(token) as client:
+            pr = client.find_pr(owner, repo, session_branch)
+            if pr is None:
+                return {"ok": False, "error": "no open PR for this branch"}
+            client.add_review_comment(owner, repo, pr["number"], body=body)
+        return {"ok": True}
+
+    def post_merge_cleanup(
+        self,
+        source_root: Path,
+        session_branch: str,
+        *,
+        remote: str = "origin",
+    ) -> dict[str, Any]:
+        """Delete the remote session branch after merge (post-merge cleanup)."""
+        token = self._resolve_token()
+        owner, repo = self._resolve_owner_repo(source_root, remote)
+        with self._client_factory(token) as client:
+            deleted = client.delete_branch(owner, repo, session_branch)
+        return {"ok": deleted, "branch": session_branch}
+
 
 def _summarize_pr(pr: dict[str, Any]) -> dict[str, Any]:
     return {

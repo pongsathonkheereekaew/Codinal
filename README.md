@@ -1,4 +1,4 @@
-# harness-flow — Agent Harness
+# Codinal — AI Coding Desktop
 
 > **⚠️ Repo repurposed to Codinal (2026-07-25).** This repo is now the **Codinal** product repo (macOS coding-agent desktop). Harness content still lives here — now under `harness/` — and the `~/.agents/` install contract is **unchanged**. Existing harness users see [`MIGRATING.md`](MIGRATING.md); to stay on the last harness-only release: `git checkout last-harness-only`. Architecture/plan: [`docs/decisions/`](docs/decisions/) + [`docs/plan/`](docs/plan/).
 
