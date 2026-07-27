@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from .base import (
     AssistantTurn,
@@ -76,6 +77,21 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
 
+def _is_loopback_base_url(base_url: str) -> bool:
+    """True if base_url points at localhost / 127.0.0.1 / ::1.
+
+    Used to allow empty API keys for self-hosted OpenAI-compat gateways
+    (OmniRoute, vLLM, LM Studio) that run without authentication on the
+    user's own machine. Remote URLs always require a real key.
+    """
+    try:
+        parsed = urlsplit(base_url)
+    except (TypeError, ValueError):
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
 
@@ -134,9 +150,17 @@ class OpenAIProvider(ProviderClient):
                 self._secrets, self._secret_profile
             )
             if not key:
-                raise RuntimeError(
-                    "No OpenAI API key configured. Add it in Settings."
-                )
+                # Local/self-hosted OpenAI-compatible gateways (OmniRoute,
+                # vLLM, LM Studio) commonly run without authentication on
+                # localhost. The OpenAI SDK rejects api_key=None, so fall back
+                # to a placeholder that the local server ignores. Remote URLs
+                # still require a real key (raise so the user fixes Settings).
+                if self._base_url and _is_loopback_base_url(self._base_url):
+                    key = "local-no-auth-required"
+                else:
+                    raise RuntimeError(
+                        "No OpenAI API key configured. Add it in Settings."
+                    )
             kwargs: dict[str, Any] = {"api_key": key}
             if self._base_url:
                 kwargs["base_url"] = self._base_url

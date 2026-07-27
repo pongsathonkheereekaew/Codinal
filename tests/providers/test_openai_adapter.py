@@ -116,3 +116,37 @@ def test_environment_key_is_ignored_and_never_echoed_in_error(
         "No OpenAI API key configured. Add it in Settings."
     )
     assert marker not in str(caught.value)
+
+
+def test_loopback_base_url_allows_empty_key() -> None:
+    """Self-hosted gateways on localhost (OmniRoute/vLLM/LM Studio) commonly
+    run without auth. An empty key must not raise for loopback base_urls."""
+    provider = OpenAIProvider(
+        client=FakeClient(response(content="hi", finish_reason="stop")),
+        base_url="http://localhost:20128/v1",
+    )
+    # Should NOT raise even though no key is configured anywhere.
+    turn = provider.complete(model="auto", messages=[{"role": "user", "content": "hi"}])
+    assert turn.text == "hi"
+
+
+def test_remote_base_url_still_requires_key() -> None:
+    """Remote base_urls (api.openai.com, api.openrouter.ai, ...) must still
+    require a real key — the localhost exemption does not apply."""
+    provider = OpenAIProvider(
+        client=None,  # forces _ensure_client
+        base_url="https://api.openrouter.ai/api/v1",
+    )
+    import pytest
+    with pytest.raises(RuntimeError, match="No OpenAI API key configured"):
+        provider.complete(model="auto", messages=[{"role": "user", "content": "hi"}])
+
+
+def test_is_loopback_base_url_classifier() -> None:
+    from runtime.providers.openai_provider import _is_loopback_base_url
+    assert _is_loopback_base_url("http://localhost:20128/v1")
+    assert _is_loopback_base_url("http://127.0.0.1:11434/v1")
+    assert _is_loopback_base_url("http://[::1]:8080/v1")
+    assert not _is_loopback_base_url("https://api.openai.com/v1")
+    assert not _is_loopback_base_url("https://api.openrouter.ai/api/v1")
+    assert not _is_loopback_base_url("http://example.com:20128/v1")

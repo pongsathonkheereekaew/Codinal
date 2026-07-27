@@ -55,6 +55,10 @@ def _is_retriable(model: str, exc: Exception) -> bool:
             "504",
             "502",
             "internal server error",
+            # OpenAI-compat aggregator gateways (OmniRoute/OpenRouter) can
+            # return 200 with empty content when an upstream free-tier flaked.
+            # Treat as retriable so we fall over to the next chain entry.
+            "returned an empty response",
         )
     )
 
