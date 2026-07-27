@@ -345,6 +345,37 @@ class GitControl(Protocol):
         staged: bool = False,
         against_base: bool = False,
         path: str | None = None,
+        commit: str | None = None,
+    ) -> dict[str, object]: ...
+
+    def stage(self, session_id: str, path: str = ".") -> dict[str, object]: ...
+
+    def commit(
+        self,
+        session_id: str,
+        message: str,
+    ) -> dict[str, object]: ...
+
+    def log(
+        self,
+        session_id: str,
+        *,
+        limit: int = 50,
+    ) -> dict[str, object]: ...
+
+    def graph(
+        self,
+        session_id: str,
+        *,
+        limit: int = 50,
+    ) -> dict[str, object]: ...
+
+    def push(
+        self,
+        session_id: str,
+        *,
+        remote: str = "origin",
+        set_upstream: bool = False,
     ) -> dict[str, object]: ...
 
     def apply_back(self, session_id: str) -> dict[str, object]: ...
@@ -2026,6 +2057,7 @@ def create_control_plane_app(
         staged: bool = False,
         against_base: bool = False,
         path: str | None = None,
+        commit: str | None = None,
     ) -> dict[str, object]:
         _validate_public_session_id(session_id)
         if services.git is None or services.git.load(session_id) is None:
@@ -2037,12 +2069,129 @@ def create_control_plane_app(
                 staged=staged,
                 against_base=against_base,
                 path=path,
+                commit=commit,
             )
         except GitWorkspaceError:
             raise HTTPException(
                 status_code=409,
                 detail="Git diff unavailable",
             ) from None
+
+    @app.post("/v1/sessions/{session_id}/git/stage")
+    async def git_stage(session_id: str, request: Request) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        path = await _read_git_stage(request)
+        try:
+            return await asyncio.to_thread(
+                services.git.stage,
+                session_id,
+                path,
+            )
+        except GitWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="Git stage unavailable",
+            ) from None
+
+    @app.post("/v1/sessions/{session_id}/git/commit")
+    async def git_commit(session_id: str, request: Request) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        message = await _read_git_commit(request)
+        try:
+            return await asyncio.to_thread(
+                services.git.commit,
+                session_id,
+                message,
+            )
+        except GitWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="Git commit unavailable",
+            ) from None
+
+    @app.get("/v1/sessions/{session_id}/git/log")
+    async def git_log(
+        session_id: str,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        try:
+            return await asyncio.to_thread(
+                services.git.log,
+                session_id,
+                limit=limit,
+            )
+        except GitWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="Git log unavailable",
+            ) from None
+
+    @app.get("/v1/sessions/{session_id}/git/graph")
+    async def git_graph(
+        session_id: str,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        try:
+            return await asyncio.to_thread(
+                services.git.graph,
+                session_id,
+                limit=limit,
+            )
+        except GitWorkspaceError:
+            raise HTTPException(
+                status_code=409,
+                detail="Git graph unavailable",
+            ) from None
+
+    @app.post("/v1/sessions/{session_id}/git/push")
+    async def git_push(session_id: str, request: Request) -> dict[str, object]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        body = await _read_git_push(request)
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: services.git.push(
+                    session_id,
+                    remote=body["remote"],
+                    set_upstream=body["set_upstream"],
+                ),
+            )
+        except SessionBusyError as error:
+            raise HTTPException(
+                status_code=409,
+                detail=str(error),
+            ) from None
+        except GitWorkspaceError as error:
+            raise HTTPException(
+                status_code=409,
+                detail=str(error),
+            ) from None
+        audit = getattr(services, "audit", None)
+        if audit is not None:
+            audit.record(
+                "git",
+                "push",
+                actor="host",
+                subject=str(result.get("branch", "")),
+                payload={
+                    "remote": body["remote"],
+                    "set_upstream": body["set_upstream"],
+                    "ok": bool(result.get("ok")),
+                },
+            )
+        return result
 
     @app.post("/v1/sessions/{session_id}/git/apply")
     async def git_apply(session_id: str) -> JSONResponse:
@@ -3195,6 +3344,74 @@ async def _read_mcp_enable(request: Request) -> dict[str, Any]:
             detail="invalid MCP enable update",
         )
     return body
+
+
+async def _read_git_stage(request: Request) -> str:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid Git stage update",
+        ) from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"path"}
+        or not isinstance(body.get("path"), str)
+        or not 1 <= len(body["path"]) <= 4096
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid Git stage update",
+        )
+    return body["path"]
+
+
+async def _read_git_commit(request: Request) -> str:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid Git commit message",
+        ) from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"message"}
+        or not isinstance(body.get("message"), str)
+        or not body["message"].strip()
+        or len(body["message"].encode("utf-8")) > 10_000
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid Git commit message",
+        )
+    return body["message"]
+
+
+async def _read_git_push(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid Git push request",
+        ) from None
+    remote = body.get("remote") if isinstance(body, dict) else None
+    set_upstream = body.get("set_upstream") if isinstance(body, dict) else None
+    if (
+        not isinstance(body, dict)
+        or not isinstance(remote, str)
+        or not 1 <= len(remote) <= 64
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", remote)
+        or not isinstance(set_upstream, bool)
+        or set(body) - {"remote", "set_upstream"}
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid Git push request",
+        )
+    return {"remote": remote, "set_upstream": set_upstream}
 
 
 async def _read_api_key(request: Request) -> str:

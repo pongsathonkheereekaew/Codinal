@@ -39,6 +39,12 @@ _PROBE_OUTPUT_LIMIT = 1024 * 1024
 _PREIMAGE_UNSET = object()
 _MAX_CHECKPOINT_PATCH_BYTES = 32 * 1024 * 1024
 _MAX_CHECKPOINT_FILE_BYTES = 32 * 1024 * 1024
+_LOG_MAX_LIMIT = 200
+# %x1f (unit separator) delimits fields; %x1e (record separator) delimits rows.
+_LOG_FORMAT = "%H%x1f%P%x1f%an%x1f%ae%x1f%ad%x1f%s%x1e"
+_GRAPH_FORMAT = "%H%x1f%P%x1f%an%x1f%ae%x1f%ad%x1f%s%x1e"
+_REMOTE_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_COMMIT_REF = re.compile(r"^[0-9a-f]{4,64}$")
 _GIT_FD_EXEC = (
     "import os,sys;"
     "fd=int(sys.argv[1]);"
@@ -1276,15 +1282,17 @@ class GitWorktreeService:
         staged: bool = False,
         against_base: bool = False,
         path: Optional[str] = None,
+        commit: Optional[str] = None,
     ) -> dict[str, object]:
         record = self._usable_record(session_id)
         pathspec, error = _pathspec(record.worktree_path, path)
         if error:
             return {"ok": False, "error": error}
-        if staged and against_base:
+        modes = sum(bool(flag) for flag in (staged, against_base, commit is not None))
+        if modes > 1:
             return {
                 "ok": False,
-                "error": "staged and against_base are mutually exclusive",
+                "error": "staged, against_base, and commit are mutually exclusive",
             }
         arguments = [
             "diff",
@@ -1296,6 +1304,10 @@ class GitWorktreeService:
             arguments.append("--cached")
         elif against_base:
             arguments.append(f"{record.base_commit}...HEAD")
+        elif commit is not None:
+            if not _is_valid_commit_ref(commit):
+                return {"ok": False, "error": "invalid commit reference"}
+            arguments.append(f"{commit}^..{commit}")
         if pathspec is not None:
             arguments.extend(["--", pathspec])
         result = self._execute_worktree(record, *arguments)
@@ -1305,6 +1317,7 @@ class GitWorktreeService:
             "ok": True,
             "staged": staged,
             "against_base": against_base,
+            "commit": commit,
             "diff": result.stdout,
             "output_truncated": result.output_truncated,
         }
@@ -1392,6 +1405,110 @@ class GitWorktreeService:
             "ok": True,
             "commit": commit,
             "branch": record.session_branch,
+        }
+
+    def log(
+        self,
+        session_id: str,
+        *,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        """Session-branch commit history from base_commit..HEAD (bounded)."""
+        record = self._usable_record(session_id)
+        bounded = max(1, min(int(limit), _LOG_MAX_LIMIT))
+        result = self._execute_worktree(
+            record,
+            "log",
+            f"-n{bounded}",
+            f"--format={_LOG_FORMAT}",
+            "--date=iso-strict",
+            f"{record.base_commit}..HEAD",
+        )
+        if result.exit_code != 0:
+            return {"ok": False, "error": "git log failed"}
+        commits = _parse_log(result.stdout)
+        return {
+            "ok": True,
+            "branch": record.session_branch,
+            "base_commit": record.base_commit,
+            "head_commit": self._probe(
+                record.worktree_path,
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            ),
+            "commits": commits,
+            "output_truncated": result.output_truncated,
+        }
+
+    def graph(
+        self,
+        session_id: str,
+        *,
+        limit: int = 50,
+    ) -> dict[str, object]:
+        """ASCII branch graph + parsed commits for base_commit..HEAD (bounded)."""
+        record = self._usable_record(session_id)
+        bounded = max(1, min(int(limit), _LOG_MAX_LIMIT))
+        result = self._execute_worktree(
+            record,
+            "log",
+            "-n",
+            str(bounded),
+            "--graph",
+            "--decorate=no",
+            f"--format={_GRAPH_FORMAT}",
+            "--date=iso-strict",
+            f"{record.base_commit}..HEAD",
+        )
+        if result.exit_code != 0:
+            return {"ok": False, "error": "git graph failed"}
+        return {
+            "ok": True,
+            "branch": record.session_branch,
+            "base_commit": record.base_commit,
+            "graph": result.stdout,
+            "commits": _parse_graph_commits(result.stdout),
+            "output_truncated": result.output_truncated,
+        }
+
+    def push(
+        self,
+        session_id: str,
+        *,
+        remote: str = "origin",
+        set_upstream: bool = False,
+    ) -> dict[str, object]:
+        """Push the session branch to a configured remote in source_root.
+
+        Runs against the user's real repository (where remotes are configured),
+        never the isolated worktree. Requires the source branch to be clean.
+        Surfaces failures; never retries silently.
+        """
+        record = self._usable_record(session_id)
+        if not _REMOTE_NAME.fullmatch(remote):
+            return {"ok": False, "error": "invalid remote name"}
+        if not self._is_clean(record.source_root):
+            return {
+                "ok": False,
+                "error": "source branch is not clean",
+            }
+        arguments = ["push"]
+        if set_upstream:
+            arguments.append("--set-upstream")
+        arguments.extend([remote, record.session_branch])
+        result = self._probe_result(record.source_root, *arguments)
+        if result.returncode != 0:
+            return {
+                "ok": False,
+                "error": "git push failed",
+                "stderr": result.stderr,
+            }
+        return {
+            "ok": True,
+            "remote": remote,
+            "branch": record.session_branch,
+            "summary": result.stdout,
         }
 
     def apply_many(
@@ -3297,6 +3414,66 @@ def _pathspec(
         if relative.parts and relative.parts[0] == "..":
             return None, "path escapes worktree"
     return str(relative), ""
+
+
+def _is_valid_commit_ref(value: object) -> bool:
+    return isinstance(value, str) and bool(_COMMIT_REF.fullmatch(value))
+
+
+def _parse_log(raw: str) -> list[dict[str, object]]:
+    commits: list[dict[str, object]] = []
+    for record in raw.split("\x1e"):
+        record = record.strip("\n")
+        if not record:
+            continue
+        parts = record.split("\x1f")
+        if len(parts) < 6:
+            continue
+        sha, parents, author, email, date, subject = parts[:6]
+        commits.append(
+            {
+                "sha": sha,
+                "parents": parents.split() if parents else [],
+                "author": author,
+                "email": email,
+                "date": date,
+                "subject": subject,
+            }
+        )
+    return commits
+
+
+def _parse_graph_commits(raw: str) -> list[dict[str, object]]:
+    """Extract commit metadata from --graph output.
+
+    With --graph, each commit's format line is prefixed by graph decoration
+    (``* ``, ``| ``, etc.) before the first %x1f field. Strip those leading
+    decoration characters from the SHA field.
+    """
+    commits: list[dict[str, object]] = []
+    for record in raw.split("\x1e"):
+        record = record.strip()
+        if not record:
+            continue
+        last_line = record.splitlines()[-1]
+        parts = last_line.split("\x1f")
+        if len(parts) < 6:
+            continue
+        sha = parts[0].lstrip("*|/\\ ")
+        parents, author, email, date, subject = parts[1:6]
+        if not sha:
+            continue
+        commits.append(
+            {
+                "sha": sha,
+                "parents": parents.split() if parents else [],
+                "author": author,
+                "email": email,
+                "date": date,
+                "subject": subject,
+            }
+        )
+    return commits
 
 
 def _run_bounded(

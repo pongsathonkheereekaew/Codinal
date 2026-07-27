@@ -3775,3 +3775,141 @@ def test_mcp_connections_survive_restart_and_reconnect(tmp_path):
     assert "disable" in actions
     assert "recover" in actions
     assert restarted.audit.verify_chain() is True
+
+
+def test_git_ship_loop_stage_commit_log_graph_push(tmp_path):
+    import subprocess
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "feature", str(source)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    for key, value in (
+        ("user.name", "Codinal Test"),
+        ("user.email", "codinal@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(source), "config", key, value],
+            check=True,
+        )
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(source), "add", "tracked.txt"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "-m", "base"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    # Bare remote for push.
+    bare = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(bare)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "remote", "add", "origin", str(bare)],
+        check=True,
+    )
+
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config)
+    record = services.git.prepare("session-ship", source)
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        # Make a change, stage, commit — all through the new routes.
+        (Path(record.worktree_path) / "tracked.txt").write_text(
+            "session edit\n", encoding="utf-8"
+        )
+        staged = client.post(
+            "/v1/sessions/session-ship/git/stage",
+            headers=AUTH,
+            json={"path": "tracked.txt"},
+        )
+        committed = client.post(
+            "/v1/sessions/session-ship/git/commit",
+            headers=AUTH,
+            json={"message": "Ship session change"},
+        )
+        log = client.get(
+            "/v1/sessions/session-ship/git/log",
+            headers=AUTH,
+        )
+        graph = client.get(
+            "/v1/sessions/session-ship/git/graph",
+            headers=AUTH,
+        )
+        per_commit = client.get(
+            "/v1/sessions/session-ship/git/diff",
+            headers=AUTH,
+            params={"commit": committed.json()["commit"]},
+        )
+        pushed = client.post(
+            "/v1/sessions/session-ship/git/push",
+            headers=AUTH,
+            json={"remote": "origin", "set_upstream": False},
+        )
+
+    assert staged.status_code == 200
+    assert committed.status_code == 200
+    assert committed.json()["ok"] is True
+    log_body = log.json()
+    assert log_body["ok"] is True
+    assert [entry["subject"] for entry in log_body["commits"]] == [
+        "Ship session change"
+    ]
+    assert graph.json()["ok"] is True
+    assert "Ship session change" in graph.json()["graph"]
+    assert per_commit.status_code == 200
+    assert "+session edit" in per_commit.json()["diff"]
+
+    assert pushed.status_code == 200
+    assert pushed.json()["ok"] is True
+    # Remote ref advances to the session HEAD.
+    remote_ref = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(bare),
+            "rev-parse",
+            "refs/heads/" + record.session_branch,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert remote_ref.returncode == 0
+    session_head = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(record.worktree_path),
+            "rev-parse",
+            "HEAD",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert remote_ref.stdout.strip() == session_head.stdout.strip()
+
+    # Audit ledger recorded the push.
+    events = services.audit.list(domain="git")
+    assert [event["action"] for event in events] == ["push"]
+    assert events[0]["subject"] == record.session_branch
+    assert services.audit.verify_chain() is True

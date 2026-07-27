@@ -312,6 +312,144 @@ def test_status_diff_stage_and_commit_stay_on_session_branch(
 
 
 @requires_seatbelt
+def test_log_graph_and_per_commit_diff_cover_session_history(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("git-history", repo)
+    (record.worktree_path / "tracked.txt").write_text(
+        "first edit\n", encoding="utf-8"
+    )
+    service.stage("git-history", "tracked.txt")
+    first = service.commit("git-history", "First session commit")
+    (record.worktree_path / "tracked.txt").write_text(
+        "second edit\n", encoding="utf-8"
+    )
+    service.stage("git-history", "tracked.txt")
+    second = service.commit("git-history", "Second session commit")
+
+    log = service.log("git-history")
+    graph = service.graph("git-history")
+    per_commit = service.diff("git-history", commit=first["commit"])
+
+    assert log["ok"] is True
+    assert log["branch"] == record.session_branch
+    subjects = [entry["subject"] for entry in log["commits"]]
+    # newest first
+    assert subjects == ["Second session commit", "First session commit"]
+    assert log["commits"][0]["sha"] == second["commit"]
+    assert log["commits"][0]["parents"]
+    assert log["commits"][0]["author"] == "Codinal Test"
+
+    assert graph["ok"] is True
+    assert "* " in graph["graph"] or "*" in graph["graph"]
+    assert [entry["sha"] for entry in graph["commits"]] == [
+        second["commit"],
+        first["commit"],
+    ]
+
+    assert per_commit["ok"] is True
+    assert "+first edit" in per_commit["diff"]
+    assert "second edit" not in per_commit["diff"]
+
+
+@requires_seatbelt
+def test_log_respects_limit_bound(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("git-limit", repo)
+    for index in range(5):
+        (record.worktree_path / f"file{index}.txt").write_text(
+            f"{index}\n", encoding="utf-8"
+        )
+        service.stage("git-limit", f"file{index}.txt")
+        service.commit("git-limit", f"commit {index}")
+
+    log = service.log("git-limit", limit=2)
+    assert log["ok"] is True
+    assert len(log["commits"]) == 2
+    assert log["commits"][0]["subject"] == "commit 4"
+
+
+@requires_seatbelt
+def test_diff_commit_mode_is_mutually_exclusive_with_other_modes(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("git-mode", repo)
+    (record.worktree_path / "tracked.txt").write_text(
+        "edit\n", encoding="utf-8"
+    )
+    service.stage("git-mode", "tracked.txt")
+    service.commit("git-mode", "one")
+
+    both = service.diff(
+        "git-mode",
+        against_base=True,
+        commit="abc1234",
+    )
+    assert both["ok"] is False
+    assert "mutually exclusive" in both["error"]
+    invalid = service.diff("git-mode", commit="not-a-sha!")
+    assert invalid["ok"] is False
+
+
+@requires_seatbelt
+def test_push_advances_remote_ref_and_rejects_missing_remote(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path)
+    bare = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(bare)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    git(repo, "remote", "add", "origin", str(bare))
+
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("git-push", repo)
+    (record.worktree_path / "tracked.txt").write_text(
+        "pushed\n", encoding="utf-8"
+    )
+    service.stage("git-push", "tracked.txt")
+    service.commit("git-push", "Commit to push")
+
+    pushed = service.push("git-push", remote="origin")
+    missing = service.push("git-push", remote="no-such-remote")
+    bad_name = service.push("git-push", remote="bad remote!")
+
+    assert pushed["ok"] is True
+    assert pushed["remote"] == "origin"
+    assert pushed["branch"] == record.session_branch
+    remote_ref = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(bare),
+            "rev-parse",
+            "refs/heads/" + record.session_branch,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert remote_ref.returncode == 0
+    assert remote_ref.stdout.strip() == pushed["branch"] or True
+    # The remote ref exists and matches the session HEAD.
+    session_head = git(record.worktree_path, "rev-parse", "HEAD")
+    assert remote_ref.stdout.strip() == session_head
+
+    assert missing["ok"] is False
+    assert missing["error"] == "git push failed"
+    assert bad_name["ok"] is False
+    assert bad_name["error"] == "invalid remote name"
+
+
+@requires_seatbelt
 def test_turn_checkpoint_restore_removes_only_agent_delta(
     tmp_path: Path,
 ) -> None:
