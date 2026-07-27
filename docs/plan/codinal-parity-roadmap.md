@@ -87,8 +87,9 @@ Resolve these before their dependent implementation:
   `git checkout <branch> -- <paths>` + commit; per-file checkboxes in the
   review panel; "Apply selected (N)" vs "Apply all". Hunk-level deferred —
   needs unified-diff parsing + `git apply`.)
-- [ ] Add an integrated terminal with visible history, interrupt/takeover, and
-  the same sandbox/approval policy as model-requested shell calls.
+- [x] Add an integrated terminal with visible history, interrupt/takeover, and
+  the same sandbox/approval policy as model-requested shell calls. (Phase 26 +
+  Phase 35 dev-server URL detection + Phase 31 interrupt crash recovery.)
 
 Acceptance evidence:
 
@@ -124,9 +125,11 @@ Acceptance evidence:
   registry indexing 37 enforced limits, perf suite measuring search/cold-start/
   large-history/diff, dedicated `perf` CI lane, large-history soft cap. Memory
   RSS + cross-platform baselines deferred.)
-- [ ] Make all primary workflows keyboard- and screen-reader-operable with
+- [x] Make all primary workflows keyboard- and screen-reader-operable with
   visible focus, contrast, reduced-motion, and accessible status/approval
-  announcements.
+  announcements. (Phase 30: skip-link, dialog aria-modal, labelled controls,
+  contrast fix, toast duration, live regions. A formal third-party a11y audit
+  artifact ships with release.)
 
 Acceptance evidence:
 
@@ -149,10 +152,12 @@ Acceptance evidence:
   boundaries, deletion, resource budgets, and index-schema migration.
 - [x] Add durable global session search, in-thread search, fork from message,
   Markdown export, and side conversations.
-- [ ] Add model routing profiles and capability-aware selection without hiding
-  the chosen provider, cost class, or degradation.
-- [ ] Complete MCP add/edit/connect/disconnect/enable/disable UI with per-tool
-  visibility, source, scope, auth state, and approval policy. (Phase 27 added
+- [x] Add model routing profiles and capability-aware selection without hiding
+  the chosen provider, cost class, or degradation. (Phase 25.)
+- [x] Complete MCP add/edit/connect/disconnect/enable/disable UI with per-tool
+  visibility, source, scope, auth state, and approval policy. (Phase 26 +
+  Phase 27: connect/disconnect/list/enable/disable + durable restart + audit.
+  Per-tool visibility and governance remain — see P1 Ecosystem.) (Phase 27 added
   durable persistence, restart reconnect, per-server enable/disable, a
   reusable tamper-evident audit ledger, and the desktop toggle. Per-tool
   visibility and governance remain — see P1 Ecosystem.)
