@@ -10,7 +10,7 @@ if [ -x "$ROOT/.venv/bin/python" ]; then
 fi
 cd "$ROOT"
 
-echo "=== harness-flow verify ==="
+echo "=== Codinal verify ==="
 
 echo "== layout =="
 test -f "$HARNESS/AGENTS.md"
@@ -134,5 +134,5 @@ else
 fi
 
 echo ""
-echo "harness-flow verify: PASS"
+echo "Codinal verify: PASS"
 echo "On a machine after install, also run: harness doctor"

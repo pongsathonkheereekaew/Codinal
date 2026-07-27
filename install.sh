@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$ROOT/harness"
 DEST="${AGENTS_HOME:-$HOME/.agents}"
 
-echo "=== harness-flow (Codinal) → $DEST ==="
+echo "=== Codinal → $DEST ==="
 mkdir -p "$DEST"/{skills,standards,commands,scripts,memory}
 mkdir -p "$HOME/.claude" "$HOME/.cursor" "$HOME/.local/bin"
 
@@ -144,7 +144,7 @@ ensure_harness_path() {
   fi
   {
     echo ""
-    echo "# harness-flow — Agent Harness CLI"
+    echo "# Codinal — AI Coding Desktop"
     echo "$line"
   } >>"$rc"
   echo "PATH: appended ~/.local/bin to $rc (new shells)"
