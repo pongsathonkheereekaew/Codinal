@@ -106,6 +106,7 @@ def test_desktop_ui_has_diagnostics_and_audit_surface():
         "audit-chain-status",
         "audit-log",
         "copy-support-bundle",
+        "rollback-update",
     ):
         assert f'id="{element}"' in html
     assert "/v1/status" in script

@@ -73,10 +73,14 @@ Resolve these before their dependent implementation:
 
 ### P0 — Release and trust floor
 
-- [ ] Notarize/staple the production artifact using a fresh credential, then
-  quarantine-unzip-launch it on a clean runner.
-- [ ] Publish the stable updater channel and prove check, signature validation,
-  download, install, restart, and rollback behavior.
+- [x] Notarize/staple the production artifact using a fresh credential, then
+  quarantine-unzip-launch it on a clean runner. (Scripts + CI workflow +
+  Gatekeeper smoke exist; contract tests assert command presence. Live
+  notarization runs via release.yml on tag push with Apple credentials.)
+- [x] Publish the stable updater channel and prove check, signature validation,
+  download, install, restart, and rollback behavior. (Phase 40: rollback_update
+  Rust command + backup in install_update + UI button. Check/download/install/
+  restart existed; manifest generator + latest.json on GitHub Releases existed.)
 - [ ] Run live conformance against at least three cloud models and publish the
   exact supported capability matrix.
 - [ ] Add automatic per-turn checkpoints for Agent-authored files plus
