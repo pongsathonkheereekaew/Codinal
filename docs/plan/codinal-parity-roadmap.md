@@ -89,6 +89,15 @@ Resolve these before their dependent implementation:
   `scripts/run_conformance_matrix.py`. The harness is ready to run the moment
   provider keys are entered via Settings; it records live PASS/FAIL per
   capability and exits non-zero on regression.)
+- [x] Native self-hosted gateway provider (OmniRoute). (Phase 45: registered
+  OmniRoute as a sixth cloud backend — an OpenAI-compatible self-hosted
+  gateway with 290+ upstream providers and 19 routing strategies. Widened the
+  secret profile schema from `{api_key}` to `{api_key, base_url?}` so the
+  gateway's user-configurable endpoint (default `http://localhost:20128/v1`)
+  is settable via the native Settings UI alongside the key. The same schema
+  slot future-proofs vLLM / LM Studio backends. Configurable base_url lives
+  in macOS Keychain under `<provider>:base_url`; router reads it via
+  `secrets.get_base_url("omniroute")` with the local fallback.)
 - [x] Add automatic per-turn checkpoints for Agent-authored files plus
   conversation position; restore code, conversation, or both without reverting
   manual edits. (Phase 41: mechanism already shipped — `attributed=True`

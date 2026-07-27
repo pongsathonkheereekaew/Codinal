@@ -6,15 +6,36 @@ use zeroize::Zeroize;
 
 use crate::host::validate_session_token;
 
-pub const SUPPORTED_PROVIDERS: [&str; 6] =
-    ["anthropic", "gemini", "openai", "zai", "deepseek", "github"];
+pub const SUPPORTED_PROVIDERS: [&str; 7] = [
+    "anthropic",
+    "gemini",
+    "openai",
+    "zai",
+    "deepseek",
+    "omniroute",
+    "github",
+];
 pub const MAX_API_KEY_BYTES: usize = 16 * 1024;
+pub const MAX_BASE_URL_BYTES: usize = 512;
 const KEYCHAIN_SERVICE: &str = "dev.codinal.desktop.provider-secrets";
+
+/// Providers that may carry a user-configurable self-hosted base_url next to
+/// the api_key (OmniRoute now; vLLM / LM Studio later).
+pub const PROVIDERS_WITH_BASE_URL: &[&str] = &["omniroute"];
 
 pub trait SecretVault: Send + Sync {
     fn get(&self, provider: &str) -> io::Result<Option<String>>;
     fn set(&self, provider: &str, value: &str) -> io::Result<()>;
     fn delete(&self, provider: &str) -> io::Result<bool>;
+    /// Optional per-provider base_url for self-hosted OpenAI-compat gateways.
+    /// Default returns None so existing/test vaults stay valid.
+    fn get_base_url(&self, _provider: &str) -> io::Result<Option<String>> {
+        Ok(None)
+    }
+    /// Persist (or clear with None) the optional per-provider base_url.
+    fn set_base_url(&self, _provider: &str, _value: Option<&str>) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -23,6 +44,8 @@ pub struct PlatformSecretVault;
 #[derive(Serialize)]
 struct ProviderSecret {
     api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -62,7 +85,15 @@ pub fn encode_secret_bootstrap(vault: &impl SecretVault, sync_token: &str) -> io
             }
         };
         if let Some(api_key) = value {
-            profiles.insert(format!("provider:{provider}"), ProviderSecret { api_key });
+            let base_url = if PROVIDERS_WITH_BASE_URL.contains(&provider) {
+                vault.get_base_url(provider).unwrap_or(None)
+            } else {
+                None
+            };
+            profiles.insert(
+                format!("provider:{provider}"),
+                ProviderSecret { api_key, base_url },
+            );
         }
     }
     let mut bootstrap = SecretBootstrap {
@@ -101,6 +132,7 @@ pub fn update_provider_secret(
     vault: &impl SecretVault,
     provider: &str,
     api_key: Option<&str>,
+    base_url: Option<&str>,
     sync_runtime: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<bool> {
     let provider = validate_provider(provider)?;
@@ -122,6 +154,28 @@ pub fn update_provider_secret(
             "api key is too large",
         ));
     }
+    let accepts_base_url = PROVIDERS_WITH_BASE_URL.contains(&provider);
+    if base_url.is_some() && !accepts_base_url {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "provider does not accept a base_url",
+        ));
+    }
+    if base_url.is_some_and(|value| value.trim().len() > MAX_BASE_URL_BYTES) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "base_url is too large",
+        ));
+    }
+    let normalized_base_url = base_url.map(|value| value.trim().to_owned());
+    if let Some(url) = normalized_base_url.as_deref() {
+        if !url.is_empty() && !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "base_url must be an http(s) URL",
+            ));
+        }
+    }
 
     let mut previous = vault.get(provider)?;
     let mutation = match api_key {
@@ -133,6 +187,30 @@ pub fn update_provider_secret(
             value.zeroize();
         }
         return Err(error);
+    }
+
+    if accepts_base_url {
+        let base_result = if normalized_base_url
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        {
+            vault.set_base_url(provider, normalized_base_url.as_deref())
+        } else {
+            vault.set_base_url(provider, None)
+        };
+        if let Err(error) = base_result {
+            let rollback = match previous.as_deref() {
+                Some(value) => vault.set(provider, value),
+                None => vault.delete(provider).map(|_| ()),
+            };
+            if let Some(value) = previous.as_mut() {
+                value.zeroize();
+            }
+            if rollback.is_err() {
+                return Err(io::Error::other("secret update failed and rollback failed"));
+            }
+            return Err(error);
+        }
     }
 
     if let Err(sync_error) = sync_runtime() {
@@ -217,6 +295,57 @@ impl SecretVault for PlatformSecretVault {
             Ok(()) => Ok(true),
             Err(error) if error.code() == errSecItemNotFound => Ok(false),
             Err(error) => Err(io::Error::other(format!("keychain delete failed: {error}"))),
+        }
+    }
+
+    fn get_base_url(&self, provider: &str) -> io::Result<Option<String>> {
+        use security_framework::passwords::get_generic_password;
+        use security_framework_sys::base::errSecItemNotFound;
+
+        validate_provider(provider)?;
+        let account = format!("{provider}:base_url");
+        match get_generic_password(KEYCHAIN_SERVICE, &account) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => {
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(trimmed.to_owned()))
+                    }
+                }
+                Err(_) => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid keychain value",
+                )),
+            },
+            Err(error) if error.code() == errSecItemNotFound => Ok(None),
+            Err(error) => Err(io::Error::other(format!("keychain read failed: {error}"))),
+        }
+    }
+
+    fn set_base_url(&self, provider: &str, value: Option<&str>) -> io::Result<()> {
+        use security_framework::passwords::{delete_generic_password, set_generic_password};
+        use security_framework_sys::base::errSecItemNotFound;
+
+        validate_provider(provider)?;
+        let account = format!("{provider}:base_url");
+        match value.map(str::trim) {
+            Some(text) if !text.is_empty() => {
+                if text.len() > MAX_BASE_URL_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "base_url is too large",
+                    ));
+                }
+                set_generic_password(KEYCHAIN_SERVICE, &account, text.as_bytes())
+                    .map_err(|error| io::Error::other(format!("keychain write failed: {error}")))
+            }
+            _ => match delete_generic_password(KEYCHAIN_SERVICE, &account) {
+                Ok(()) => Ok(()),
+                Err(error) if error.code() == errSecItemNotFound => Ok(()),
+                Err(error) => Err(io::Error::other(format!("keychain delete failed: {error}"))),
+            },
         }
     }
 }

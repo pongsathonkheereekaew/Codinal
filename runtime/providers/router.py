@@ -12,7 +12,7 @@ from .capabilities import capabilities_for
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
 
-_CLOUD_PROVIDERS = {"openai", "anthropic", "gemini", "zai", "deepseek"}
+_CLOUD_PROVIDERS = {"openai", "anthropic", "gemini", "zai", "deepseek", "omniroute"}
 _PROVIDERS = _CLOUD_PROVIDERS | {"ollama"}
 
 # OpenAI-compatible cloud backends: provider name → (base_url, secret_profile).
@@ -21,6 +21,11 @@ _OPENAI_COMPATIBLE = {
     "zai": ("https://api.z.ai/api/paas/v4/", "zai"),
     "deepseek": ("https://api.deepseek.com", "deepseek"),
 }
+
+# OmniRoute is self-hosted (OpenAI-compatible gateway); its base_url is
+# user-configurable via Settings rather than hardcoded. Default assumes a
+# local gateway on the documented port.
+_OMNIROUTE_DEFAULT_URL = "http://localhost:20128/v1"
 
 
 class ProviderRouter(ProviderClient):
@@ -112,6 +117,16 @@ class ProviderRouter(ProviderClient):
                         secret_profile=secret_profile,
                         secrets=self._secrets,
                     )
+                elif provider == "omniroute":
+                    # Self-hosted OpenAI-compatible gateway: base_url comes from
+                    # the secret store (user-configurable in Settings), falling
+                    # back to the local default if unset.
+                    base_url = self._omniroute_base_url()
+                    client = OpenAIProvider(
+                        base_url=base_url,
+                        secret_profile="omniroute",
+                        secrets=self._secrets,
+                    )
                 else:
                     client = OpenAIProvider(
                         api_key="ollama-local",
@@ -160,3 +175,12 @@ class ProviderRouter(ProviderClient):
             or parsed.fragment
         ):
             raise ValueError("invalid Ollama URL")
+
+    def _omniroute_base_url(self) -> str:
+        """Resolve OmniRoute's base_url from the secret store or fall back."""
+        getter = getattr(self._secrets, "get_base_url", None)
+        if callable(getter):
+            value = getter("omniroute")
+            if isinstance(value, str) and value:
+                return value
+        return _OMNIROUTE_DEFAULT_URL

@@ -23,6 +23,7 @@ EMPTY_SECRET_STATUS = [
     {"provider": "openai", "configured": False},
     {"provider": "zai", "configured": False},
     {"provider": "deepseek", "configured": False},
+    {"provider": "omniroute", "configured": False},
     {"provider": "github", "configured": False},
 ]
 
@@ -121,6 +122,7 @@ def test_provider_secret_route_updates_memory_without_echoing_value(
         {"provider": "openai", "configured": True},
         {"provider": "zai", "configured": False},
         {"provider": "deepseek", "configured": False},
+        {"provider": "omniroute", "configured": False},
         {"provider": "github", "configured": False},
     ]
 

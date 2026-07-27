@@ -25,6 +25,7 @@ def test_provider_secret_service_never_returns_values_in_status() -> None:
         {"provider": "openai", "configured": True},
         {"provider": "zai", "configured": False},
         {"provider": "deepseek", "configured": False},
+        {"provider": "omniroute", "configured": False},
         {"provider": "github", "configured": False},
     ]
     assert "sk-test-do-not-leak" not in repr(service.status())
@@ -148,3 +149,58 @@ def test_load_secret_bootstrap_rejects_oversized_payload() -> None:
 
     with pytest.raises(ValueError, match="too large"):
         load_secret_bootstrap(io.StringIO(payload))
+
+
+def test_omniroute_base_url_round_trips_through_set_and_get() -> None:
+    service = ProviderSecretService()
+    service.set_api_key(
+        "omniroute",
+        "omni-key",
+        base_url="http://gateway.local:20128/v1",
+    )
+
+    assert service.get_base_url("omniroute") == "http://gateway.local:20128/v1"
+    assert service.get("provider:omniroute") == {
+        "api_key": "omni-key",
+        "base_url": "http://gateway.local:20128/v1",
+    }
+
+
+def test_omniroute_base_url_returns_none_when_unset() -> None:
+    service = ProviderSecretService()
+    service.set_api_key("omniroute", "omni-key")
+
+    assert service.get_base_url("omniroute") is None
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "ftp://gateway/v1",
+        "not-a-url",
+        "gateway.local",
+        "//missing-scheme",
+    ],
+)
+def test_omniroute_rejects_invalid_base_url(base_url: str) -> None:
+    service = ProviderSecretService()
+    with pytest.raises(ValueError, match="base_url"):
+        service.set_api_key("omniroute", "omni-key", base_url=base_url)
+
+
+def test_non_opt_in_provider_rejects_base_url() -> None:
+    service = ProviderSecretService()
+    with pytest.raises(ValueError, match="does not accept a base_url"):
+        service.set_api_key("openai", "k", base_url="http://x/v1")
+
+
+def test_omniroute_base_url_round_trips_through_bootstrap() -> None:
+    payload = (
+        '{"sync_token":"' + SYNC_TOKEN + '",'
+        '"profiles":{"provider:omniroute":'
+        '{"api_key":"omni-key","base_url":"http://gateway:20128/v1"}}}'
+    )
+    service = load_secret_bootstrap(io.StringIO(payload))
+
+    assert service.get_base_url("omniroute") == "http://gateway:20128/v1"
+    assert service.get("provider:omniroute")["api_key"] == "omni-key"
