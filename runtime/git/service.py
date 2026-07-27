@@ -32,6 +32,7 @@ from .models import (
     GitWorkspaceRecord,
     WorktreeState,
 )
+from .diff_parser import parse_diff, reconstruct_patch
 from .store import GitWorktreeStore
 
 _PROBE_TIMEOUT_SECONDS = 10
@@ -1960,6 +1961,244 @@ class GitWorktreeService:
             "ok": True,
             "strategy": "selective",
             "files": list(paths),
+            "commit": new_head,
+        }
+
+    def apply_selected_hunks(
+        self,
+        session_id: str,
+        hunks: list[dict[str, object]],
+    ) -> dict[str, object]:
+        """Apply a subset of the session branch's hunks to source.
+
+        Like ``apply_selected`` but at hunk granularity. Stages only the
+        selected hunks via ``git apply --cached`` (real 3-way — refuses on
+        context mismatch rather than last-write-wins), then commits. On any
+        failure, source is restored to its pre-apply HEAD.
+        """
+        record = self._usable_record(session_id)
+        if not isinstance(hunks, list) or not hunks:
+            return {"ok": False, "error": "no hunks selected"}
+        if len(hunks) > 1000:
+            return {"ok": False, "error": "too many hunks selected"}
+        # Same precondition checks as apply_selected (file-level).
+        if not self._is_clean(record.worktree_path):
+            raise GitWorkspaceError(
+                "session worktree must be clean before apply"
+            )
+        if self._source_branch(record.source_root) != record.source_branch:
+            raise GitWorkspaceError("source branch changed since session start")
+        if not self._is_clean(record.source_root):
+            raise GitWorkspaceError(
+                "source worktree must be clean before apply"
+            )
+
+        # Validate the selection shape and that each (path, hunk_index)
+        # exists in the session diff (session branch changes vs base).
+        raw_diff = self._execute_worktree(
+            record,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--unified=0",
+            f"{record.base_commit}...HEAD",
+            "--",
+        )
+        if raw_diff.exit_code != 0:
+            raise GitWorkspaceError("unable to enumerate session hunks")
+        files = parse_diff(raw_diff.stdout)
+        by_path = {f.path: f for f in files}
+        selected: list[tuple[str, int]] = []
+        known_paths = {entry["path"] for entry in self.changed_files(
+            session_id
+        ).get("files", [])}
+        for entry in hunks:
+            if not isinstance(entry, dict):
+                return {"ok": False, "error": "invalid hunk selection"}
+            path = entry.get("path")
+            hunk_index = entry.get("hunk_index")
+            if (
+                not isinstance(path, str)
+                or not isinstance(hunk_index, int)
+                or isinstance(hunk_index, bool)
+            ):
+                return {"ok": False, "error": "invalid hunk selection"}
+            if path not in known_paths:
+                return {"ok": False, "error": f"unknown path: {path}"}
+            file_diff = by_path.get(path)
+            if (
+                file_diff is None
+                or not 0 <= hunk_index < len(file_diff.hunks)
+            ):
+                return {
+                    "ok": False,
+                    "error": f"unknown hunk: {path}:{hunk_index}",
+                }
+            selected.append((path, hunk_index))
+        if not selected:
+            return {"ok": False, "error": "no hunks selected"}
+
+        try:
+            patch_text = reconstruct_patch(files, selected)
+        except ValueError as error:
+            return {"ok": False, "error": str(error)}
+
+        # Distinct paths the selected hunks touch (for staging + rollback).
+        selected_paths: list[str] = []
+        seen: set[str] = set()
+        for path, _index in selected:
+            if path not in seen:
+                seen.add(path)
+                selected_paths.append(path)
+
+        source_head = self._probe(
+            record.source_root,
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        )
+
+        def _restore() -> None:
+            self._probe_result(
+                record.source_root, "checkout", "--", "."
+            )
+            self._probe_result(
+                record.source_root, "reset", "--hard", source_head
+            )
+
+        # Write the reconstructed patch to a temp file and apply it to BOTH
+        # the worktree and the index (no --cached: we want the source
+        # worktree to reflect the applied hunks, matching file-level
+        # ``git checkout`` semantics).
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix="codinal-hunk-",
+            suffix=".patch",
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(patch_text)
+            checked = self._probe_result(
+                record.source_root,
+                "apply",
+                "--check",
+                "--unidiff-zero",
+                "--whitespace=nowarn",
+                temporary_name,
+            )
+            if checked.returncode != 0:
+                try:
+                    _restore()
+                except Exception:
+                    pass
+                self.store.save(
+                    replace(record, state=WorktreeState.CONFLICT)
+                )
+                return {
+                    "ok": False,
+                    "conflict": True,
+                    "error": (
+                        "hunk apply conflicts with current edits; "
+                        "source restored"
+                    ),
+                }
+            applied = self._probe_result(
+                record.source_root,
+                "apply",
+                "--unidiff-zero",
+                "--whitespace=nowarn",
+                temporary_name,
+            )
+            if applied.returncode != 0:
+                try:
+                    _restore()
+                except Exception:
+                    pass
+                self.store.save(
+                    replace(record, state=WorktreeState.CONFLICT)
+                )
+                return {
+                    "ok": False,
+                    "conflict": True,
+                    "error": "hunk apply failed; source restored",
+                }
+        finally:
+            try:
+                os.unlink(temporary_name)
+            except OSError:
+                pass
+
+        # Stage whatever the patch touched and verify something actually
+        # changed before committing.
+        self._probe_result(
+            record.source_root, "add", "-A", "--", *selected_paths
+        )
+        staged_check = self._probe_result(
+            record.source_root,
+            "diff",
+            "--cached",
+            "--quiet",
+            "--exit-code",
+        )
+        if staged_check.returncode == 0:
+            _restore()
+            return {"ok": False, "error": "no selected hunks changed"}
+        if staged_check.returncode != 1:
+            _restore()
+            raise GitWorkspaceError("unable to inspect staged changes")
+
+        name = self._config_value(record.source_root, "user.name") or "Codinal"
+        email = (
+            self._config_value(record.source_root, "user.email")
+            or "codinal@localhost"
+        )
+        commit = self._probe_result(
+            record.source_root,
+            "-c",
+            f"user.name={name}",
+            "-c",
+            f"user.email={email}",
+            "commit",
+            "--no-verify",
+            "--no-gpg-sign",
+            "-m",
+            f"Apply selected hunks from {record.session_branch}",
+        )
+        if commit.returncode != 0:
+            try:
+                _restore()
+            except Exception:
+                pass
+            restored_head = self._probe(
+                record.source_root,
+                "rev-parse",
+                "--verify",
+                "HEAD^{commit}",
+            )
+            if restored_head != source_head or not self._is_clean(
+                record.source_root
+            ):
+                raise GitWorkspaceError("apply rollback failed")
+            self.store.save(replace(record, state=WorktreeState.CONFLICT))
+            return {
+                "ok": False,
+                "conflict": True,
+                "error": "selective hunk commit failed; source restored",
+            }
+        new_head = self._probe(
+            record.source_root,
+            "rev-parse",
+            "--verify",
+            "HEAD^{commit}",
+        )
+        self.store.save(replace(record, state=WorktreeState.APPLIED))
+        return {
+            "ok": True,
+            "strategy": "selective-hunks",
+            "hunks": [
+                {"path": path, "hunk_index": idx}
+                for path, idx in selected
+            ],
             "commit": new_head,
         }
 

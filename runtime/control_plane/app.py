@@ -2439,7 +2439,11 @@ def create_control_plane_app(
         def _apply() -> dict[str, object]:
             if selection is None:
                 return services.git.apply_back(session_id)
-            return services.git.apply_selected(session_id, selection)
+            if selection["kind"] == "hunks":
+                return services.git.apply_selected_hunks(
+                    session_id, selection["hunks"]
+                )
+            return services.git.apply_selected(session_id, selection["paths"])
 
         try:
             result = await services.turns.mutate_when_idle(session_id, _apply)
@@ -3909,11 +3913,17 @@ async def _read_git_commit(request: Request) -> str:
     return body["message"]
 
 
-async def _read_apply_selection(request: Request) -> list[str] | None:
-    """Read the optional {paths: [...]} body for selective apply.
+async def _read_apply_selection(request: Request) -> dict[str, Any] | None:
+    """Read the optional selective-apply body.
 
-    Returns the validated path list, or None when the body is absent/empty
-    (meaning "apply all" — the legacy whole-branch behavior).
+    Accepts either:
+      - ``{"paths": [...]}`` — file-level selection (Phase 33).
+      - ``{"hunks": [{"path": ..., "hunk_index": ...}, ...]}`` — hunk-level
+        selection (Phase 43).
+
+    Returns ``{"kind": "paths", "paths": [...]}``,
+    ``{"kind": "hunks", "hunks": [...]}``, or ``None`` when the body is
+    absent/empty (meaning "apply all" — the legacy whole-branch behavior).
     """
     try:
         body = await request.json()
@@ -3922,21 +3932,52 @@ async def _read_apply_selection(request: Request) -> list[str] | None:
         return None
     if body is None or body == {}:
         return None
-    if (
-        not isinstance(body, dict)
-        or set(body) != {"paths"}
-        or not isinstance(body.get("paths"), list)
-        or not all(
-            isinstance(p, str) and 1 <= len(p) <= 4096 and "\x00" not in p
-            for p in body["paths"]
-        )
-        or not 1 <= len(body["paths"]) <= 1000
-    ):
+    if not isinstance(body, dict) or len(body) != 1:
         raise HTTPException(
             status_code=400,
             detail="invalid apply selection",
         )
-    return list(body["paths"])
+    if "paths" in body:
+        paths = body["paths"]
+        if (
+            not isinstance(paths, list)
+            or not all(
+                isinstance(p, str) and 1 <= len(p) <= 4096 and "\x00" not in p
+                for p in paths
+            )
+            or not 1 <= len(paths) <= 1000
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid apply selection",
+            )
+        return {"kind": "paths", "paths": list(paths)}
+    if "hunks" in body:
+        hunks = body["hunks"]
+        if (
+            not isinstance(hunks, list)
+            or not 1 <= len(hunks) <= 1000
+            or not all(
+                isinstance(h, dict)
+                and set(h) == {"path", "hunk_index"}
+                and isinstance(h.get("path"), str)
+                and 1 <= len(h["path"]) <= 4096
+                and "\x00" not in h["path"]
+                and isinstance(h.get("hunk_index"), int)
+                and not isinstance(h.get("hunk_index"), bool)
+                and 0 <= h["hunk_index"] < 10000
+                for h in hunks
+            )
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid apply selection",
+            )
+        return {"kind": "hunks", "hunks": list(hunks)}
+    raise HTTPException(
+        status_code=400,
+        detail="invalid apply selection",
+    )
 
 
 async def _read_preview_evidence(request: Request) -> dict[str, Any]:

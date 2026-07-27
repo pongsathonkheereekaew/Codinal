@@ -40,6 +40,7 @@ const state = {
   settings: null,
   diff: "",
   selectedFiles: new Set(),
+  selectedHunks: new Set(),
   previewUrl: "",
   devserverUrls: [],
   annotating: false,
@@ -1759,6 +1760,7 @@ function switchWorkspace(workspace) {
   state.activities.clear();
   state.diff = "";
   state.selectedFiles.clear();
+  state.selectedHunks.clear();
   state.checkpoints = [];
   state.workers = [];
   state.workerGeneration += 1;
@@ -3806,13 +3808,54 @@ function renderDiff() {
       node("span", "diff-file-path", block.path)
     );
     wrap.append(header);
+    // Split the file's lines into per-hunk groups at ``@@`` headers so each
+    // hunk gets its own checkbox (Phase 43 hunk-level review). Lines before
+    // the first ``@@`` (index/---/+++) attach to the file header.
+    let hunkIndex = -1;
+    let hunkWrap = null;
     for (const line of block.lines) {
+      if (line.startsWith("@@")) {
+        hunkIndex += 1;
+        hunkWrap = node("div", "diff-hunk-block");
+        const hunkRow = node("div", "diff-hunk-header");
+        const hunkCheckbox = document.createElement("input");
+        hunkCheckbox.type = "checkbox";
+        hunkCheckbox.className = "diff-hunk-select";
+        const hunkKey = `${block.path}::${hunkIndex}`;
+        hunkCheckbox.dataset.path = block.path;
+        hunkCheckbox.dataset.hunkIndex = String(hunkIndex);
+        hunkCheckbox.checked = state.selectedHunks.has(hunkKey);
+        hunkCheckbox.setAttribute(
+          "aria-label",
+          `Select hunk ${hunkIndex + 1} of ${block.path} for apply`
+        );
+        hunkCheckbox.addEventListener("change", () => {
+          if (hunkCheckbox.checked) {
+            state.selectedHunks.add(hunkKey);
+          } else {
+            state.selectedHunks.delete(hunkKey);
+          }
+          updateApplyButton();
+        });
+        hunkRow.append(
+          hunkCheckbox,
+          node("span", "diff-line header", line)
+        );
+        hunkWrap.append(hunkRow);
+        wrap.append(hunkWrap);
+        continue;
+      }
       let kind = "";
       if (line.startsWith("diff --git ") || line.startsWith("@@"))
         kind = "header";
       else if (line.startsWith("+") && !line.startsWith("+++")) kind = "add";
       else if (line.startsWith("-") && !line.startsWith("---")) kind = "delete";
-      wrap.append(node("span", `diff-line ${kind}`.trim(), line));
+      const lineSpan = node("span", `diff-line ${kind}`.trim(), line);
+      if (hunkWrap) {
+        hunkWrap.append(lineSpan);
+      } else {
+        wrap.append(lineSpan);
+      }
     }
     el["diff-view"].append(wrap);
   }
@@ -3820,9 +3863,13 @@ function renderDiff() {
 }
 
 function updateApplyButton() {
-  const selected = state.selectedFiles.size;
-  if (selected > 0) {
-    el["apply-changes"].textContent = `Apply selected (${selected})`;
+  const selectedHunks = state.selectedHunks.size;
+  const selectedFiles = state.selectedFiles.size;
+  if (selectedHunks > 0) {
+    el["apply-changes"].textContent = `Apply selected (${selectedHunks} hunks)`;
+    el["apply-changes"].disabled = !state.sessionId;
+  } else if (selectedFiles > 0) {
+    el["apply-changes"].textContent = `Apply selected (${selectedFiles})`;
     el["apply-changes"].disabled = !state.sessionId;
   } else {
     el["apply-changes"].textContent = "Apply to workspace";
@@ -3843,22 +3890,30 @@ function closeReview() {
 async function applyChanges() {
   if (!state.sessionId || !state.diff) return;
   el["apply-changes"].disabled = true;
-  const paths = state.selectedFiles.size
-    ? { paths: Array.from(state.selectedFiles) }
-    : {};
+  let body;
+  let summary;
+  if (state.selectedHunks.size) {
+    const hunks = Array.from(state.selectedHunks).map((key) => {
+      const [path, index] = key.split("::");
+      return { path, hunk_index: Number(index) };
+    });
+    body = JSON.stringify({ hunks });
+    summary = `Applied ${hunks.length} selected hunk(s)`;
+  } else if (state.selectedFiles.size) {
+    body = JSON.stringify({ paths: Array.from(state.selectedFiles) });
+    summary = `Applied ${state.selectedFiles.size} selected file(s)`;
+  } else {
+    body = undefined;
+    summary = "Changes applied to the source workspace";
+  }
   try {
     await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/git/apply`, {
       method: "POST",
-      body: Object.keys(paths).length
-        ? JSON.stringify(paths)
-        : undefined,
+      body,
     });
-    toast(
-      state.selectedFiles.size
-        ? `Applied ${state.selectedFiles.size} selected file(s)`
-        : "Changes applied to the source workspace"
-    );
+    toast(summary);
     state.selectedFiles.clear();
+    state.selectedHunks.clear();
     await loadDiff(false);
   } catch (error) {
     toast(error.message, "error");

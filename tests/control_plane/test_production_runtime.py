@@ -4674,3 +4674,97 @@ def test_selective_apply_e2e_applies_only_chosen_files(tmp_path):
     ).stdout.strip()
     assert source_head_after != source_head_before
     assert final_record.state is WorktreeState.APPLIED
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
+    reason="production worktree creation uses macOS Seatbelt",
+)
+def test_selective_apply_hunks_e2e_applies_only_chosen_hunks(tmp_path):
+    """Hunk-level selective apply through the live control plane: POST
+    {hunks:[...]} applies only the chosen hunks, not the whole file."""
+    import subprocess
+
+    from runtime.git import WorktreeState
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "feature", str(source)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    for key, value in (
+        ("user.name", "Codinal Test"),
+        ("user.email", "codinal@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(source), "config", key, value],
+            check=True,
+        )
+    # Shared base file (20 lines) so the session's two region edits produce
+    # two distinct, non-overlapping hunks.
+    base = "".join(f"line{i}\n" for i in range(20))
+    (source / "tracked.txt").write_text(base, encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(source), "add", "tracked.txt"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "-m", "base"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config)
+    record = services.git.prepare("session-hunks", source)
+    lines = base.splitlines(keepends=True)
+    lines[2] = "line2-EDITED-A\n"  # hunk 0
+    lines[15] = "line15-EDITED-B\n"  # hunk 1
+    (Path(record.worktree_path) / "tracked.txt").write_text(
+        "".join(lines), encoding="utf-8"
+    )
+    services.git.stage("session-hunks", ".")
+    services.git.commit("session-hunks", "two hunks")
+    source_head_before = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        applied = client.post(
+            "/v1/sessions/session-hunks/git/apply",
+            headers=AUTH,
+            json={"hunks": [{"path": "tracked.txt", "hunk_index": 0}]},
+        )
+        final_record = services.git.load("session-hunks")
+
+    assert applied.status_code == 200
+    body = applied.json()
+    assert body["strategy"] == "selective-hunks"
+    assert body["hunks"] == [{"path": "tracked.txt", "hunk_index": 0}]
+    text = (source / "tracked.txt").read_text(encoding="utf-8")
+    # Selected hunk landed on source.
+    assert "line2-EDITED-A\n" in text
+    # Non-selected hunk did NOT land.
+    assert "line15-EDITED-B\n" not in text
+    # Source advanced by exactly one commit.
+    source_head_after = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert source_head_after != source_head_before
+    assert final_record.state is WorktreeState.APPLIED

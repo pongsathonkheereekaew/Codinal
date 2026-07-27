@@ -1627,3 +1627,93 @@ def test_apply_selected_overwrites_source_path_with_session_version(tmp_path):
     assert result["ok"] is True
     assert result["strategy"] == "selective"
     assert (repo / "tracked.txt").read_text(encoding="utf-8") == "session edit\n"
+
+
+@requires_seatbelt
+def test_apply_selected_hunks_applies_only_chosen_hunks(tmp_path):
+    """Hunk-level apply stages only the selected hunks via git apply --cached,
+    not the whole file. Two non-overlapping hunks in one file; select the
+    first only; assert only its lines land on source, the second's don't."""
+    repo = repository(tmp_path)
+    # Establish a shared base file (20 lines) on the source branch BEFORE
+    # prepare, so both source and session branch start from it and the
+    # session's later edits produce clean, applicable hunks.
+    base = "".join(f"line{i}\n" for i in range(20))
+    (repo / "tracked.txt").write_text(base, encoding="utf-8")
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-m", "base 20 lines")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("hunks", repo)
+    source_head_before = git(repo, "rev-parse", "HEAD")
+    # Edit two well-separated regions → two distinct hunks.
+    lines = base.splitlines(keepends=True)
+    lines[2] = "line2-EDITED-A\n"  # hunk 0
+    lines[15] = "line15-EDITED-B\n"  # hunk 1
+    (record.worktree_path / "tracked.txt").write_text(
+        "".join(lines), encoding="utf-8"
+    )
+    service.stage("hunks", ".")
+    service.commit("hunks", "two hunks")
+
+    # Select only hunk 0 of tracked.txt.
+    result = service.apply_selected_hunks(
+        "hunks", [{"path": "tracked.txt", "hunk_index": 0}]
+    )
+
+    assert result["ok"] is True
+    assert result["strategy"] == "selective-hunks"
+    assert result["hunks"] == [{"path": "tracked.txt", "hunk_index": 0}]
+    # Source advanced by exactly one commit.
+    assert git(repo, "rev-parse", "HEAD") != source_head_before
+    text = (repo / "tracked.txt").read_text(encoding="utf-8")
+    # Selected hunk landed.
+    assert "line2-EDITED-A\n" in text
+    # Non-selected hunk did NOT land.
+    assert "line15-EDITED-B\n" not in text
+
+
+@requires_seatbelt
+def test_apply_selected_hunks_conflict_aborts_and_restores(tmp_path):
+    """Unlike file-level checkout (last-write-wins), hunk-level git apply is
+    real 3-way: a conflicting source edit makes apply fail, and source is
+    restored to its pre-apply HEAD (the conflict-abort invariant)."""
+    repo = repository(tmp_path)
+    # Shared base file (10 lines) on the source branch before prepare.
+    base = "".join(f"line{i}\n" for i in range(10))
+    (repo / "tracked.txt").write_text(base, encoding="utf-8")
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-m", "base 10 lines")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("hunks-conflict", repo)
+    # One session hunk on line 3.
+    lines = base.splitlines(keepends=True)
+    lines[3] = "line3-SESSION\n"
+    (record.worktree_path / "tracked.txt").write_text(
+        "".join(lines), encoding="utf-8"
+    )
+    service.stage("hunks-conflict", ".")
+    service.commit("hunks-conflict", "session hunk")
+    # Source diverges on the SAME line the session hunk touches → conflict.
+    source_lines = base.splitlines(keepends=True)
+    source_lines[3] = "line3-SOURCE-DIVERGE\n"
+    (repo / "tracked.txt").write_text(
+        "".join(source_lines), encoding="utf-8"
+    )
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-m", "source diverge")
+    pre_apply_head = git(repo, "rev-parse", "HEAD")
+
+    result = service.apply_selected_hunks(
+        "hunks-conflict", [{"path": "tracked.txt", "hunk_index": 0}]
+    )
+
+    # git apply --check rejects the conflicting hunk → abort + restore.
+    assert result["ok"] is False
+    assert result.get("conflict") is True
+    assert "source restored" in result["error"]
+    # Source HEAD unchanged and the source-side edit survives.
+    assert git(repo, "rev-parse", "HEAD") == pre_apply_head
+    assert (
+        (repo / "tracked.txt").read_text(encoding="utf-8")
+        == "".join(source_lines)
+    )
