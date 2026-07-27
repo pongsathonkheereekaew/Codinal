@@ -20,7 +20,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from runtime.events import EventHub
 from runtime.builds import MAX_PLAN_BUILD_CANDIDATES
@@ -688,6 +688,34 @@ def create_control_plane_app(
             "chain_verified": ledger.verify_chain(),
         }
 
+    @app.get("/v1/audit/export")
+    async def audit_export(
+        domain: str | None = None,
+    ) -> Response:
+        ledger = getattr(services, "audit", None)
+        if ledger is None:
+            raise HTTPException(
+                status_code=503,
+                detail="audit ledger unavailable",
+            )
+        events = ledger.list(domain=domain, limit=1_000_000)
+        payload = json.dumps(
+            {
+                "export_version": 1,
+                "chain_verified": ledger.verify_chain(),
+                "total": len(events),
+                "events": events,
+            },
+            indent=2,
+        )
+        return Response(
+            content=payload,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": "attachment; filename=codinal-audit.json",
+            },
+        )
+
     @app.get("/v1/settings")
     async def settings() -> dict[str, Any]:
         view = services.settings.view()
@@ -1136,6 +1164,7 @@ def create_control_plane_app(
             )
         if not result.get("ok"):
             raise HTTPException(status_code=404, detail="session not found")
+        _audit_action(services, "session", "delete", subject=session_id)
         return result
 
     async def branch_session(
@@ -1478,6 +1507,7 @@ def create_control_plane_app(
             for key in ("stdout", "stderr")
         )
         result_dict["devserver_urls"] = detect_devserver_urls(combined_output)
+        _audit_action(services, "terminal", "run", subject=session_id, payload={"command": command[:100]})
         return JSONResponse(result_dict)
 
 
@@ -1515,6 +1545,7 @@ def create_control_plane_app(
                 status_code=502,
                 detail="terminal stop failed",
             ) from error
+        _audit_action(services, "terminal", "interrupt", subject=session_id, payload={"ok": interrupted})
         return {
             "ok": interrupted,
             "session_id": session_id,
@@ -1598,6 +1629,7 @@ def create_control_plane_app(
                 status_code=409,
                 detail=str(error),
             ) from None
+        _audit_action(services, "worker", "create", subject=record.worker_id, payload={"task": body["task"][:100]})
         return JSONResponse(worker_to_dict(record), status_code=202)
 
     @app.post("/v1/workers/{worker_id}/steer")
@@ -1614,6 +1646,7 @@ def create_control_plane_app(
             ok = workers.steer(worker_id, text)
         except KeyError:
             raise HTTPException(status_code=404, detail="worker not found") from None
+        _audit_action(services, "worker", "steer", subject=worker_id)
         return {"ok": ok, "worker_id": worker_id}
 
     @app.post("/v1/workers/{worker_id}/cancel")
@@ -1626,6 +1659,7 @@ def create_control_plane_app(
             ok = await workers.cancel(worker_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="worker not found") from None
+        _audit_action(services, "worker", "cancel", subject=worker_id)
         return {"ok": ok, "worker_id": worker_id}
 
     @app.post("/v1/workers/{worker_id}/adopt")
@@ -1635,11 +1669,13 @@ def create_control_plane_app(
         if workers is None:
             raise HTTPException(status_code=503, detail="workers are unavailable")
         try:
-            return await workers.adopt(worker_id)
+            result = await workers.adopt(worker_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="worker not found") from None
         except (GitWorkspaceError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from None
+        _audit_action(services, "worker", "adopt", subject=worker_id)
+        return result
 
     @app.get("/v1/sessions/{session_id}/plan-builds")
     async def list_plan_builds(
@@ -1883,6 +1919,7 @@ def create_control_plane_app(
                 status_code=409,
                 detail="approval is not pending or outcome is not applicable",
             )
+        _audit_action(services, "approval", "resolve", subject=approval_id, payload={"outcome": str(outcome)})
         return {"ok": True}
 
     @app.get("/v1/sessions/{session_id}/interactions")
@@ -2569,6 +2606,24 @@ def create_control_plane_app(
 
 def _runtime_version() -> str:
     return os.environ.get("CODINAL_VERSION", "dev")
+
+
+def _audit_action(
+    services: Any,
+    domain: str,
+    action: str,
+    *,
+    subject: str = "",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Record an audit event at the route layer (best-effort, no-op if no ledger)."""
+    ledger = getattr(services, "audit", None)
+    if ledger is None:
+        return
+    try:
+        ledger.record(domain, action, actor="host", subject=subject, payload=payload or {})
+    except Exception:
+        pass
 
 
 def _component_health(services: Any, *, started_at: float) -> dict[str, Any]:

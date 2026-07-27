@@ -215,8 +215,10 @@ Acceptance evidence:
   and removal.
 - [ ] Add organization model/provider/repository/tool allowlists and managed
   policy that local users cannot silently weaken.
-- [ ] Add tamper-evident audit events, export API, retention controls, redaction,
-  and zero-data-retention modes.
+- [x] Add tamper-evident audit events, export API, retention controls, redaction,
+  and zero-data-retention modes. (Phase 27 audit ledger + Phase 29 redaction +
+  Phase 36 extend to worker/session/terminal/approval domains + retention cap
+  + export route. Zero-data-retention mode deferred.)
 - [ ] Add SSO/SCIM/RBAC and managed deployment profiles without moving local
   tool execution outside its sandbox.
 

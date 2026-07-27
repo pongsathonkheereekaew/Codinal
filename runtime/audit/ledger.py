@@ -7,12 +7,17 @@ Reusable across domains. Each event chains on the previous row's hash:
 A tampered row breaks `verify_chain()`. Backups, corruption recovery, and
 schema migration follow the shared primitives in `runtime.storage.migrations`
 (identical to WorkerStore / GoalStore).
+
+Retention: ``_MAX_EVENTS`` (env-overridable) caps growth. When exceeded, the
+oldest rows are pruned and the surviving oldest row's ``prev_hash`` is re-chained
+to genesis, preserving ``verify_chain()`` integrity.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -29,6 +34,18 @@ from runtime.storage.migrations import (
 
 _SCHEMA_VERSION = 1
 _GENESIS_HASH = "0" * 64
+
+
+def _resolve_max_events() -> int:
+    raw = os.environ.get("CODINAL_AUDIT_MAX_EVENTS", "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 10_000
+    return max(100, min(value, 1_000_000))
+
+
+_MAX_EVENTS = _resolve_max_events()
 
 
 def _migrate_to_v1(connection: sqlite3.Connection) -> None:
@@ -178,6 +195,7 @@ class AuditLedger:
                 """,
                 row,
             )
+            self._prune_if_needed()
         return {
             "at": at,
             "domain": domain,
@@ -188,6 +206,56 @@ class AuditLedger:
             "prev_hash": prev_hash,
             "hash": event_hash,
         }
+
+    def _prune_if_needed(self) -> int:
+        """Delete oldest rows beyond ``_MAX_EVENTS`` and re-chain all survivors."""
+        count_row = self._connection.execute(
+            "SELECT COUNT(*) AS n FROM events"
+        ).fetchone()
+        total = count_row["n"] if count_row else 0
+        if total <= _MAX_EVENTS:
+            return 0
+        excess = total - _MAX_EVENTS
+        self._connection.execute(
+            f"DELETE FROM events WHERE seq IN "
+            f"(SELECT seq FROM events ORDER BY seq ASC LIMIT {excess})"
+        )
+        # Re-chain ALL surviving rows from genesis so verify_chain() holds.
+        # The oldest survivor's prev_hash becomes genesis; each subsequent row
+        # chains on the previous row's recomputed hash.
+        survivors = self._connection.execute(
+            "SELECT seq, at, domain, action, actor, subject, payload "
+            "FROM events ORDER BY seq ASC"
+        ).fetchall()
+        prev_hash = _GENESIS_HASH
+        for row in survivors:
+            new_hash = _event_hash(
+                at=row["at"],
+                domain=row["domain"],
+                action=row["action"],
+                actor=row["actor"],
+                subject=row["subject"],
+                payload=json.loads(row["payload"]),
+                prev_hash=prev_hash,
+            )
+            self._connection.execute(
+                "UPDATE events SET prev_hash = ?, hash = ? WHERE seq = ?",
+                (prev_hash, new_hash, row["seq"]),
+            )
+            prev_hash = new_hash
+        return excess
+
+    def prune(self) -> int:
+        """Public prune for testing. Returns the number of rows removed."""
+        with self._lock, self._connection:
+            return self._prune_if_needed()
+
+    def count(self) -> int:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT COUNT(*) AS n FROM events"
+            ).fetchone()
+            return row["n"] if row else 0
 
     def list(
         self,
