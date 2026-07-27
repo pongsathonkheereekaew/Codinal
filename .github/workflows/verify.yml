@@ -28,3 +28,17 @@ jobs:
         run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Test desktop shell
         run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+
+  perf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install product test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run performance-budget suite
+        run: |
+          python -m pytest tests/perf/ -m perf --durations=0 -q \
+            --timeout=120 --timeout-method=thread -p no:cacheprovider
