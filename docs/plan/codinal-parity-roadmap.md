@@ -51,7 +51,7 @@ acceptance evidence is recorded from the real product surface.
 | Editable plans | Durable structured drafts, selective approval, revision history, legacy recovery, and same-conversation continuation implemented | authenticated plan API, v6→v7 restart E2E, production desktop edit/select/reload flow, and `docs/evidence/phase20-editable-plans.md` |
 | Isolated subagents | Durable bounded workers, dependency graph, steering, cancellation, notifications, and isolated worktrees implemented | worker protocol conformance, restart recovery, ownership enforcement, and Phase 19 packaged evidence |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
-| Checkpoints | Automatic exact-path checkpoints cover Git and non-Git workspaces, including direct files, transactionally isolated shell changes, private content-minimized object storage, and crash-consistent composite restore journaling | Git ignored-file restore, non-Git restart reconciliation, same-path conflict-abort, uncaptured-secret exclusion, and active-turn manual-edit preservation E2Es |
+| Checkpoints | Automatic exact-path checkpoints cover Git and non-Git workspaces, including direct files, transactionally isolated shell changes, private content-minimized object storage, and crash-consistent composite restore journaling | Git ignored-file restore, non-Git restart reconciliation, same-path conflict-abort, uncaptured-secret exclusion, and active-turn manual-edit preservation E2Es — all five proven in `tests/control_plane/test_production_runtime.py` (Phase 41) |
 | Semantic index, PR/CI, browser | Missing | no product evidence |
 
 ## Execution map
@@ -83,9 +83,16 @@ Resolve these before their dependent implementation:
   restart existed; manifest generator + latest.json on GitHub Releases existed.)
 - [ ] Run live conformance against at least three cloud models and publish the
   exact supported capability matrix.
-- [ ] Add automatic per-turn checkpoints for Agent-authored files plus
+- [x] Add automatic per-turn checkpoints for Agent-authored files plus
   conversation position; restore code, conversation, or both without reverting
-  manual edits.
+  manual edits. (Phase 41: mechanism already shipped — `attributed=True`
+  per-turn checkpoint begun at `runtime/turns/service.py:440-472`, captured at
+  turn end `:660-735`, preimages via `runtime/tools/mutations.py`. This phase
+  closed the 3 missing control-plane E2Es from the L54 evidence cell: same-path
+  conflict-abort over HTTP restore, uncaptured-secret exclusion through the full
+  turn+mutation stack, and active-turn manual-edit preservation — all in
+  `tests/control_plane/test_production_runtime.py`. Git-ignored restore + non-Git
+  restart reconciliation E2Es pre-existed.)
 - [x] Add selective file/hunk accept/reject and preserve the existing
   conflict-abort invariant. (Phase 33: file-level selective apply via
   `git checkout <branch> -- <paths>` + commit; per-file checkboxes in the
