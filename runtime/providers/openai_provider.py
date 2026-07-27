@@ -25,11 +25,15 @@ from .base import (
 from .capabilities import capabilities_for
 
 
-def resolve_api_key(secrets: Any = None) -> Optional[str]:
-    """Resolve only from Codinal's memory-only native-secret mirror."""
+def resolve_api_key(secrets: Any = None, profile: str = "openai") -> Optional[str]:
+    """Resolve only from Codinal's memory-only native-secret mirror.
+
+    ``profile`` selects the secret store key, so OpenAI-compatible backends
+    (ZAI, DeepSeek, …) read their own credential instead of OpenAI's.
+    """
     if secrets is not None:
-        profile = secrets.get("provider:openai") or {}
-        return profile.get("api_key") or None
+        data = secrets.get(f"provider:{profile}") or {}
+        return data.get("api_key") or None
     return None
 
 
@@ -99,6 +103,7 @@ class OpenAIProvider(ProviderClient):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         secrets: Any = None,
+        secret_profile: str = "openai",
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -110,10 +115,14 @@ class OpenAIProvider(ProviderClient):
         # `base_url` points the same OpenAI SDK at any OpenAI-compatible endpoint — used by the
         # provider router for Ollama (`http://localhost:11434/v1`, with a placeholder key) and,
         # later, other OpenAI-shaped backends. When None, behavior is identical to stock OpenAI.
+        #
+        # `secret_profile` selects which secret store entry supplies the key, so
+        # OpenAI-compatible backends (ZAI, DeepSeek, …) read their own credential.
         self._client = client
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
+        self._secret_profile = secret_profile
         self.default_model = default_model
 
     def _ensure_client(self) -> Any:
@@ -121,7 +130,9 @@ class OpenAIProvider(ProviderClient):
             # Lazy import so the SDK is only required when actually talking to OpenAI.
             from openai import OpenAI
 
-            key = self._api_key or resolve_api_key(self._secrets)
+            key = self._api_key or resolve_api_key(
+                self._secrets, self._secret_profile
+            )
             if not key:
                 raise RuntimeError(
                     "No OpenAI API key configured. Add it in Settings."

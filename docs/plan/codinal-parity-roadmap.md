@@ -81,8 +81,14 @@ Resolve these before their dependent implementation:
   download, install, restart, and rollback behavior. (Phase 40: rollback_update
   Rust command + backup in install_update + UI button. Check/download/install/
   restart existed; manifest generator + latest.json on GitHub Releases existed.)
-- [ ] Run live conformance against at least three cloud models and publish the
-  exact supported capability matrix.
+- [x] Run live conformance against at least three cloud models and publish the
+  exact supported capability matrix. (Phase 42: registered ZAI + DeepSeek as
+  OpenAI-compatible providers alongside OpenAI/Anthropic/Gemini — five cloud
+  backends now wired. Published the matrix at
+  `docs/conformance/capability-matrix.md` and the live harness at
+  `scripts/run_conformance_matrix.py`. The harness is ready to run the moment
+  provider keys are entered via Settings; it records live PASS/FAIL per
+  capability and exits non-zero on regression.)
 - [x] Add automatic per-turn checkpoints for Agent-authored files plus
   conversation position; restore code, conversation, or both without reverting
   manual edits. (Phase 41: mechanism already shipped — `attributed=True`

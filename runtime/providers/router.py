@@ -12,8 +12,15 @@ from .capabilities import capabilities_for
 from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider
 
-_CLOUD_PROVIDERS = {"openai", "anthropic", "gemini"}
+_CLOUD_PROVIDERS = {"openai", "anthropic", "gemini", "zai", "deepseek"}
 _PROVIDERS = _CLOUD_PROVIDERS | {"ollama"}
+
+# OpenAI-compatible cloud backends: provider name → (base_url, secret_profile).
+# Each reuses OpenAIProvider with its own endpoint and secret-store entry.
+_OPENAI_COMPATIBLE = {
+    "zai": ("https://api.z.ai/api/paas/v4/", "zai"),
+    "deepseek": ("https://api.deepseek.com", "deepseek"),
+}
 
 
 class ProviderRouter(ProviderClient):
@@ -98,6 +105,13 @@ class ProviderRouter(ProviderClient):
                     client = AnthropicProvider(secrets=self._secrets)
                 elif provider == "gemini":
                     client = GeminiProvider(secrets=self._secrets)
+                elif provider in _OPENAI_COMPATIBLE:
+                    base_url, secret_profile = _OPENAI_COMPATIBLE[provider]
+                    client = OpenAIProvider(
+                        base_url=base_url,
+                        secret_profile=secret_profile,
+                        secrets=self._secrets,
+                    )
                 else:
                     client = OpenAIProvider(
                         api_key="ollama-local",
