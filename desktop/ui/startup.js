@@ -105,6 +105,8 @@ const el = Object.fromEntries(
     "commit-message", "git-stage", "git-commit", "git-log",
     "model-summary", "model-catalog", "update-status", "check-update",
     "install-update",
+    "diagnostics-status", "audit-chain-status", "audit-log",
+    "copy-support-bundle",
     "provider-list", "toast-region",
     "mcp-server-list", "mcp-server-name", "mcp-transport", "mcp-url",
     "mcp-command", "mcp-args", "mcp-cwd", "mcp-include-tools",
@@ -180,15 +182,26 @@ async function api(path, options = {}) {
 
 function toast(message, kind = "") {
   const item = node("div", `toast ${kind}`.trim(), message);
+  let timer = window.setTimeout(() => item.remove(), 6000);
+  // Hover-to-pause: SR users and pointer users get more time to read.
+  item.addEventListener("mouseenter", () => window.clearTimeout(timer));
+  item.addEventListener("mouseleave", () => {
+    timer = window.setTimeout(() => item.remove(), 3000);
+  });
   el["toast-region"].append(item);
-  window.setTimeout(() => item.remove(), 4200);
 }
 
 function setRuntimeStatus(label, kind = "online") {
   const indicator = el["runtime-status"];
   indicator.classList.toggle("is-online", kind === "online");
   indicator.classList.toggle("is-busy", kind === "busy");
+  indicator.classList.toggle("is-offline", kind === "offline");
   indicator.querySelector("span").textContent = label;
+  // Live region announcement for SR users.
+  indicator.setAttribute(
+    "aria-label",
+    `Runtime status: ${label.toLowerCase()}`
+  );
 }
 
 async function connect(attemptsRemaining = 30) {
@@ -270,6 +283,83 @@ async function loadSettings() {
     : "The runtime will use its configured default model.";
 }
 
+async function loadDiagnostics() {
+  try {
+    const status = await api("/v1/status");
+    const components = status.components || {};
+    const providers = (components.providers || [])
+      .filter((p) => p.configured)
+      .map((p) => p.provider);
+    const providerText = providers.length
+      ? providers.join(", ")
+      : "none configured";
+    el["diagnostics-status"].textContent = (
+      `Codinal ${status.version} · uptime `
+      + `${Math.round(status.uptime_seconds || 0)}s · providers: ${providerText}`
+    );
+    const chain = components.audit_chain || "unavailable";
+    el["audit-chain-status"].textContent = `Audit chain: ${chain}.`;
+    el["audit-chain-status"].classList.toggle(
+      "is-tampered",
+      chain === "tampered"
+    );
+  } catch (error) {
+    el["diagnostics-status"].textContent = "Diagnostics unavailable.";
+  }
+}
+
+async function loadAuditLog() {
+  try {
+    const result = await api("/v1/audit?limit=50");
+    renderAuditLog(result.events || []);
+  } catch (error) {
+    el["audit-log"].replaceChildren();
+  }
+}
+
+function renderAuditLog(events) {
+  el["audit-log"].replaceChildren();
+  if (!events.length) {
+    el["audit-log"].append(
+      node("li", "audit-row audit-row-empty", "No audit events recorded.")
+    );
+    return;
+  }
+  for (const event of events) {
+    const row = node("li", "audit-row");
+    const when = event.at
+      ? new Date(event.at * 1000).toLocaleTimeString()
+      : "";
+    row.append(
+      node("span", "audit-domain", event.domain || ""),
+      node("span", "audit-action", event.action || ""),
+      node("span", "audit-subject", event.subject || ""),
+      node("span", "audit-time", when)
+    );
+    el["audit-log"].append(row);
+  }
+}
+
+async function copySupportBundle() {
+  try {
+    const [status, audit] = await Promise.all([
+      api("/v1/status"),
+      api("/v1/audit?limit=200"),
+    ]);
+    const bundle = {
+      bundle_version: 1,
+      generated_at: Date.now() / 1000,
+      health: status,
+      audit,
+    };
+    const text = JSON.stringify(bundle, null, 2);
+    await navigator.clipboard.writeText(text);
+    toast("Support bundle copied (secrets redacted)");
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
 function renderRoutingResolution() {
   const resolution = state.routingResolution;
   const profile = el["routing-profile"].value || "manual";
@@ -346,6 +436,10 @@ function renderMcpServers() {
     const checkbox = toggle.querySelector("input");
     checkbox.type = "checkbox";
     checkbox.checked = enabled;
+    checkbox.setAttribute(
+      "aria-label",
+      `Enable MCP server ${server.name}`
+    );
     checkbox.addEventListener("change", () => {
       toggleMcpEnabled(server.name, checkbox.checked).catch((error) => {
         toast(error.message, "error");
@@ -3875,6 +3969,8 @@ async function openSettings() {
       renderProviders(),
       loadMcpServers(),
       loadArtifacts(),
+      loadDiagnostics(),
+      loadAuditLog(),
     ]);
   } catch (error) {
     toast(error.message, "error");
@@ -3948,8 +4044,13 @@ async function renderProviders() {
     input.type = "password";
     input.autocomplete = "off";
     input.placeholder = provider.configured ? "Replace key…" : "API key";
+    input.setAttribute("aria-label", `${provider.provider} API key`);
     const save = node("button", "", provider.configured ? "Update" : "Save");
     save.type = "button";
+    save.setAttribute(
+      "aria-label",
+      `${provider.configured ? "Update" : "Save"} ${provider.provider} key`
+    );
     save.addEventListener("click", async () => {
       if (!input.value) return;
       save.disabled = true;
@@ -4050,6 +4151,9 @@ function wireEvents() {
   });
   el["check-update"].addEventListener("click", checkForUpdate);
   el["install-update"].addEventListener("click", installUpdate);
+  el["copy-support-bundle"].addEventListener("click", () => {
+    copySupportBundle().catch((error) => toast(error.message, "error"));
+  });
   el["rename-session"].addEventListener("click", async () => {
     const title = el["session-title-input"].value.trim();
     if (!title) return;
