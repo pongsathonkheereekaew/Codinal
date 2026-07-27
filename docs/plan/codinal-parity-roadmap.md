@@ -102,8 +102,13 @@ Resolve these before their dependent implementation:
 - [x] Add selective file/hunk accept/reject and preserve the existing
   conflict-abort invariant. (Phase 33: file-level selective apply via
   `git checkout <branch> -- <paths>` + commit; per-file checkboxes in the
-  review panel; "Apply selected (N)" vs "Apply all". Hunk-level deferred —
-  needs unified-diff parsing + `git apply`.)
+  review panel; "Apply selected (N)" vs "Apply all". Phase 43: hunk-level
+  via a pure-Python unified-diff parser (`runtime/git/diff_parser.py`) +
+  `apply_selected_hunks` reconstructing a patch from chosen hunks and
+  applying it with `git apply --check --unidiff-zero` then `git apply`.
+  Per-hunk checkboxes in the review panel; `Apply selected (N hunks)`.
+  File-level semantics is last-write-wins; hunk-level is real 3-way —
+  refuses on context mismatch and rolls back to the pre-apply HEAD.)
 - [x] Add an integrated terminal with visible history, interrupt/takeover, and
   the same sandbox/approval policy as model-requested shell calls. (Phase 26 +
   Phase 35 dev-server URL detection + Phase 31 interrupt crash recovery.)
