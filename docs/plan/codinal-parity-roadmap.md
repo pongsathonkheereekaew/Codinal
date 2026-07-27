@@ -42,7 +42,7 @@ acceptance evidence is recorded from the real product surface.
 | Isolated session worktrees | Implemented | Git lifecycle E2E and Apply conflict tests |
 | Sessions/history/model swap | Durable global/in-thread search, message-position forks, Markdown export, and parent-linked side conversations implemented | authenticated search/branch/export routes, desktop match navigation and parent return, restart E2E |
 | Durable migrations/recovery/export | Implemented and verified | v0/v1/v2/v3/v5/v6→v7 coverage, restore-from-backup startup E2E, authenticated JSON/Markdown export safety bounds |
-| Interrupted turn recovery | Streaming, approval, and parallel-tool baseline verified; plan/shell/apply-back pending | real SIGKILL/restart E2Es, durable approval ledger, no-replay multi-call tests |
+| Interrupted turn recovery | All five scenarios verified (streaming, approval, parallel-tool, plan, shell) + crashed apply_back boot reconcile | real SIGKILL/restart E2Es, durable approval ledger, no-replay multi-call tests, Phase 31 evidence |
 | Diff review | Whole-session diff/apply implemented; selective hunks missing | desktop UI and Git route tests |
 | Images/PDFs | Implemented and verified | desktop compose, validation, provider adaptation, restart/model-switch E2E |
 | MCP | Secure connect/runtime tools implemented; lifecycle UI/governance missing | MCP contract/service tests |
@@ -99,8 +99,12 @@ Acceptance evidence:
 
 - [x] Add versioned durable-state migrations, backup, corruption recovery, and
   backward-compatible export before expanding the conversation schema.
-- [ ] Restore interrupted sessions after app/runtime crash without replaying a
-  completed tool call or losing an awaiting approval.
+- [x] Restore interrupted sessions after app/runtime crash without replaying a
+  completed tool call or losing an awaiting approval. (Phase 31: real-SIGKILL
+  E2Es now cover all five scenarios — streaming, approval, parallel-tool, plan,
+  shell — plus a boot-time reconcile for crashed apply_back that aborts stale
+  MERGE_HEAD. Orphaned shell child reaping remains a resource issue, not a
+  correctness one.)
 - [x] Add structured redacted diagnostics, local support bundle, crash reports
   with explicit consent, health/status UI, and actionable provider/tool errors.
   (Phase 30: /v1/status + /v1/audit routes, secret-safe support bundle,

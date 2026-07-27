@@ -257,6 +257,14 @@ class GitWorktreeStore:
         with self._lock:
             return self._load(session_id)
 
+    def list_records(self) -> list[GitWorkspaceRecord]:
+        """All stored worktree records (for boot-time reconcile scans)."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM git_worktrees ORDER BY session_id"
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def save_plain_workspace(
         self,
         session_id: str,
@@ -662,6 +670,9 @@ class GitWorktreeStore:
         ).fetchone()
         if row is None:
             return None
+        return self._row_to_record(row)
+
+    def _row_to_record(self, row) -> GitWorkspaceRecord:
         return GitWorkspaceRecord(
             session_id=row["session_id"],
             source_root=Path(row["source_root"]),
