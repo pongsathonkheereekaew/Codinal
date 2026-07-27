@@ -47,6 +47,10 @@ _ATTACHMENT_EXECUTOR = ThreadPoolExecutor(
     thread_name_prefix="codinal-attachment",
 )
 _ATTACHMENT_TIMEOUT_SECONDS = 15
+# Soft cap on outbound message count. A runaway history (e.g. a long unattended
+# session) degrades gracefully by dropping the oldest non-system messages with a
+# notice, instead of sending an unbounded payload to the provider.
+_MAX_OUTBOUND_MESSAGES = 2000
 
 
 class TurnEngine:
@@ -1212,6 +1216,27 @@ class TurnEngine:
                     )
                     for msg in out
                 ]
+
+        # Soft history cap: if the outbound copy exceeds the message budget,
+        # drop the oldest non-system messages with a notice so the provider
+        # request stays bounded. Keeps the system message + the most recent
+        # window; the in-memory transcript is unaffected.
+        if len(out) > _MAX_OUTBOUND_MESSAGES:
+            system_messages = [m for m in out if m.get("role") == "system"]
+            non_system = [m for m in out if m.get("role") != "system"]
+            # Reserve one slot for the omission notice itself.
+            keep_count = _MAX_OUTBOUND_MESSAGES - len(system_messages) - 1
+            kept = non_system[-keep_count:] if keep_count > 0 else []
+            omitted = len(non_system) - len(kept)
+            out = system_messages + [
+                {
+                    "role": "system",
+                    "content": (
+                        f"[{omitted} older messages omitted to stay within "
+                        "the history budget]"
+                    ),
+                }
+            ] + kept
 
         context = (
             self.context_provider() if self.context_provider is not None else ""

@@ -116,8 +116,11 @@ Acceptance evidence:
   + system guidance; secret-aware redaction on provider feed / audit ledger /
   MCP arguments; 17-test adversarial corpus. Web/browser + remote-worker
   channels remain — they are not present in v1.)
-- [ ] Set measurable cold-start, memory, indexing, streaming, diff, and
-  large-history budgets; enforce regressions in CI.
+- [x] Set measurable cold-start, memory, indexing, streaming, diff, and
+  large-history budgets; enforce regressions in CI. (Phase 32: central budget
+  registry indexing 37 enforced limits, perf suite measuring search/cold-start/
+  large-history/diff, dedicated `perf` CI lane, large-history soft cap. Memory
+  RSS + cross-platform baselines deferred.)
 - [ ] Make all primary workflows keyboard- and screen-reader-operable with
   visible focus, contrast, reduced-motion, and accessible status/approval
   announcements.

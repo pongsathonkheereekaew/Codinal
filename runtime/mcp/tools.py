@@ -21,6 +21,7 @@ CallAsync = Callable[[str, dict[str, Any]], Awaitable[Any]]
 _INVALID_NAME = re.compile(r"[^A-Za-z0-9_-]")
 _MAX_NAME = 64
 _MAX_SCHEMA_BYTES = 65_536
+_DEFAULT_CALL_TIMEOUT_SECONDS = 120.0
 
 
 def tool_name(server: str, tool: str) -> str:
@@ -40,7 +41,7 @@ def register_mcp_tools(
     mcp_tools: list[Any],
     call_async: CallAsync,
     loop: asyncio.AbstractEventLoop,
-    timeout: float = 120.0,
+    timeout: float = _DEFAULT_CALL_TIMEOUT_SECONDS,
 ) -> list[str]:
     names = []
     for remote_tool in _filtered(mcp_tools, server):
