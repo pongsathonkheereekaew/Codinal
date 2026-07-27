@@ -76,6 +76,35 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
 
 
+def _empty_response_error(
+    base_url: Optional[str], model: str, finish_reason: Optional[str]
+) -> Exception:
+    """Build an actionable error for an OpenAI-compat gateway that returned
+    200 OK with no message content.
+
+    This is common with OmniRoute (captcha not completed upstream, expired
+    token, unrecognized routing strategy) and other aggregator gateways
+    whose upstream free-tier providers flake. The caller (FailoverRouter or
+    the engine) decides whether to retry / fail over / surface to the user.
+    """
+    label = "the provider" if not base_url else f"{base_url}"
+    hint = ""
+    if base_url and "20128" in base_url:
+        hint = (
+            " For OmniRoute specifically: check the dashboard (are upstream "
+            "providers healthy? is there a captcha pending?), confirm the "
+            "model/strategy is valid (e.g. 'auto', 'auto/coding', "
+            "'auto/fast' — not custom names), and verify the token hasn't "
+            "expired."
+        )
+    return RuntimeError(
+        f"{label} returned an empty response for model '{model}' "
+        f"(finish_reason={finish_reason or 'unknown'}). The upstream "
+        f"provider may have hit a captcha, token, plan, or quota limit."
+        + hint
+    )
+
+
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
 
@@ -175,10 +204,18 @@ class OpenAIProvider(ProviderClient):
         text = getattr(message, "content", None)
         tool_calls = _parse_tool_calls(getattr(message, "tool_calls", None))
         text, tool_calls = _maybe_salvage_tool_calls(text, tool_calls, tools=tools)
+        finish_reason = getattr(choice, "finish_reason", None)
+        # Empty-content guard: an OpenAI-compat gateway (OmniRoute, OpenRouter,
+        # a flaky free-tier upstream) can return 200 OK with no message body
+        # when the upstream provider hit a captcha, expired token, plan limit,
+        # or an unrecognized routing strategy. Surface a actionable error
+        # instead of a silent "model returned no content".
+        if not text and not tool_calls:
+            raise _empty_response_error(self._base_url, model, finish_reason)
         return AssistantTurn(
             text=text,
             tool_calls=tool_calls,
-            finish_reason=getattr(choice, "finish_reason", None),
+            finish_reason=finish_reason,
             raw=response,
             reasoning=_delta_reasoning(message),
         )
@@ -263,6 +300,9 @@ class OpenAIProvider(ProviderClient):
         text, tool_calls = _maybe_salvage_tool_calls(
             "".join(text_parts) or None, tool_calls, tools=tools
         )
+        # Empty-content guard (same rationale as complete()).
+        if not text and not tool_calls:
+            raise _empty_response_error(self._base_url, model, finish_reason)
         yield StreamChunk(
             turn=AssistantTurn(
                 text=text,

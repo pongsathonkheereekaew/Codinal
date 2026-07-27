@@ -116,3 +116,41 @@ def test_environment_key_is_ignored_and_never_echoed_in_error(
         "No OpenAI API key configured. Add it in Settings."
     )
     assert marker not in str(caught.value)
+
+
+def test_complete_raises_on_empty_content_gateway_response() -> None:
+    """A 200 OK with no message content (OmniRoute/OpenRouter upstream flake)
+    must surface an actionable error, not a silent 'no content' turn."""
+    client = FakeClient(response(content=None, finish_reason="stop"))
+    provider = OpenAIProvider(client=client, base_url="http://localhost:20128/v1")
+
+    with pytest.raises(RuntimeError, match="returned an empty response") as exc:
+        provider.complete(model="auto", messages=[{"role": "user", "content": "hi"}])
+    assert "OmniRoute" in str(exc.value)
+
+
+def test_complete_passes_through_when_content_present() -> None:
+    """Non-empty content must not trip the empty-response guard."""
+    client = FakeClient(response(content="hello", finish_reason="stop"))
+    provider = OpenAIProvider(client=client)
+
+    turn = provider.complete(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+
+    assert turn.text == "hello"
+
+
+def test_complete_passes_through_when_tool_calls_present() -> None:
+    """Tool calls without text content are valid (tool-only turn)."""
+    raw_call = SimpleNamespace(
+        id="call_1",
+        function=SimpleNamespace(name="run_shell", arguments="{}"),
+    )
+    client = FakeClient(
+        response(content=None, tool_calls=[raw_call], finish_reason="tool_calls")
+    )
+    provider = OpenAIProvider(client=client)
+
+    turn = provider.complete(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+
+    assert turn.has_tool_calls
+    assert turn.tool_calls[0].name == "run_shell"
