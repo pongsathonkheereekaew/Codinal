@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -515,6 +517,7 @@ class ControlPlaneServices(Protocol):
     workers: Any | None
     builds: PlanBuildControl | None
     goals: GoalControl | None
+    audit: Any | None
 
 
 def create_control_plane_app(
@@ -597,10 +600,33 @@ def create_control_plane_app(
         lifespan=lifespan,
     )
     app.state.services = services
+    app.state.started_at = time.time()
 
     @app.get("/v1/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/v1/status")
+    async def status() -> dict[str, Any]:
+        return _component_health(services, started_at=app.state.started_at)
+
+    @app.get("/v1/audit")
+    async def audit_log(
+        domain: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        ledger = getattr(services, "audit", None)
+        if ledger is None:
+            raise HTTPException(
+                status_code=503,
+                detail="audit ledger unavailable",
+            )
+        bounded = max(1, min(int(limit), 500))
+        events = ledger.list(domain=domain, limit=bounded)
+        return {
+            "events": events,
+            "chain_verified": ledger.verify_chain(),
+        }
 
     @app.get("/v1/settings")
     async def settings() -> dict[str, Any]:
@@ -2337,6 +2363,54 @@ def create_control_plane_app(
         allow_credentials=False,
     )
     return app
+
+
+def _runtime_version() -> str:
+    return os.environ.get("CODINAL_VERSION", "dev")
+
+
+def _component_health(services: Any, *, started_at: float) -> dict[str, Any]:
+    """Structured, secret-safe runtime health for /v1/status and support bundles.
+
+    Never includes provider keys, message bodies, or file contents. Provider
+    state is the configured flag only; audit chain is verified/tampered.
+    """
+    secrets = getattr(services, "secrets", None)
+    providers_configured: list[dict[str, Any]] = []
+    if secrets is not None and hasattr(secrets, "status"):
+        try:
+            providers_configured = [
+                {"provider": entry["provider"], "configured": bool(entry.get("configured"))}
+                for entry in secrets.status()
+            ]
+        except Exception:
+            providers_configured = []
+
+    audit = getattr(services, "audit", None)
+    audit_chain = "unavailable"
+    if audit is not None and hasattr(audit, "verify_chain"):
+        try:
+            audit_chain = "verified" if audit.verify_chain() else "tampered"
+        except Exception:
+            audit_chain = "degraded"
+
+    sessions = getattr(services, "sessions", None)
+    session_count = 0
+    if sessions is not None and hasattr(sessions, "list_sessions"):
+        try:
+            session_count = len(sessions.list_sessions())
+        except Exception:
+            session_count = 0
+
+    return {
+        "version": _runtime_version(),
+        "uptime_seconds": max(0.0, time.time() - started_at),
+        "components": {
+            "audit_chain": audit_chain,
+            "providers": providers_configured,
+            "session_count": session_count,
+        },
+    }
 
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")

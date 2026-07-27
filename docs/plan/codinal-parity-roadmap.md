@@ -101,8 +101,11 @@ Acceptance evidence:
   backward-compatible export before expanding the conversation schema.
 - [ ] Restore interrupted sessions after app/runtime crash without replaying a
   completed tool call or losing an awaiting approval.
-- [ ] Add structured redacted diagnostics, local support bundle, crash reports
+- [x] Add structured redacted diagnostics, local support bundle, crash reports
   with explicit consent, health/status UI, and actionable provider/tool errors.
+  (Phase 30: /v1/status + /v1/audit routes, secret-safe support bundle,
+  diagnostics panel in Settings, accessible runtime-status chip. Automated
+  crash telemetry remains a separate consent flow.)
 - [x] Add prompt-injection and secret-exfiltration adversarial suites for
   repository content, MCP, web/browser content, terminal output, attachments,
   and remote messages. (Phase 29: untrusted-content fence on every tool result

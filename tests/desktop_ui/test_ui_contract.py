@@ -71,6 +71,52 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'href="./app.css"' in html
 
 
+def test_desktop_ui_has_accessibility_floor():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+
+    # Skip-link is the first focusable element.
+    assert 'class="skip-link"' in html
+    assert html.index('class="skip-link"') < html.index('id="app"')
+    # Runtime status chip is an announced live region.
+    assert 'id="runtime-status"' in html
+    assert 'role="status"' in html
+    assert 'aria-live="polite"' in html
+    # Every dialog is modal + labelled.
+    for dialog in (
+        "settings-dialog",
+        "session-dialog",
+        "worker-dialog",
+        "plan-build-dialog",
+        "goal-dialog",
+        "goal-evidence-dialog",
+    ):
+        assert f'id="{dialog}"' in html
+        assert f'aria-labelledby="{dialog}-title"' in html
+    # Diff / terminal regions carry role + label.
+    assert 'id="diff-view"' in html and 'role="log"' in html
+    assert 'id="terminal-output"' in html and 'aria-label="Terminal output"' in html
+
+
+def test_desktop_ui_has_diagnostics_and_audit_surface():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    for element in (
+        "diagnostics-status",
+        "audit-chain-status",
+        "audit-log",
+        "copy-support-bundle",
+    ):
+        assert f'id="{element}"' in html
+    assert "/v1/status" in script
+    assert "/v1/audit" in script
+    assert "loadDiagnostics" in script
+    assert "loadAuditLog" in script
+    assert "renderAuditLog" in script
+    assert "copySupportBundle" in script
+    assert "secrets redacted" in script
+
+
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
