@@ -65,7 +65,7 @@ fn status_never_contains_secret_values() {
 
     assert_eq!(
         serialized,
-        r#"[{"provider":"anthropic","configured":true},{"provider":"gemini","configured":true},{"provider":"openai","configured":false},{"provider":"github","configured":false}]"#
+        r#"[{"provider":"anthropic","configured":true},{"provider":"gemini","configured":true},{"provider":"openai","configured":false},{"provider":"zai","configured":false},{"provider":"deepseek","configured":false},{"provider":"github","configured":false}]"#
     );
     assert!(!serialized.contains("anthropic-secret"));
     assert!(!serialized.contains("gemini-secret"));
