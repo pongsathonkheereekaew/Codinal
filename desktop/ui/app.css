@@ -1,74 +1,81 @@
 :root {
   color-scheme: light dark;
-  --bg: #f7f7f8;
-  --sidebar: rgba(237, 237, 240, 0.94);
+  --bg: #f8f9fa;
+  --sidebar: rgba(241, 243, 245, 0.96);
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-subtle: #f2f2f4;
-  --surface-hover: #e8e8eb;
-  --text: #1b1b1f;
-  --muted: #6e6e76;
-  --faint: #6e6e76;
-  --line: rgba(28, 28, 32, 0.12);
-  --line-strong: rgba(28, 28, 32, 0.2);
+  --surface-subtle: #f1f3f5;
+  --surface-hover: #e9ecef;
+  --text: #212529;
+  --muted: #6c757d;
+  --faint: #868e96;
+  --line: #dee2e6;
+  --line-strong: #ced4da;
+  --hairline: var(--line);
   --accent: #6d4aff;
   --accent-hover: #5d3ae8;
-  --accent-soft: rgba(109, 74, 255, 0.12);
-  --success: #20875c;
-  --danger: #c63b4b;
-  --warning: #a86212;
-  --code-add: rgba(34, 157, 97, 0.14);
-  --code-delete: rgba(216, 64, 76, 0.12);
-  --shadow: 0 18px 50px rgba(16, 16, 24, 0.14);
+  --accent-soft: rgba(109, 74, 255, 0.1);
+  --success: #2f9e44;
+  --danger: #e03131;
+  --warning: #f08c00;
+  --code-add: #d3f9d8;
+  --code-delete: #ffe3e3;
+  --shadow: 0 1px 3px rgba(16, 16, 24, 0.08), 0 8px 24px rgba(16, 16, 24, 0.06);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   --mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
 }
 
 :root[data-theme="dark"] {
-  --bg: #151518;
-  --sidebar: rgba(30, 30, 34, 0.96);
-  --surface: #1d1d21;
-  --surface-raised: #25252a;
-  --surface-subtle: #29292e;
-  --surface-hover: #333339;
-  --text: #f2f2f4;
-  --muted: #aaaab3;
-  --faint: #7c7c86;
-  --line: rgba(255, 255, 255, 0.1);
-  --line-strong: rgba(255, 255, 255, 0.17);
-  --accent: #9d84ff;
-  --accent-hover: #ac96ff;
-  --accent-soft: rgba(157, 132, 255, 0.16);
-  --success: #55c993;
-  --danger: #ff7682;
-  --warning: #e5a959;
-  --code-add: rgba(65, 190, 123, 0.14);
-  --code-delete: rgba(239, 86, 101, 0.13);
-  --shadow: 0 20px 56px rgba(0, 0, 0, 0.4);
+  --bg: #121212;
+  --sidebar: rgba(26, 26, 26, 0.96);
+  --surface: #1e1e1e;
+  --surface-raised: #252525;
+  --surface-subtle: #2a2a2a;
+  --surface-hover: #333333;
+  --text: #ffffff;
+  --muted: #e0e0e0;
+  --faint: #8c8c8c;
+  --line: #2a2a2a;
+  --line-strong: #3a3a3a;
+  --hairline: var(--line);
+  --accent: #a78bfa;
+  --accent-hover: #b69dff;
+  --accent-soft: rgba(167, 139, 250, 0.16);
+  --success: #4ade80;
+  --danger: #f87171;
+  --warning: #fbbf24;
+  --code-add: rgba(74, 222, 128, 0.18);
+  --code-delete: rgba(248, 113, 113, 0.16);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.32);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #151518;
-    --sidebar: rgba(30, 30, 34, 0.96);
-    --surface: #1d1d21;
-    --surface-raised: #25252a;
-    --surface-subtle: #29292e;
-    --surface-hover: #333339;
-    --text: #f2f2f4;
-    --muted: #aaaab3;
-    --faint: #7c7c86;
-    --line: rgba(255, 255, 255, 0.1);
-    --line-strong: rgba(255, 255, 255, 0.17);
-    --accent: #9d84ff;
-    --accent-hover: #ac96ff;
-    --accent-soft: rgba(157, 132, 255, 0.16);
-    --success: #55c993;
-    --danger: #ff7682;
-    --warning: #e5a959;
-    --code-add: rgba(65, 190, 123, 0.14);
-    --code-delete: rgba(239, 86, 101, 0.13);
-    --shadow: 0 20px 56px rgba(0, 0, 0, 0.4);
+    --bg: #121212;
+    --sidebar: rgba(26, 26, 26, 0.96);
+    --surface: #1e1e1e;
+    --surface-raised: #252525;
+    --surface-subtle: #2a2a2a;
+    --surface-hover: #333333;
+    --text: #ffffff;
+    --muted: #e0e0e0;
+    --faint: #8c8c8c;
+    --line: #2a2a2a;
+    --line-strong: #3a3a3a;
+    --hairline: var(--line);
+    --accent: #a78bfa;
+    --accent-hover: #b69dff;
+    --accent-soft: rgba(167, 139, 250, 0.16);
+    --success: #4ade80;
+    --danger: #f87171;
+    --warning: #fbbf24;
+    --code-add: rgba(74, 222, 128, 0.18);
+    --code-delete: rgba(248, 113, 113, 0.16);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.32);
   }
 }
 
@@ -87,7 +94,7 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.45 var(--font);
+  font: 14px/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -1682,17 +1689,16 @@ iframe.preview-frame {
 .composer {
   width: min(800px, 100%);
   margin: 0 auto;
-  padding: 9px 10px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 13px;
+  padding: 10px 12px 10px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
   background: var(--surface);
-  box-shadow: 0 8px 30px rgba(18, 18, 25, 0.07);
+  box-shadow: var(--shadow);
 }
 
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
-  box-shadow: 0 8px 30px rgba(18, 18, 25, 0.07),
-    0 0 0 3px var(--accent-soft);
+  box-shadow: var(--shadow), 0 0 0 3px var(--accent-soft);
 }
 
 .attachment-list {
@@ -1809,10 +1815,10 @@ iframe.preview-frame {
 .send-button,
 .stop-button {
   display: grid;
-  width: 29px;
-  height: 29px;
+  width: 32px;
+  height: 32px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: 50%;
 }
 
 .send-button {
@@ -1820,6 +1826,10 @@ iframe.preview-frame {
   color: white;
   font-size: 17px;
   font-weight: 700;
+}
+
+.send-button:hover:not(:disabled) {
+  background: var(--accent-hover);
 }
 
 .stop-button {
@@ -2013,29 +2023,38 @@ body.is-dragging .drop-hint {
 
 .diff-view {
   margin: 0;
-  padding: 12px 0 30px;
+  padding: 12px 12px 30px;
   overflow: auto;
   color: var(--muted);
   font: 10.5px/1.55 var(--mono);
   tab-size: 2;
   white-space: pre;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .diff-file-block {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--hairline);
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 .diff-file-block:last-child {
-  border-bottom: none;
+  border-bottom: 1px solid var(--line);
 }
 .diff-file-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
-  background: var(--surface);
+  padding: 6px 12px;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--line);
   font-weight: 600;
   color: var(--text);
+  font-size: 11px;
 }
 .diff-file-select {
   margin: 0;
@@ -2044,6 +2063,7 @@ body.is-dragging .drop-hint {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--mono);
 }
 
 .diff-line {
@@ -2065,6 +2085,10 @@ body.is-dragging .drop-hint {
 .diff-line.header {
   color: var(--accent);
   font-weight: 650;
+}
+
+.diff-hunk-select {
+  margin: 0 8px 0 4px;
 }
 
 .review-footer {
