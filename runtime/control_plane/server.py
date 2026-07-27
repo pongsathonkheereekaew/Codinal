@@ -16,6 +16,7 @@ import uvicorn
 from runtime import RuntimeServices, compose_runtime
 from runtime.audit import AuditLedger
 from runtime.policy.managed import ManagedPolicy
+from runtime.extensions import ExtensionRegistry
 from runtime.git import (
     GitWorkspaceError,
     GitWorktreeService,
@@ -128,6 +129,7 @@ def build_services(
     audit_ledger = AuditLedger(config.data_dir, redactor=secret_redactor)
     github_service = GitHubService(secret_service)
     preview_store = PreviewEvidenceStore(config.data_dir)
+    extension_registry = ExtensionRegistry(config.data_dir)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -460,6 +462,7 @@ def build_services(
         github=github_service,
         preview=preview_store,
         managed_policy=managed_policy,
+        extensions=extension_registry,
     )
 
 
