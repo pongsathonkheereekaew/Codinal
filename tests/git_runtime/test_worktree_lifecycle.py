@@ -1523,3 +1523,107 @@ def test_reconcile_crashed_applies_noop_when_clean(tmp_path):
 
     assert recovered == 0
     assert service.load("clean-session").state is WorktreeState.ACTIVE
+
+
+@requires_seatbelt
+def test_changed_files_lists_session_branch_changes(tmp_path):
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("changed-files", repo)
+    (record.worktree_path / "tracked.txt").write_text(
+        "edited\n", encoding="utf-8"
+    )
+    (record.worktree_path / "new.txt").write_text("new\n", encoding="utf-8")
+    service.stage("changed-files", ".")
+    service.commit("changed-files", "two changes")
+
+    result = service.changed_files("changed-files")
+
+    assert result["ok"] is True
+    by_path = {entry["path"]: entry["status"] for entry in result["files"]}
+    assert by_path["tracked.txt"] == "modified"
+    assert by_path["new.txt"] == "added"
+
+
+@requires_seatbelt
+def test_apply_selected_applies_only_chosen_files(tmp_path):
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("selective", repo)
+    source_head_before = git(repo, "rev-parse", "HEAD")
+    # Three file changes on the session branch.
+    (record.worktree_path / "tracked.txt").write_text(
+        "session edit\n", encoding="utf-8"
+    )
+    (record.worktree_path / "alpha.txt").write_text("a\n", encoding="utf-8")
+    (record.worktree_path / "beta.txt").write_text("b\n", encoding="utf-8")
+    service.stage("selective", ".")
+    service.commit("selective", "three files")
+
+    # Select only alpha + beta.
+    result = service.apply_selected("selective", ["alpha.txt", "beta.txt"])
+
+    assert result["ok"] is True
+    assert result["strategy"] == "selective"
+    assert set(result["files"]) == {"alpha.txt", "beta.txt"}
+    # Source advanced by exactly one commit.
+    source_head_after = git(repo, "rev-parse", "HEAD")
+    assert source_head_after != source_head_before
+    # Selected files landed on source.
+    assert (repo / "alpha.txt").read_text(encoding="utf-8") == "a\n"
+    assert (repo / "beta.txt").read_text(encoding="utf-8") == "b\n"
+    # The non-selected file did NOT land on source.
+    assert not (repo / "tracked.txt").exists() or (
+        repo / "tracked.txt"
+    ).read_text(encoding="utf-8") == "base\n"
+
+
+@requires_seatbelt
+def test_apply_selected_rejects_unknown_path(tmp_path):
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("selective-reject", repo)
+    (record.worktree_path / "tracked.txt").write_text(
+        "edit\n", encoding="utf-8"
+    )
+    service.stage("selective-reject", ".")
+    service.commit("selective-reject", "one")
+
+    result = service.apply_selected(
+        "selective-reject", ["does-not-exist.txt"]
+    )
+
+    assert result["ok"] is False
+    assert "unknown path" in result["error"]
+
+
+@requires_seatbelt
+def test_apply_selected_overwrites_source_path_with_session_version(tmp_path):
+    """git checkout <branch> -- <path> is last-write-wins: the session version
+    overwrites whatever source had. The invariant we preserve is: source is
+    never left dirty/half-applied — the apply either fully commits or rolls
+    back to the pre-apply HEAD."""
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("selective-overwrite", repo)
+    # Session change.
+    (record.worktree_path / "tracked.txt").write_text(
+        "session edit\n", encoding="utf-8"
+    )
+    service.stage("selective-overwrite", ".")
+    service.commit("selective-overwrite", "session change")
+    # Source diverges on the same file.
+    (repo / "tracked.txt").write_text(
+        "conflicting source\n", encoding="utf-8"
+    )
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-m", "source diverge")
+
+    result = service.apply_selected(
+        "selective-overwrite", ["tracked.txt"]
+    )
+
+    # checkout is last-write-wins → session version lands on source.
+    assert result["ok"] is True
+    assert result["strategy"] == "selective"
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "session edit\n"

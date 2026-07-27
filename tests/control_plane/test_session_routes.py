@@ -108,8 +108,28 @@ class FakeGit:
             "output_truncated": False,
         }
 
+    def apply_selected(self, _session_id, paths):
+        return {
+            "ok": True,
+            "strategy": "selective",
+            "files": list(paths),
+            "commit": "deadbeef",
+        }
+
+    def changed_files(self, _session_id):
+        return {
+            "ok": True,
+            "files": [
+                {"path": "src/main.py", "status": "modified"},
+                {"path": "src/new.py", "status": "added"},
+            ],
+        }
+
     def stage(self, _session_id, path="."):
         return {"ok": True, "path": path}
+
+    def apply_back(self, _session_id):
+        return {"ok": True, "strategy": "fast-forward", "commit": "deadbeef"}
 
     def commit(self, _session_id, message):
         return {
@@ -1997,3 +2017,70 @@ def test_git_routes_404_when_session_not_a_git_session():
         ]:
             response = client.post(path, headers=AUTH, json=body)
             assert response.status_code == 404
+
+
+def test_git_files_route_lists_changed_files():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.get(
+            "/v1/sessions/session-1/git/files",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert {entry["path"] for entry in body["files"]} == {
+        "src/main.py",
+        "src/new.py",
+    }
+
+
+def test_git_apply_with_paths_routes_to_selective():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/git/apply",
+            headers=AUTH,
+            json={"paths": ["src/main.py"]},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy"] == "selective"
+    assert body["files"] == ["src/main.py"]
+
+
+def test_git_apply_without_paths_still_applies_all():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/git/apply",
+            headers=AUTH,
+            json={},
+        )
+
+    # Empty body {} → apply all (legacy). FakeGit.apply_back returns its status.
+    assert response.status_code == 200
+
+
+def test_git_apply_rejects_malformed_paths():
+    client, _sessions, _turns = make_client(git=FakeGit())
+
+    with client:
+        not_a_list = client.post(
+            "/v1/sessions/session-1/git/apply",
+            headers=AUTH,
+            json={"paths": "src/main.py"},
+        )
+        extra_field = client.post(
+            "/v1/sessions/session-1/git/apply",
+            headers=AUTH,
+            json={"paths": ["x"], "other": 1},
+        )
+
+    assert not_a_list.status_code == 400
+    assert extra_field.status_code == 400

@@ -4129,3 +4129,96 @@ def test_apply_back_crash_reconciles_stale_merge_on_restart(tmp_path):
     assert not (source / ".git" / "MERGE_HEAD").exists()
     final = service.load("crashed-apply")
     assert final.state is WorktreeState.CONFLICT
+
+
+def test_selective_apply_e2e_applies_only_chosen_files(tmp_path):
+    import subprocess
+
+    from runtime.git import WorktreeState
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "feature", str(source)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    for key, value in (
+        ("user.name", "Codinal Test"),
+        ("user.email", "codinal@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(source), "config", key, value],
+            check=True,
+        )
+    (source / "base.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "base.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "-m", "base"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config)
+    record = services.git.prepare("session-selective", source)
+    # Three file changes on the session branch.
+    (Path(record.worktree_path) / "base.txt").write_text(
+        "edited\n", encoding="utf-8"
+    )
+    (Path(record.worktree_path) / "alpha.txt").write_text("a\n", encoding="utf-8")
+    (Path(record.worktree_path) / "beta.txt").write_text("b\n", encoding="utf-8")
+    services.git.stage("session-selective", ".")
+    services.git.commit("session-selective", "three files")
+    source_head_before = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        listed = client.get(
+            "/v1/sessions/session-selective/git/files",
+            headers=AUTH,
+        )
+        applied = client.post(
+            "/v1/sessions/session-selective/git/apply",
+            headers=AUTH,
+            json={"paths": ["alpha.txt", "beta.txt"]},
+        )
+        final_record = services.git.load("session-selective")
+
+    assert listed.status_code == 200
+    assert {f["path"] for f in listed.json()["files"]} == {
+        "base.txt",
+        "alpha.txt",
+        "beta.txt",
+    }
+    assert applied.status_code == 200
+    body = applied.json()
+    assert body["strategy"] == "selective"
+    assert set(body["files"]) == {"alpha.txt", "beta.txt"}
+    # Selected files landed on source.
+    assert (source / "alpha.txt").read_text(encoding="utf-8") == "a\n"
+    assert (source / "beta.txt").read_text(encoding="utf-8") == "b\n"
+    # Non-selected file unchanged on source.
+    assert (source / "base.txt").read_text(encoding="utf-8") == "base\n"
+    # Source advanced by exactly one commit.
+    source_head_after = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert source_head_after != source_head_before
+    assert final_record.state is WorktreeState.APPLIED

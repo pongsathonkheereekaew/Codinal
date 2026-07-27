@@ -1905,6 +1905,31 @@ body.is-dragging .drop-hint {
   white-space: pre;
 }
 
+.diff-file-block {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.diff-file-block:last-child {
+  border-bottom: none;
+}
+.diff-file-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--surface);
+  font-weight: 600;
+  color: var(--text);
+}
+.diff-file-select {
+  margin: 0;
+}
+.diff-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .diff-line {
   display: block;
   min-width: max-content;
