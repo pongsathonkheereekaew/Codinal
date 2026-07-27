@@ -136,7 +136,10 @@ Acceptance evidence:
 - [ ] Add model routing profiles and capability-aware selection without hiding
   the chosen provider, cost class, or degradation.
 - [ ] Complete MCP add/edit/connect/disconnect/enable/disable UI with per-tool
-  visibility, source, scope, auth state, and approval policy.
+  visibility, source, scope, auth state, and approval policy. (Phase 27 added
+  durable persistence, restart reconnect, per-server enable/disable, a
+  reusable tamper-evident audit ledger, and the desktop toggle. Per-tool
+  visibility and governance remain — see P1 Ecosystem.)
 
 Acceptance evidence:
 
@@ -223,7 +226,11 @@ Acceptance evidence:
 ## Immediate frontier
 
 1. Add transparent model-routing profiles with capability and cost visibility.
-2. Complete the audited MCP lifecycle UI and restart coverage.
+   ✅ Phase 25.
+2. Complete the audited MCP lifecycle UI and restart coverage. ✅ Phase 27
+   (durable persistence, restart reconnect, per-server enable/disable, reusable
+   tamper-evident audit ledger, desktop toggle; per-tool visibility/governance
+   deferred to P1).
 3. Add representative repository relevance/latency benchmarks and adversarial
    resource-pressure coverage.
 

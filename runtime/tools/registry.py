@@ -52,6 +52,7 @@ class ToolRegistry:
 
     def unregister(self, name: str) -> None:
         self._tools.pop(name, None)
+        self._manifest.remove(name)
 
     def get(self, name: str) -> Optional[ToolSpec]:
         return self._tools.get(name)

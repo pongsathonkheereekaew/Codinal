@@ -157,6 +157,10 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "renderMcpServers" in script
     assert "connectMcpServer" in script
     assert "disconnectMcpServer" in script
+    assert "toggleMcpEnabled" in script
+    assert "mcp-server-toggle" in script
+    assert 'JSON.stringify({ enabled })' in script
+    assert '"PATCH"' in script
     assert "routing_profile" in script
     assert "started.routing.selected_model" in script
     assert "message.source?.routing" in script

@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional, Protocol
 
+from .audit import AuditLedger
 from .checkpoint_restore import CheckpointRestoreCoordinator
 from .events import EventHub
 from .goals import GoalCoordinator, GoalStore
-from .mcp import MCPManager, MCPService
+from .mcp import MCPManager, MCPService, MCPStore
 from .oauth import OAuthCoordinator
 from .policy import ApprovalBroker, Approver, Mode, PermissionEngine, deny_all
 from .routing import ModelRoutingService
@@ -71,6 +72,7 @@ class RuntimeServices:
     workers: WorkerCoordinator | None = None
     builds: PlanBuildCoordinator | None = None
     goals: GoalCoordinator | None = None
+    audit: AuditLedger | None = None
 
 
 def compose_runtime(
@@ -96,6 +98,8 @@ def compose_runtime(
     worker_store: WorkerStore | None = None,
     plan_build_store: PlanBuildStore | None = None,
     goal_store: GoalStore | None = None,
+    mcp_store: MCPStore | None = None,
+    audit: AuditLedger | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -200,6 +204,8 @@ def compose_runtime(
             manager=mcp_manager,
             sessions=sessions,
             turns=turns,
+            store=mcp_store,
+            audit=audit,
         )
         if mcp_manager is not None
         else None
@@ -258,4 +264,5 @@ def compose_runtime(
         workers=workers,
         builds=builds,
         goals=goals,
+        audit=audit,
     )

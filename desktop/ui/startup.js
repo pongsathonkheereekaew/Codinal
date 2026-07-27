@@ -318,6 +318,7 @@ function renderMcpServers() {
     const tools = server.tools || [];
     const included = (server.include_tools || []).join(", ") || "all";
     const excluded = (server.exclude_tools || []).join(", ") || "none";
+    const enabled = server.enabled !== false;
     const details = node("details", "mcp-server-details");
     const summary = node("summary", "", "Tools");
     const toolList = node("div", "mcp-tool-list");
@@ -329,6 +330,26 @@ function renderMcpServers() {
       toolList.append(node("span", "mcp-tool", "No tools discovered"));
     }
     details.append(summary, toolList);
+    const status = node(
+      "small",
+      "mcp-server-meta",
+      enabled ? "Enabled" : "Disabled"
+    );
+    const toggle = node(
+      "label",
+      "mcp-server-toggle",
+      node("input", "", ""),
+      node("span", "", "Enabled")
+    );
+    const checkbox = toggle.querySelector("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = enabled;
+    checkbox.addEventListener("change", () => {
+      toggleMcpEnabled(server.name, checkbox.checked).catch((error) => {
+        toast(error.message, "error");
+        checkbox.checked = !checkbox.checked;
+      });
+    });
     row.append(
       node("strong", "", server.name),
       node(
@@ -341,10 +362,12 @@ function renderMcpServers() {
       node("small", "mcp-server-meta", `${tools.length} tools`),
       node("small", "mcp-server-meta", `Includes: ${included}`),
       node("small", "mcp-server-meta", `Excludes: ${excluded}`),
+      status,
       details,
       node(
         "div",
         "mcp-server-actions",
+        toggle,
         node(
           "button",
           "",
@@ -639,6 +662,21 @@ async function disconnectMcpServer(name) {
   );
   await loadMcpServers(sessionId);
   toast(`Disconnected ${name}`);
+}
+
+async function toggleMcpEnabled(name, enabled) {
+  const sessionId = state.sessionId;
+  if (!sessionId) return;
+  await api(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/mcp/servers/`
+      + encodeURIComponent(name),
+    {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }
+  );
+  await loadMcpServers(sessionId);
+  toast(enabled ? `Enabled ${name}` : `Disabled ${name}`);
 }
 
 async function loadSessions() {
