@@ -3317,6 +3317,458 @@ def test_plain_workspace_checkpoint_restores_after_restart(
 
 @pytest.mark.skipif(
     platform.system() != "Darwin",
+    reason="production worktree creation uses macOS Seatbelt",
+)
+def test_checkpoint_restore_aborts_same_path_manual_edit_e2e(tmp_path):
+    """A manual edit to a path the Agent touched aborts restore over HTTP
+    and leaves the workspace exactly as the user left it.
+
+    Roadmap L54 "same-path conflict-abort" E2E. The invariant was previously
+    proven only at the service/shell layer
+    (tests/git_runtime/test_plain_checkpoints.py:167,
+    tests/git_runtime/test_worktree_lifecycle.py:878); this drives it through
+    the live control-plane restore route, which reaches the workspace via
+    CheckpointRestoreCoordinator -> resume_restore_code -> _apply_restore_patch
+    (service.py:3075), not the direct restore_checkpoint_code path.
+    """
+
+    class WriteTargetProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "agent-write",
+                            "write_file",
+                            {
+                                "path": "target.txt",
+                                "content": "agent change\n",
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text="written")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    async def approve_once(_request):
+        return ApprovalOutcome.ONCE
+
+    source = tmp_path / "conflict-source"
+    source.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "feature", str(source)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "config", "user.name", "Codinal Test"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "config",
+            "user.email",
+            "codinal@example.invalid",
+        ],
+        check=True,
+    )
+    (source / "target.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(source), "add", "target.txt"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "-m", "base"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "conflict-data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=WriteTargetProvider(),
+        approver=approve_once,
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/conflict-e2e",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/conflict-e2e/turns",
+                headers=AUTH,
+                json={
+                    "input": "write target.txt",
+                    "workspace": str(source),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+        checkpoints = client.get(
+            "/v1/sessions/conflict-e2e/checkpoints",
+            headers=AUTH,
+        )
+        checkpoint_id = checkpoints.json()[0]["checkpoint_id"]
+        git_record = services.git.load("conflict-e2e")
+
+        # Manual edit to the SAME path the Agent touched.
+        (git_record.worktree_path / "target.txt").write_text(
+            "manual override\n",
+            encoding="utf-8",
+        )
+
+        restore = client.post(
+            f"/v1/sessions/conflict-e2e/checkpoints/{checkpoint_id}/restore",
+            headers=AUTH,
+            json={"scope": "code"},
+        )
+
+    assert accepted.status_code == 202
+    assert checkpoints.status_code == 200
+    # The coordinator's _apply_restore_patch runs `git apply --check` first
+    # and raises "checkpoint conflicts with current edits" -> HTTP 409.
+    assert restore.status_code == 409
+    assert (
+        restore.json()["detail"]
+        == "checkpoint conflicts with current edits"
+    )
+    # The workspace is left exactly as the user left it.
+    assert (
+        git_record.worktree_path / "target.txt"
+    ).read_text(encoding="utf-8") == "manual override\n"
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
+    reason="transactional shell requires macOS Seatbelt",
+)
+def test_checkpoint_never_captures_uncaptured_secret_e2e(tmp_path):
+    """A file the Agent never touched never enters the checkpoint object
+    store, end-to-end through the live turn + mutation tools stack.
+
+    Roadmap L54 "uncaptured-secret exclusion" E2E. The invariant was
+    previously proven only at the service layer
+    (tests/git_runtime/test_plain_checkpoints.py:73); this drives a real
+    turn through the control plane and asserts the secret's blob is absent
+    from the content-addressed checkpoint store.
+    """
+
+    class WriteAgentFileProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "agent-write",
+                            "write_file",
+                            {
+                                "path": "agent.txt",
+                                "content": "agent only\n",
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text="done")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    async def approve_once(_request):
+        return ApprovalOutcome.ONCE
+
+    workspace = tmp_path / "secret-workspace"
+    workspace.mkdir()
+    # A secret the Agent will never touch.
+    secret = workspace / "manual-secret.txt"
+    secret.write_text("never captured\n", encoding="utf-8")
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "secret-data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=WriteAgentFileProvider(),
+        approver=approve_once,
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/secret-e2e",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            accepted = client.post(
+                "/v1/sessions/secret-e2e/turns",
+                headers=AUTH,
+                json={
+                    "input": "write agent.txt only",
+                    "workspace": str(workspace),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+        checkpoints = client.get(
+            "/v1/sessions/secret-e2e/checkpoints",
+            headers=AUTH,
+        )
+        checkpoint_id = checkpoints.json()[0]["checkpoint_id"]
+        attributed_paths = {
+            item.path
+            for item in services.git.store.list_checkpoint_files(
+                checkpoint_id
+            )
+        }
+
+    # The secret must not be retrievable from the content-addressed
+    # checkpoint object store for this session.
+    secret_blob = subprocess.run(
+        [
+            services.git.git_executable,
+            "hash-object",
+            str(secret),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    store_repo = (
+        services.git.checkpoint_base
+        / hashlib.sha256(b"secret-e2e").hexdigest()
+    )
+    stored_objects = subprocess.run(
+        [
+            services.git.git_executable,
+            f"--git-dir={store_repo}",
+            "cat-file",
+            "--batch-all-objects",
+            "--batch-check=%(objectname)",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ).stdout.splitlines()
+
+    assert accepted.status_code == 202
+    assert checkpoints.status_code == 200
+    assert attributed_paths == {"agent.txt"}
+    assert secret_blob not in stored_objects
+    # And the secret itself is untouched on disk.
+    assert secret.read_text(encoding="utf-8") == "never captured\n"
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
+    reason="transactional shell requires macOS Seatbelt",
+)
+def test_manual_edit_during_active_turn_survives_restore_e2e(tmp_path):
+    """A manual edit made while a turn is active is preserved when the
+    turn's checkpoint is later restored, and restore is refused while the
+    turn is still active.
+
+    Roadmap L54 "active-turn manual-edit preservation" E2E — the subtlest
+    case, previously untested at any level. The active-turn restore guard
+    (turns/service.py:263) was only unit-tested for refusal; this proves
+    both halves: (a) restore returns 409 while active, and (b) a manual
+    edit to a different path, injected mid-turn, survives the post-turn
+    restore because the attributed checkpoint only contains Agent-touched
+    paths.
+    """
+
+    class WriteThenBlockingShellProvider(ProviderClient):
+        """Turn 1: write a file (creates a checkpoint we can later restore).
+        Turn 2: a run_shell that blocks until the test releases it, keeping
+        the turn active while the manual edit is injected."""
+
+        def __init__(self, release_path):
+            self.calls = 0
+            self.release_path = release_path
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "seed-write",
+                            "write_file",
+                            {
+                                "path": "agent.txt",
+                                "content": "agent seed\n",
+                            },
+                        )
+                    ]
+                )
+            if self.calls == 2:
+                # Bounded poll (10s) so a test failure can't hang forever.
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "blocking-shell",
+                            "run_shell",
+                            {
+                                "command": (
+                                    "/usr/bin/perl -e "
+                                    "\"my $deadline=time+10; "
+                                    "while(!-f $ARGV[0]){ "
+                                    "exit 1 if time>$deadline; "
+                                    "select(undef,undef,undef,0.05)} "
+                                    "exit 0\" "
+                                    f"\"{self.release_path}\""
+                                ),
+                                "timeout_seconds": 12,
+                            },
+                        )
+                    ]
+                )
+            return AssistantTurn(text="released")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    async def approve_once(_request):
+        return ApprovalOutcome.ONCE
+
+    workspace = tmp_path / "active-workspace"
+    workspace.mkdir()
+    release = tmp_path / "release.txt"
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "active-data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(
+        config,
+        provider=WriteThenBlockingShellProvider(release),
+        approver=approve_once,
+    )
+
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        with client.websocket_connect(
+            "/ws/session/active-e2e",
+            subprotocols=[
+                "codinal.v1",
+                websocket_auth_protocol(TOKEN),
+            ],
+        ) as socket:
+            # Turn 1: seed a checkpoint (completes immediately).
+            client.post(
+                "/v1/sessions/active-e2e/turns",
+                headers=AUTH,
+                json={
+                    "input": "seed a file",
+                    "workspace": str(workspace),
+                },
+            )
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+            checkpoints = client.get(
+                "/v1/sessions/active-e2e/checkpoints",
+                headers=AUTH,
+            )
+            checkpoint_id = checkpoints.json()[0]["checkpoint_id"]
+
+            # Turn 2: the blocking shell — stays active until released.
+            accepted = client.post(
+                "/v1/sessions/active-e2e/turns",
+                headers=AUTH,
+                json={
+                    "input": "run the blocking shell",
+                    "workspace": str(workspace),
+                },
+            )
+            # Wait until the turn is actually active.
+            for _ in range(500):
+                if services.turns.is_active("active-e2e"):
+                    break
+                time.sleep(0.01)
+            assert services.turns.is_active("active-e2e")
+
+            # (a) Restore of the prior checkpoint is refused while turn 2
+            # is active (the active-turn restore guard).
+            restore_while_active = client.post(
+                f"/v1/sessions/active-e2e/checkpoints/{checkpoint_id}/restore",
+                headers=AUTH,
+                json={"scope": "code"},
+            )
+
+            # Inject the manual edit to a DIFFERENT path WHILE the turn is
+            # active.
+            manual = workspace / "manual.txt"
+            manual.write_text("mid-turn manual\n", encoding="utf-8")
+
+            # Release the blocking shell and drain turn 2 to completion.
+            release.write_text("go\n", encoding="utf-8")
+            event = socket.receive_json()
+            while event["type"] != "turn_end":
+                event = socket.receive_json()
+
+            # (b) Now idle — restore the prior checkpoint; the mid-turn
+            # manual edit to a different path survives (attribution).
+            restore_after = client.post(
+                f"/v1/sessions/active-e2e/checkpoints/{checkpoint_id}/restore",
+                headers=AUTH,
+                json={"scope": "code"},
+            )
+
+    assert accepted.status_code == 202
+    # (a) Restore is refused while the turn is active.
+    assert restore_while_active.status_code == 409
+    assert (
+        restore_while_active.json()["detail"]
+        == "session already has an active turn"
+    )
+    # (b) The mid-turn manual edit to a different path survives the
+    # post-turn restore (attribution: only Agent-touched paths are in the
+    # patch).
+    assert restore_after.status_code == 200
+    assert (
+        workspace / "manual.txt"
+    ).read_text(encoding="utf-8") == "mid-turn manual\n"
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin",
     reason="Seatbelt is a macOS release boundary",
 )
 def test_production_interrupt_kills_active_sandbox_command(tmp_path):
