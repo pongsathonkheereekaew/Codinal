@@ -18,18 +18,48 @@ def test_router_builds_and_caches_supported_cloud_clients() -> None:
     gemini = router.client_for("gemini:gemini-2.5-flash")
     zai = router.client_for("zai:glm-4.6")
     deepseek = router.client_for("deepseek:deepseek-chat")
+    omniroute = router.client_for("omniroute:auto")
 
     assert isinstance(openai, OpenAIProvider)
     assert isinstance(anthropic, AnthropicProvider)
     assert isinstance(gemini, GeminiProvider)
     assert isinstance(zai, OpenAIProvider)
     assert isinstance(deepseek, OpenAIProvider)
+    assert isinstance(omniroute, OpenAIProvider)
     assert router.client_for("openai:gpt-5.6-terra") is openai
     assert router.client_for("zai:glm-4.5-air") is zai
+    assert router.client_for("omniroute:gpt-4o") is omniroute
     assert router.resolve("anthropic:claude-sonnet-4-6") == (
         anthropic,
         "claude-sonnet-4-6",
     )
+
+
+def test_omniroute_uses_configured_base_url_from_secrets() -> None:
+    secrets = ProviderSecretService()
+    secrets.set_api_key(
+        "omniroute",
+        "omni-key",
+        base_url="http://gateway.local:20128/v1",
+    )
+    router = ProviderRouter(secrets)
+
+    client = router.client_for("omniroute:auto")
+
+    assert isinstance(client, OpenAIProvider)
+    assert client._base_url == "http://gateway.local:20128/v1"
+    assert client._secret_profile == "omniroute"
+
+
+def test_omniroute_falls_back_to_default_base_url_when_unset() -> None:
+    secrets = ProviderSecretService()
+    secrets.set_api_key("omniroute", "omni-key")
+    router = ProviderRouter(secrets)
+
+    client = router.client_for("omniroute:auto")
+
+    assert isinstance(client, OpenAIProvider)
+    assert client._base_url == "http://localhost:20128/v1"
 
 
 def test_router_rejects_unknown_or_ambiguous_provider_prefixes() -> None:

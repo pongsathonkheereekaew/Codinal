@@ -4446,6 +4446,17 @@ async function renderProviders() {
     input.autocomplete = "off";
     input.placeholder = provider.configured ? "Replace key…" : "API key";
     input.setAttribute("aria-label", `${provider.provider} API key`);
+    // Self-hosted OpenAI-compatible providers (OmniRoute) also take a base_url.
+    const wantsBaseUrl = provider.provider === "omniroute";
+    let baseUrlInput = null;
+    if (wantsBaseUrl) {
+      baseUrlInput = node("input");
+      baseUrlInput.type = "text";
+      baseUrlInput.autocomplete = "off";
+      baseUrlInput.placeholder = "http://localhost:20128/v1";
+      baseUrlInput.setAttribute("aria-label", `${provider.provider} base URL`);
+      baseUrlInput.classList.add("provider-base-url");
+    }
     const save = node("button", "", provider.configured ? "Update" : "Save");
     save.type = "button";
     save.setAttribute(
@@ -4456,11 +4467,16 @@ async function renderProviders() {
       if (!input.value) return;
       save.disabled = true;
       try {
-        await invoke("set_provider_secret", {
+        const payload = {
           provider: provider.provider,
           apiKey: input.value,
-        });
+        };
+        if (wantsBaseUrl) {
+          payload.baseUrl = baseUrlInput.value || null;
+        }
+        await invoke("set_provider_secret", payload);
         input.value = "";
+        if (baseUrlInput) baseUrlInput.value = "";
         await renderProviders();
         toast(`${provider.provider} credential saved`);
       } catch (error) {
@@ -4489,7 +4505,9 @@ async function renderProviders() {
       });
       actions.append(remove);
     }
-    row.append(label, input, actions);
+    row.append(label, input);
+    if (baseUrlInput) row.append(baseUrlInput);
+    row.append(actions);
     el["provider-list"].append(row);
   }
 }

@@ -15,11 +15,15 @@ engine uses to decide tool-call shaping, streaming, and parallel-tool fan-out.
 | Google Gemini | `gemini-2.5-flash` | `https://generativelanguage.googleapis.com` (native) | `provider:gemini` |
 | Z.ai (GLM) | `glm-4.6` | `https://api.z.ai/api/paas/v4/` | `provider:zai` |
 | DeepSeek | `deepseek-chat` | `https://api.deepseek.com` | `provider:deepseek` |
+| OmniRoute | `auto` | user-configurable (default `http://localhost:20128/v1`) | `provider:omniroute` (+ optional `base_url`) |
 | Ollama (local) | any pulled model | `http://127.0.0.1:11434/v1` | (placeholder key) |
 
 ZAI and DeepSeek are OpenAI-compatible backends and reuse the OpenAI SDK via
-`OpenAIProvider(base_url=…, secret_profile=…)`. GitHub Models also reads a
-`provider:github` secret (where applicable).
+`OpenAIProvider(base_url=…, secret_profile=…)`. OmniRoute is a self-hosted
+OpenAI-compatible gateway (290+ upstream providers, 19 routing strategies);
+its base URL is user-configurable in Settings, falling back to the local
+default. GitHub Models also reads a `provider:github` secret (where
+applicable).
 
 ## Conservative capability matrix (runtime defaults)
 
@@ -34,6 +38,7 @@ This is what the engine assumes before a live probe confirms. Run
 | Google Gemini | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Z.ai GLM | ✅ | ✅ (GLM-4V) | ❌ | ✅ | ✅ (GLM reasoning) |
 | DeepSeek | ✅ | ❌ | ❌ | ✅ | ✅ (`reasoning_content`) |
+| OmniRoute | ✅ | model-dependent (routed) | model-dependent | model-dependent | model-dependent |
 | Ollama | ✅ | ❌ | ❌ | ❌ | model-dependent |
 
 ## How to run the live matrix

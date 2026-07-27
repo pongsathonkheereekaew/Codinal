@@ -34,6 +34,13 @@ def capabilities_for(model: str) -> ModelCapabilities:
         return ModelCapabilities(
             streaming=True,
         )
+    if provider == "omniroute":
+        # Self-hosted OpenAI-compatible gateway proxies upstream providers;
+        # capabilities vary per routed model. Conservative default: streaming
+        # only, vision/PDF opt-in once live conformance confirms per-model.
+        return ModelCapabilities(
+            streaming=True,
+        )
     if name.startswith(("gpt-5", "gpt-4")):
         return ModelCapabilities(
             vision=True,

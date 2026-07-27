@@ -89,18 +89,26 @@ fn list_provider_secret_status(
 fn set_provider_secret(
     provider: String,
     api_key: String,
+    base_url: Option<String>,
     state: State<'_, DesktopState>,
 ) -> Result<SecretMutationResult, String> {
     let api_key = Zeroizing::new(api_key);
-    update_provider_secret(&state.vault, &provider, Some(&api_key), || {
-        sync_provider_secret(
-            state.port,
-            &state.token,
-            &state.secret_sync_token,
-            &provider,
-            Some(&api_key),
-        )
-    })
+    update_provider_secret(
+        &state.vault,
+        &provider,
+        Some(&api_key),
+        base_url.as_deref(),
+        || {
+            sync_provider_secret(
+                state.port,
+                &state.token,
+                &state.secret_sync_token,
+                &provider,
+                Some(&api_key),
+                base_url.as_deref(),
+            )
+        },
+    )
     .map(|configured| SecretMutationResult {
         provider,
         configured,
@@ -113,12 +121,13 @@ fn delete_provider_secret(
     provider: String,
     state: State<'_, DesktopState>,
 ) -> Result<SecretMutationResult, String> {
-    update_provider_secret(&state.vault, &provider, None, || {
+    update_provider_secret(&state.vault, &provider, None, None, || {
         sync_provider_secret(
             state.port,
             &state.token,
             &state.secret_sync_token,
             &provider,
+            None,
             None,
         )
     })

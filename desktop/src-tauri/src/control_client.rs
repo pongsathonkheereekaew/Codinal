@@ -14,16 +14,26 @@ pub fn sync_provider_secret(
     secret_sync_token: &str,
     provider: &str,
     api_key: Option<&str>,
+    base_url: Option<&str>,
 ) -> io::Result<()> {
     validate_session_token(token)?;
     validate_session_token(secret_sync_token)?;
     let provider = validate_provider(provider)?;
     let (method, body) = match api_key {
-        Some(value) if !value.trim().is_empty() => (
-            "PUT",
-            serde_json::to_vec(&serde_json::json!({"api_key": value}))
-                .map_err(|error| io::Error::other(error.to_string()))?,
-        ),
+        Some(value) if !value.trim().is_empty() => {
+            let payload = match base_url {
+                Some(url) if !url.trim().is_empty() => serde_json::json!({
+                    "api_key": value,
+                    "base_url": url.trim(),
+                }),
+                _ => serde_json::json!({ "api_key": value }),
+            };
+            (
+                "PUT",
+                serde_json::to_vec(&payload)
+                    .map_err(|error| io::Error::other(error.to_string()))?,
+            )
+        }
         Some(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

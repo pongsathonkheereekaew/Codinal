@@ -56,6 +56,7 @@ fn provider_secret_sync_uses_authenticated_body_not_url() {
         "test-secret-sync-token-with-at-least-32-chars",
         "openai",
         Some("sk-test-secret"),
+        None,
     )
     .expect("sync succeeds");
     let request = request.join().expect("server thread");
@@ -79,6 +80,7 @@ fn provider_secret_sync_errors_never_echo_secret() {
         "test-secret-sync-token-with-at-least-32-chars",
         "gemini",
         Some("must-not-echo"),
+        None,
     )
     .expect_err("sync fails");
     request.join().expect("server thread");

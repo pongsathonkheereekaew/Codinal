@@ -1331,9 +1331,9 @@ def create_control_plane_app(
         provider: str, request: Request
     ) -> dict[str, Any]:
         _authorize_secret_sync(request, services.secrets)
-        api_key = await _read_api_key(request)
+        api_key, base_url = await _read_api_key(request)
         try:
-            return services.secrets.set_api_key(provider, api_key)
+            return services.secrets.set_api_key(provider, api_key, base_url=base_url)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from None
 
@@ -4057,19 +4057,26 @@ async def _read_git_push(request: Request) -> dict[str, Any]:
     return {"remote": remote, "set_upstream": set_upstream}
 
 
-async def _read_api_key(request: Request) -> str:
+async def _read_api_key(request: Request) -> tuple[str, str | None]:
     try:
         body = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(status_code=400, detail="invalid secret payload") from None
     if (
         not isinstance(body, dict)
-        or set(body) != {"api_key"}
-        or not isinstance(body["api_key"], str)
+        or not isinstance(body.get("api_key"), str)
         or not 1 <= len(body["api_key"]) <= 16_384
     ):
         raise HTTPException(status_code=400, detail="invalid secret payload")
-    return body["api_key"]
+    base_url = body.get("base_url")
+    allowed_keys = {"api_key"}
+    if base_url is not None:
+        if not isinstance(base_url, str) or len(base_url) > 512:
+            raise HTTPException(status_code=400, detail="invalid secret payload")
+        allowed_keys = {"api_key", "base_url"}
+    if set(body) != allowed_keys:
+        raise HTTPException(status_code=400, detail="invalid secret payload")
+    return body["api_key"], base_url if isinstance(base_url, str) and base_url else None
 
 
 def _authorize_secret_sync(
