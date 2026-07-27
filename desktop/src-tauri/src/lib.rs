@@ -168,6 +168,20 @@ async fn available_update(
 
 #[tauri::command]
 async fn install_update(expected_version: String, app: tauri::AppHandle) -> Result<(), String> {
+    // Backup the current .app bundle so rollback is possible if the update
+    // is broken. The backup lives next to the app as `<name>.backup`.
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let app_bundle = current_exe
+        .ancestors()
+        .nth(3)
+        .ok_or("could not locate .app bundle")?;
+    let backup = app_bundle.with_extension("app.backup");
+    if app_bundle.exists() {
+        let _ = std::fs::remove_dir_all(&backup);
+        let _ = std::fs::create_dir_all(&backup);
+        copy_dir_recursive(app_bundle, &backup).map_err(|e| e.to_string())?;
+    }
+
     let update = available_update(&app)
         .await?
         .ok_or_else(|| "No update is available".to_owned())?;
@@ -179,6 +193,49 @@ async fn install_update(expected_version: String, app: tauri::AppHandle) -> Resu
         .await
         .map_err(|error| error.to_string())?;
     app.restart();
+}
+
+#[tauri::command]
+async fn rollback_update(app: tauri::AppHandle) -> Result<(), String> {
+    // Restore the backed-up .app bundle from before the last update.
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let app_bundle = current_exe
+        .ancestors()
+        .nth(3)
+        .ok_or("could not locate .app bundle")?;
+    let backup = app_bundle.with_extension("app.backup");
+    if !backup.exists() {
+        return Err("no update backup found — nothing to roll back".to_owned());
+    }
+    // Swap: move current aside, move backup into place, remove the old current.
+    let temp = app_bundle.with_extension("app.failed");
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::rename(app_bundle, &temp)
+        .map_err(|e| format!("could not move current app aside: {e}"))?;
+    if let Err(e) = std::fs::rename(&backup, app_bundle) {
+        // Restore: move the current back if the backup rename failed.
+        let _ = std::fs::rename(&temp, app_bundle);
+        return Err(format!("could not restore backup: {e}"));
+    }
+    let _ = std::fs::remove_dir_all(&temp);
+    app.restart();
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if !dst.exists() {
+        std::fs::create_dir_all(dst)?;
+    }
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 fn relay_deep_links(app_handle: tauri::AppHandle, urls: Vec<url::Url>) {
@@ -209,7 +266,8 @@ pub fn run() {
             delete_provider_secret,
             pick_workspace,
             check_for_update,
-            install_update
+            install_update,
+            rollback_update
         ])
         .setup(|app| {
             let token = mint_session_token()?;
@@ -264,4 +322,46 @@ pub fn run() {
             app_handle.state::<DesktopState>().stop();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::copy_dir_recursive;
+    use std::fs;
+
+    #[test]
+    fn copy_dir_recursive_copies_files_and_subdirs() {
+        let tmp = std::env::temp_dir().join("codinal-copy-test");
+        let _ = fs::remove_dir_all(&tmp);
+        let src = tmp.join("src");
+        fs::create_dir_all(src.join("sub")).unwrap();
+        fs::write(src.join("a.txt"), "hello").unwrap();
+        fs::write(src.join("sub/b.txt"), "world").unwrap();
+
+        let dst = tmp.join("dst");
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        assert_eq!(fs::read_to_string(dst.join("a.txt")).unwrap(), "hello");
+        assert_eq!(fs::read_to_string(dst.join("sub/b.txt")).unwrap(), "world");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn copy_dir_recursive_overwrites_existing() {
+        let tmp = std::env::temp_dir().join("codinal-overwrite-test");
+        let _ = fs::remove_dir_all(&tmp);
+        let src = tmp.join("src");
+        let dst = tmp.join("dst");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("new.txt"), "new").unwrap();
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(dst.join("old.txt"), "old").unwrap();
+
+        copy_dir_recursive(&src, &dst).unwrap();
+
+        assert_eq!(fs::read_to_string(dst.join("new.txt")).unwrap(), "new");
+        // old.txt is NOT removed (merge, not replace) — that's fine for backup.
+        assert!(dst.join("old.txt").exists());
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }
