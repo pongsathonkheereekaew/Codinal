@@ -59,12 +59,10 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="checkpoint-select"' in html
     assert 'id="restore-scope"' in html
     assert 'id="restore-checkpoint"' in html
-    assert 'id="terminal-command"' in html
-    assert 'id="terminal-timeout"' in html
-    assert 'id="terminal-run"' in html
-    assert 'id="terminal-stop"' in html
+    assert 'id="terminal-host"' in html
+    assert 'id="terminal-restart"' in html
     assert 'id="terminal-clear"' in html
-    assert 'id="terminal-output"' in html
+    assert 'id="terminal-status"' in html
     assert 'accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"' in html
     assert 'data-tauri-drag-region' in html
     assert "<style" not in html
@@ -94,7 +92,7 @@ def test_desktop_ui_has_accessibility_floor():
         assert f'aria-labelledby="{dialog}-title"' in html
     # Diff / terminal regions carry role + label.
     assert 'id="diff-view"' in html and 'role="log"' in html
-    assert 'id="terminal-output"' in html and 'aria-label="Terminal output"' in html
+    assert 'id="terminal-host"' in html and 'aria-label="Interactive terminal"' in html
 
 
 def test_desktop_ui_has_diagnostics_and_audit_surface():
@@ -194,7 +192,12 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert 'id="model-catalog"' in html
     assert "/v1/settings/routing" in script
     assert "/v1/sessions/" in script
-    assert "/terminal/interrupt" in script
+    assert "pty_open" in script
+    assert "pty_input" in script
+    assert "pty_resize" in script
+    assert "pty_kill" in script
+    assert "pty-data" in script
+    assert "pty-exit" in script
     assert "/mcp/servers" in script
     assert "/artifacts" in script
     assert 'id="git-graph"' in html

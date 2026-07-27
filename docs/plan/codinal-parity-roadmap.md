@@ -121,6 +121,14 @@ Resolve these before their dependent implementation:
 - [x] Add an integrated terminal with visible history, interrupt/takeover, and
   the same sandbox/approval policy as model-requested shell calls. (Phase 26 +
   Phase 35 dev-server URL detection + Phase 31 interrupt crash recovery.)
+- [x] Upgrade the integrated terminal to a real persistent PTY with ANSI color
+  and TUI support (vim, htop, less). (Phase 46: replaced the one-shot
+  subprocess runner with a Rust PTY primitive — `desktop/src-tauri/src/pty.rs`
+  using `forkpty` via the `nix` crate, streaming bytes over Tauri events to a
+  vendored xterm.js renderer in vanilla JS. No build step / no npm: xterm UMD
+  files live in `desktop/ui/vendor/`. The terminal is a distinct trust class
+  from the agent shell — see the trust-class-split note above. macOS-only;
+  Windows/Linux PTY (ConPTY) deferred.)
 
 Acceptance evidence:
 
@@ -129,6 +137,16 @@ Acceptance evidence:
 - A checkpoint E2E proves Agent changes can be restored while a manual edit made
   after the checkpoint remains untouched.
 - Terminal and diff E2Es prove no alternate execution/apply bypass exists.
+
+  > **Trust-class split (Phase 46):** the original "same sandbox as agent shell
+  > calls" invariant applied to one-shot commands. The interactive user terminal
+  > is now a distinct trust class: it runs **unsandboxed** (real HOME, network
+  > allowed) as a trusted user action — the user is typing live, like their own
+  > Terminal.app, and an interactive session's command cannot be pre-evaluated.
+  > Agent-requested shell (`run_shell` tool) remains seatbelt-sandboxed,
+  > one-shot, policy-gated, and network-denied. The two paths are isolated:
+  > terminal = Rust PTY (`desktop/src-tauri/src/pty.rs`) streamed via Tauri
+  > events; agent shell = `runtime/sandbox/shell.py`.
 
 ### P0 — Reliability, safety, and operability floor
 
