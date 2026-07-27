@@ -857,6 +857,22 @@ def create_control_plane_app(
             result["routing"] = routing.view(result["routing_profile"])
         return result
 
+    @app.patch("/v1/settings/failover")
+    async def update_failover_enabled(
+        request: Request,
+    ) -> dict[str, Any]:
+        body = await _read_bounded_object(
+            request,
+            limit=128,
+            detail="invalid failover payload",
+        )
+        if set(body) != {"enabled"} or not isinstance(body.get("enabled"), bool):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid failover payload",
+            )
+        return services.settings.set_failover_enabled(body["enabled"])
+
     @app.get("/v1/sessions")
     async def list_sessions(
         workspace: str | None = None,
@@ -1344,6 +1360,47 @@ def create_control_plane_app(
         _authorize_secret_sync(request, services.secrets)
         try:
             return services.secrets.delete_api_key(provider)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+
+    @app.get("/v1/providers/custom")
+    async def custom_providers_list() -> list[dict[str, Any]]:
+        return services.secrets.custom_providers()
+
+    @app.post("/v1/providers/custom")
+    async def custom_provider_create(
+        request: Request,
+    ) -> dict[str, Any]:
+        _authorize_secret_sync(request, services.secrets)
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(status_code=400, detail="invalid payload") from None
+        if not isinstance(body, dict) or set(body) - {"slug", "base_url", "api_key", "failover_eligible"}:
+            raise HTTPException(status_code=400, detail="invalid payload")
+        slug = body.get("slug")
+        base_url = body.get("base_url")
+        api_key = body.get("api_key")
+        failover_eligible = bool(body.get("failover_eligible", False))
+        if not (isinstance(slug, str) and isinstance(base_url, str) and isinstance(api_key, str)):
+            raise HTTPException(status_code=400, detail="invalid payload")
+        try:
+            return services.secrets.set_custom_provider(
+                slug,
+                base_url=base_url,
+                api_key=api_key,
+                failover_eligible=failover_eligible,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
+
+    @app.delete("/v1/providers/custom/{slug}")
+    async def custom_provider_delete(
+        slug: str, request: Request,
+    ) -> dict[str, Any]:
+        _authorize_secret_sync(request, services.secrets)
+        try:
+            return services.secrets.delete_custom_provider(slug)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from None
 

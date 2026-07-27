@@ -169,3 +169,40 @@ def test_secret_changes_automatically_invalidate_cached_cloud_client() -> None:
     secrets.set_api_key("openai", "new-memory-key")
 
     assert router.client_for("openai:gpt-5.6-sol") is not old_openai
+
+
+def test_custom_provider_dispatches_to_openai_provider() -> None:
+    """custom:<slug>:<model> resolves via OpenAIProvider with the registered
+    base_url + secret_profile."""
+    secrets = ProviderSecretService()
+    secrets.set_custom_provider(
+        "my-router",
+        base_url="http://localhost:8080/v1",
+        api_key="sk-test",
+    )
+    router = ProviderRouter(secrets)
+
+    client, bare = router.resolve("custom:my-router:gpt-4o")
+
+    assert isinstance(client, OpenAIProvider)
+    assert client._base_url == "http://localhost:8080/v1"
+    assert client._secret_profile == "custom:my-router"
+    assert bare == "gpt-4o"
+
+
+def test_custom_provider_unknown_slug_rejected() -> None:
+    router = ProviderRouter(ProviderSecretService())
+    with pytest.raises(ValueError, match="unknown custom provider"):
+        router.resolve("custom:nonexistent:model")
+
+
+def test_custom_model_id_validation() -> None:
+    secrets = ProviderSecretService()
+    secrets.set_custom_provider(
+        "x", base_url="http://localhost:8080/v1", api_key="k"
+    )
+    router = ProviderRouter(secrets)
+    with pytest.raises(ValueError, match="invalid custom model id"):
+        router.resolve("custom:x")  # no model segment
+    with pytest.raises(ValueError, match="invalid custom model id"):
+        router.resolve("custom::model")  # empty slug

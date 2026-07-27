@@ -147,7 +147,59 @@ class ModelRoutingService:
             "required_capabilities": sorted(required),
             "degradations": degradations,
             "reason": _reason(profile, selected, degradations),
+            "failover_chain": self._failover_chain(profile, selected["id"]),
         }
+
+    def _failover_chain(self, profile: str, primary: str) -> list[str]:
+        """Build the failover chain: primary first, then configured fallbacks.
+
+        For ``quality``/``balanced``/``economy`` the tail is the profile's
+        ``_PROFILE_ORDER`` filtered to configured providers. For ``manual`` the
+        tail is the ``quality`` order (a sensible default) filtered to
+        configured. Custom providers marked ``failover_eligible`` are appended
+        after the native tail. De-duplicated, primary always first.
+        """
+        order_profile = profile if profile in _PROFILE_ORDER else "quality"
+        native_tail = [
+            model
+            for model in _PROFILE_ORDER[order_profile]
+            if model != primary
+            and self._configured(_provider(model))
+        ]
+        custom_tail = self._eligible_custom_models()
+        chain = [primary]
+        seen = {primary}
+        for model in [*native_tail, *custom_tail]:
+            if model not in seen:
+                chain.append(model)
+                seen.add(model)
+        return chain
+
+    def _eligible_custom_models(self) -> list[str]:
+        """Custom-provider models opted into failover.
+
+        Returns synthetic model ids of the form ``custom:<slug>:auto`` for each
+        custom provider marked ``failover_eligible``. The ``:auto`` model is
+        the gateway's default routing; the user can pin a specific model by
+        editing the chain later.
+        """
+        lister = getattr(self._secrets, "custom_providers", None)
+        if not callable(lister):
+            return []
+        try:
+            rows = lister()
+        except Exception:
+            return []
+        models = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if not row.get("failover_eligible"):
+                continue
+            slug = row.get("slug")
+            if isinstance(slug, str) and slug:
+                models.append(f"custom:{slug}:auto")
+        return models
 
     def _models(self) -> list[str]:
         try:

@@ -113,11 +113,26 @@ def build_services(
     provider: ProviderClient | None = None,
     mcp_manager: MCPManager | None = None,
     approver: Approver = deny_all,
+    routing: Any = None,
+    failover_enabled: Any = None,
 ) -> RuntimeServices:
     managed_policy = ManagedPolicy.from_file(config.managed_policy_path)
     secret_service = secrets or ProviderSecretService(managed_policy=managed_policy)
     store = ConversationStore(config.data_dir)
-    provider_client = provider or ProviderRouter(secret_service)
+    inner_client = provider or ProviderRouter(secret_service)
+    # Wrap with FailoverRouter when a routing service is available. The wrapper
+    # is transparent (delegates straight through) when failover is disabled or
+    # no chain can be resolved, so existing tests that pass a stub `provider`
+    # are unaffected.
+    if routing is not None:
+        from runtime.providers.failover import FailoverRouter
+        provider_client: ProviderClient = FailoverRouter(
+            inner_client,
+            routing=routing,
+            failover_enabled=failover_enabled or (lambda: True),
+        )
+    else:
+        provider_client = inner_client
     git_service = GitWorktreeService(config.data_dir)
     approval_broker = ApprovalBroker(decisions=store)
     interaction_broker = InteractionBroker(store)

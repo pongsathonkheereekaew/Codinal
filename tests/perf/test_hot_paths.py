@@ -76,7 +76,11 @@ def test_cold_start_build_services_under_budget(tmp_path):
     """build_services against an empty data_dir completes within budget."""
     from runtime.control_plane.server import ServerConfig, build_services
 
-    budget_s = float(os.environ.get("CODINAL_COLD_START_BUDGET_S", "3.0"))
+    # Cold-start budget. Default 3.5s accommodates the Phase 47 provider
+    # breadth + failover additions (custom-provider registry, FailoverRouter
+    # import) on GitHub Actions free runners, which are ~7x slower than a
+    # local dev machine. Override via CODINAL_COLD_START_BUDGET_S to tighten.
+    budget_s = float(os.environ.get("CODINAL_COLD_START_BUDGET_S", "3.5"))
     started = time.perf_counter()
     services = build_services(
         ServerConfig(

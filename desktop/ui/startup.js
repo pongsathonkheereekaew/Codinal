@@ -388,11 +388,16 @@ function renderRoutingResolution() {
     "has-degradation",
     Boolean(degradations.length)
   );
+  const chain = Array.isArray(resolution?.failover_chain) ? resolution.failover_chain : [];
+  const chainText = chain.length > 1
+    ? ` · fallback: ${chain.slice(1).join(" → ")}`
+    : "";
   el["routing-resolution"].textContent = resolution
     ? (
       `${resolution.profile} → ${resolution.provider} · `
       + `${resolution.selected_model} · ${resolution.cost_class}`
       + `${degradations.length ? ` · ${degradations.join("; ")}` : ""}`
+      + `${chainText}`
     )
     : profile === "manual"
       ? `Manual → ${model || "selected model"}`
@@ -4529,6 +4534,113 @@ async function renderProviders() {
     row.append(actions);
     el["provider-list"].append(row);
   }
+  await renderCustomProviders();
+}
+
+async function renderCustomProviders() {
+  const host = el["provider-list"];
+  if (!host) return;
+  const existing = host.querySelector("[data-custom-providers]");
+  if (existing) existing.remove();
+  const section = node("div", "provider-section");
+  section.setAttribute("data-custom-providers", "");
+  section.append(
+    node("h4", "provider-section-title", "Custom OpenAI-compatible providers")
+  );
+  section.append(
+    node(
+      "p",
+      "settings-copy",
+      "Add any OpenAI-compatible gateway (OmniRoute, OpenRouter, OneAPI, local vLLM). Use as custom:<slug>:<model> in the model picker."
+    )
+  );
+  let providers = [];
+  if (invoke) {
+    try {
+      providers = await invoke("list_custom_providers");
+    } catch (error) {
+      section.append(
+        node("p", "provider-error", `Unable to load custom providers: ${String(error?.message || error)}`)
+      );
+    }
+  }
+  for (const provider of providers) {
+    const row = node("div", "provider-row");
+    const label = node("label", "", `custom:${provider.slug}`);
+    const status = node(
+      "span",
+      "provider-state" + (provider.failover_eligible ? " is-configured" : ""),
+      provider.failover_eligible ? "Failover-eligible" : "Manual only"
+    );
+    label.append(node("br"), status);
+    const url = node("span", "settings-copy", provider.base_url);
+    const remove = node("button", "remove-provider", "Remove");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      if (!window.confirm(`Remove custom:${provider.slug}?`)) return;
+      remove.disabled = true;
+      try {
+        await invoke("delete_custom_provider", { slug: provider.slug });
+        await renderProviders();
+        toast(`custom:${provider.slug} removed`);
+      } catch (error) {
+        toast(String(error), "error");
+        remove.disabled = false;
+      }
+    });
+    row.append(label, url, remove);
+    section.append(row);
+  }
+  const addRow = node("div", "provider-row custom-add");
+  const slugInput = node("input");
+  slugInput.type = "text";
+  slugInput.placeholder = "slug (e.g. my-openrouter)";
+  slugInput.setAttribute("aria-label", "Custom provider slug");
+  const urlInput = node("input");
+  urlInput.type = "text";
+  urlInput.placeholder = "https://api.example.com/v1";
+  urlInput.setAttribute("aria-label", "Custom provider base URL");
+  const keyInput = node("input");
+  keyInput.type = "password";
+  keyInput.autocomplete = "off";
+  keyInput.placeholder = "API key";
+  keyInput.setAttribute("aria-label", "Custom provider API key");
+  const failoverLabel = node("label", "custom-failover-toggle");
+  const failoverCheck = node("input");
+  failoverCheck.type = "checkbox";
+  failoverLabel.append(failoverCheck, document.createTextNode(" Failover-eligible"));
+  const addBtn = node("button", "secondary-button", "Add");
+  addBtn.type = "button";
+  addBtn.addEventListener("click", async () => {
+    const slug = slugInput.value.trim();
+    const baseUrl = urlInput.value.trim();
+    const apiKey = keyInput.value;
+    if (!slug || !baseUrl || !apiKey) {
+      toast("slug, base URL, and API key are all required", "error");
+      return;
+    }
+    addBtn.disabled = true;
+    try {
+      await invoke("set_custom_provider", {
+        slug,
+        baseUrl,
+        apiKey,
+        failoverEligible: failoverCheck.checked,
+      });
+      slugInput.value = "";
+      urlInput.value = "";
+      keyInput.value = "";
+      failoverCheck.checked = false;
+      await renderProviders();
+      toast(`custom:${slug} saved`);
+    } catch (error) {
+      toast(String(error), "error");
+      addBtn.disabled = false;
+    }
+  });
+  addRow.append(slugInput, urlInput, keyInput, failoverLabel, addBtn);
+  section.append(addRow);
+  host.append(section);
 }
 
 function wireEvents() {

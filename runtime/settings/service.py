@@ -197,7 +197,13 @@ class SettingsService:
             "nav_layout": self._nav_layout(),
             "sessions_peek": self._sessions_peek(),
             "pdf": self._pdf_preferences(),
+            "failover_enabled": self._failover_enabled(),
         }
+
+    def _failover_enabled(self) -> bool:
+        """Auto-failover toggle (default True). When off, FailoverRouter
+        delegates straight to the wrapped router — zero behavior change."""
+        return bool(self._preferences.get("failover_enabled", True))
 
     def set_default_model(self, model: str) -> dict[str, Any]:
         normalized = (model or "").strip()
@@ -224,6 +230,21 @@ class SettingsService:
                 self._preferences["routing_profile"] = previous
             raise
         return {"ok": True, "routing_profile": normalized}
+
+    def set_failover_enabled(self, enabled: bool) -> dict[str, Any]:
+        normalized = bool(enabled)
+        sentinel = object()
+        previous = self._preferences.get("failover_enabled", sentinel)
+        self._preferences["failover_enabled"] = normalized
+        try:
+            self._persist()
+        except Exception:
+            if previous is sentinel:
+                self._preferences.pop("failover_enabled", None)
+            else:
+                self._preferences["failover_enabled"] = previous
+            raise
+        return {"ok": True, "failover_enabled": normalized}
 
     def set_onboarded(self, value: bool = True) -> dict[str, Any]:
         self._preferences["onboarded"] = bool(value)

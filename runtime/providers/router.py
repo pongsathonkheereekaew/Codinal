@@ -14,6 +14,7 @@ from .openai_provider import OpenAIProvider
 
 _CLOUD_PROVIDERS = {"openai", "anthropic", "gemini", "zai", "deepseek", "omniroute"}
 _PROVIDERS = _CLOUD_PROVIDERS | {"ollama"}
+_CUSTOM_PREFIX = "custom:"
 
 # OpenAI-compatible cloud backends: provider name → (base_url, secret_profile).
 # Each reuses OpenAIProvider with its own endpoint and secret-store entry.
@@ -26,6 +27,10 @@ _OPENAI_COMPATIBLE = {
 # user-configurable via Settings rather than hardcoded. Default assumes a
 # local gateway on the documented port.
 _OMNIROUTE_DEFAULT_URL = "http://localhost:20128/v1"
+
+
+def _is_custom(provider: str) -> bool:
+    return provider.startswith(_CUSTOM_PREFIX)
 
 
 class ProviderRouter(ProviderClient):
@@ -56,7 +61,7 @@ class ProviderRouter(ProviderClient):
         return self.resolve(model)[0]
 
     def invalidate(self, provider: Optional[str] = None) -> None:
-        if provider is not None and provider not in _PROVIDERS:
+        if provider is not None and provider not in _PROVIDERS and not _is_custom(provider):
             raise ValueError("unsupported model provider")
         with self._lock:
             if provider is None:
@@ -127,6 +132,15 @@ class ProviderRouter(ProviderClient):
                         secret_profile="omniroute",
                         secrets=self._secrets,
                     )
+                elif _is_custom(provider):
+                    # User-registered OpenAI-compatible gateway (Phase 47A).
+                    # base_url + secret_profile both come from the secret store.
+                    base_url = self._custom_base_url(provider)
+                    client = OpenAIProvider(
+                        base_url=base_url,
+                        secret_profile=provider,
+                        secrets=self._secrets,
+                    )
                 else:
                     client = OpenAIProvider(
                         api_key="ollama-local",
@@ -149,12 +163,32 @@ class ProviderRouter(ProviderClient):
             if "/" in model:
                 raise ValueError("invalid model id")
             return self._default, model
+        # Custom providers use a two-segment prefix: `custom:<slug>:<model>`.
+        if model.startswith(_CUSTOM_PREFIX):
+            remainder = model[len(_CUSTOM_PREFIX):]
+            if ":" not in remainder:
+                raise ValueError("invalid custom model id")
+            slug, bare = remainder.split(":", 1)
+            if not slug or not bare:
+                raise ValueError("invalid custom model id")
+            provider = f"{_CUSTOM_PREFIX}{slug}"
+            if not self._custom_provider_known(provider):
+                raise ValueError("unknown custom provider")
+            return provider, bare
         provider, bare = model.split(":", 1)
         if provider not in _PROVIDERS:
             raise ValueError("unsupported model provider")
         if not bare:
             raise ValueError("invalid model id")
         return provider, bare
+
+    def _custom_provider_known(self, provider: str) -> bool:
+        """True if the custom provider is registered in the secret store."""
+        lister = getattr(self._secrets, "custom_providers", None)
+        if not callable(lister):
+            return False
+        slug = provider[len(_CUSTOM_PREFIX):]
+        return any(row.get("slug") == slug for row in lister())
 
     @staticmethod
     def _validate_ollama_url(value: str) -> None:
@@ -184,3 +218,17 @@ class ProviderRouter(ProviderClient):
             if isinstance(value, str) and value:
                 return value
         return _OMNIROUTE_DEFAULT_URL
+
+    def _custom_base_url(self, provider: str) -> str:
+        """Resolve a custom provider's base_url from the secret store.
+
+        Custom providers must have a base_url (validated at registration); if
+        it's somehow missing we raise rather than guess — the client would
+        silently hit the default OpenAI endpoint otherwise.
+        """
+        getter = getattr(self._secrets, "get_base_url", None)
+        if callable(getter):
+            value = getter(provider)
+            if isinstance(value, str) and value:
+                return value
+        raise RuntimeError(f"custom provider '{provider}' has no base_url")
