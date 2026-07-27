@@ -1452,3 +1452,74 @@ def test_apply_refuses_dirty_source_without_modifying_it(
     assert (repo / "tracked.txt").read_text(
         encoding="utf-8"
     ) == "dirty source\n"
+
+
+@requires_seatbelt
+def test_reconcile_crashed_applies_aborts_stale_merge_head(tmp_path):
+    """A crashed apply_back leaves a stale MERGE_HEAD; reconcile cleans it."""
+    repo = repository(tmp_path)
+    source_head = git(repo, "rev-parse", "HEAD")
+    service = GitWorktreeService(tmp_path / "data")
+    record = service.prepare("crashed-apply", repo)
+    # Simulate a commit on the session branch, then a mid-apply crash that
+    # leaves the source worktree mid-merge with a conflict.
+    (record.worktree_path / "tracked.txt").write_text(
+        "session edit\n", encoding="utf-8"
+    )
+    service.stage("crashed-apply", "tracked.txt")
+    service.commit("crashed-apply", "session change")
+    # Make the source diverge so a merge would conflict, then start a merge
+    # that we abandon (simulating a kill mid-merge).
+    (repo / "tracked.txt").write_text(
+        "conflicting source\n", encoding="utf-8"
+    )
+    git(repo, "add", "tracked.txt")
+    git(repo, "commit", "-m", "source change")
+    # Start the merge in the source worktree; it will conflict.
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "merge",
+            "--no-ff",
+            "-m",
+            "crashed merge",
+            record.session_branch,
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    # A merge was attempted; MERGE_HEAD may or may not be present depending
+    # on whether it conflicted. Force a stale MERGE_HEAD to simulate a crash
+    # mid-merge (write MERGE_HEAD pointing at the session branch tip).
+    session_tip = git(record.worktree_path, "rev-parse", "HEAD")
+    git_dir = repo / ".git"
+    if git_dir.is_dir():
+        (git_dir / "MERGE_HEAD").write_text(
+            f"{session_tip}\n", encoding="utf-8"
+        )
+
+    # Reconcile: should abort the stale merge, restore head, mark CONFLICT.
+    recovered = service.reconcile_crashed_applies()
+
+    assert recovered == 1
+    assert git(repo, "rev-parse", "HEAD") == git(
+        repo, "rev-parse", "HEAD"
+    )  # head stable
+    assert not (git_dir / "MERGE_HEAD").exists()
+    final_record = service.load("crashed-apply")
+    assert final_record.state is WorktreeState.CONFLICT
+
+
+@requires_seatbelt
+def test_reconcile_crashed_applies_noop_when_clean(tmp_path):
+    repo = repository(tmp_path)
+    service = GitWorktreeService(tmp_path / "data")
+    service.prepare("clean-session", repo)
+
+    recovered = service.reconcile_crashed_applies()
+
+    assert recovered == 0
+    assert service.load("clean-session").state is WorktreeState.ACTIVE

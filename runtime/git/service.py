@@ -1798,6 +1798,55 @@ class GitWorktreeService:
             "error": "apply conflict; source was restored",
         }
 
+    def reconcile_crashed_applies(self) -> int:
+        """Abort stale merges left by a crashed apply_back/apply_many.
+
+        A process killed mid-`git merge` leaves the source worktree with a
+        ``MERGE_HEAD`` and no recorded ``WorktreeState.CONFLICT`` — the next
+        apply would be blocked by the dirty worktree with no recovery path.
+        This runs at boot: for each session whose source worktree has a stale
+        ``MERGE_HEAD``, abort the merge, verify clean + head restored, and mark
+        the record CONFLICT so the user sees a clear recovery path.
+        """
+        recovered = 0
+        for record in self.store.list_records():
+            if record.state in {WorktreeState.FAILED}:
+                continue
+            if not record.source_root.is_dir():
+                continue
+            try:
+                if not self._merge_in_progress(record.source_root):
+                    continue
+            except GitWorkspaceError:
+                continue
+            aborted = self._probe_result(
+                record.source_root,
+                "merge",
+                "--abort",
+            )
+            try:
+                restored_head = self._probe(
+                    record.source_root,
+                    "rev-parse",
+                    "HEAD",
+                )
+            except GitWorkspaceError:
+                restored_head = ""
+            if (
+                aborted.returncode != 0
+                or not restored_head
+                or not self._is_clean(record.source_root)
+            ):
+                self.store.save(
+                    replace(record, state=WorktreeState.FAILED)
+                )
+                continue
+            self.store.save(
+                replace(record, state=WorktreeState.CONFLICT)
+            )
+            recovered += 1
+        return recovered
+
     def interrupt(self, session_id: str) -> None:
         with self._process_lock:
             shells = list(self._active_shells.get(session_id, ()))

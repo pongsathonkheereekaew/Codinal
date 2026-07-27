@@ -3932,3 +3932,200 @@ def test_git_ship_loop_stage_commit_log_graph_push(tmp_path):
     assert [event["action"] for event in events] == ["push"]
     assert events[0]["subject"] == record.session_branch
     assert services.audit.verify_chain() is True
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="requires SIGSTOP/SIGKILL process semantics",
+)
+def test_sigkill_during_plan_wait_resurfaces_without_replay(tmp_path):
+    """A plan awaiting decision survives a real SIGKILL and re-surfaces."""
+
+    class PlanRecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(
+                            "provider/plan-crash-window",
+                            "propose_plan",
+                            {"plan": "1. Inspect\n2. Implement"},
+                        )
+                    ]
+                )
+            return AssistantTurn(text="plan recovery complete")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    ready = tmp_path / "plan-checkpoint.txt"
+    _kill_crash_worker_at_durable_window(
+        mode="plan",
+        data_dir=data_dir,
+        workspace=workspace,
+        ready=ready,
+    )
+
+    provider = PlanRecoveryProvider()
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=provider,
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        for _ in range(200):
+            if not services.turns.is_active("session-kill"):
+                break
+            time.sleep(0.01)
+        pending = client.get(
+            "/v1/sessions/session-kill/interactions",
+            headers=AUTH,
+        )
+
+    plan_pending = [
+        item for item in pending.json() if item.get("kind") == "plan"
+    ]
+    # The plan re-surfaced after restart. The resume re-emits the pending
+    # propose_plan (parks again in AWAITING) without calling the provider
+    # again — no completed tool call is replayed.
+    assert plan_pending
+    assert provider.calls == 0
+
+
+@pytest.mark.skipif(
+    platform.system() == "Windows",
+    reason="requires SIGSTOP/SIGKILL process semantics",
+)
+def test_sigkill_during_shell_execution_abandons_call_without_replay(
+    tmp_path,
+):
+    """An in-flight run_shell is abandoned on resume; never replayed."""
+
+    class ShellRecoveryProvider(ProviderClient):
+        def __init__(self):
+            self.calls = 0
+
+        def complete(self, **_kwargs):
+            self.calls += 1
+            return AssistantTurn(text="shell recovery complete")
+
+        def capabilities(self, _model):
+            return ModelCapabilities()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    data_dir = tmp_path / "data"
+    ready = tmp_path / "shell-checkpoint.txt"
+    _kill_crash_worker_at_durable_window(
+        mode="shell",
+        data_dir=data_dir,
+        workspace=workspace,
+        ready=ready,
+    )
+
+    provider = ShellRecoveryProvider()
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=data_dir,
+            default_model="openai:gpt-test",
+        ),
+        provider=provider,
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        for _ in range(200):
+            if not services.turns.is_active("session-kill"):
+                break
+            time.sleep(0.01)
+
+    # The shell call was abandoned (never replayed); the turn recovered and
+    # completed with the recovery provider answering once.
+    assert provider.calls == 1
+    recovered = ConversationStore(data_dir).load("session-kill")
+    assert recovered is not None
+    assert recovered.turn_checkpoint == TurnCheckpoint()
+    tool_messages = [
+        m for m in recovered.messages if m.get("role") == "tool"
+    ]
+    assert tool_messages
+    # The abandoned call's result records the unknown outcome.
+    assert any(
+        "unknown" in str(m.get("content", "")).lower()
+        or "interrupted" in str(m.get("content", "")).lower()
+        for m in tool_messages
+    )
+
+
+def test_apply_back_crash_reconciles_stale_merge_on_restart(tmp_path):
+    """A crashed apply_back leaves a stale MERGE_HEAD; boot reconcile cleans it."""
+    import subprocess
+
+    from runtime.git import GitWorktreeService, WorktreeState
+
+    source = tmp_path / "source"
+    source.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "feature", str(source)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    for key, value in (
+        ("user.name", "Codinal Test"),
+        ("user.email", "codinal@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(source), "config", key, value],
+            check=True,
+        )
+    (source / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "-m", "base"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    data_dir = tmp_path / "data"
+    service = GitWorktreeService(data_dir)
+    record = service.prepare("crashed-apply", source)
+    # Simulate a commit on the session branch.
+    (record.worktree_path / "tracked.txt").write_text(
+        "session edit\n", encoding="utf-8"
+    )
+    service.stage("crashed-apply", "tracked.txt")
+    service.commit("crashed-apply", "session change")
+    session_tip = subprocess.run(
+        ["git", "-C", str(record.worktree_path), "rev-parse", "HEAD"],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    # Simulate a crash mid-merge by leaving a stale MERGE_HEAD in source.
+    (source / ".git" / "MERGE_HEAD").write_text(
+        f"{session_tip}\n", encoding="utf-8"
+    )
+
+    # Boot reconcile (run via lifespan in production; called directly here).
+    recovered = service.reconcile_crashed_applies()
+
+    assert recovered == 1
+    assert not (source / ".git" / "MERGE_HEAD").exists()
+    final = service.load("crashed-apply")
+    assert final.state is WorktreeState.CONFLICT

@@ -74,6 +74,42 @@ class StreamingCrashProvider(ProviderClient):
         return ModelCapabilities()
 
 
+class PlanProposalProvider(ProviderClient):
+    """Emits propose_plan; the turn parks in AWAITING_APPROVAL until decided."""
+
+    def complete(self, **_kwargs):
+        return AssistantTurn(
+            tool_calls=[
+                ToolCall(
+                    "provider/plan-crash-window",
+                    "propose_plan",
+                    {"plan": "1. Inspect\n2. Implement"},
+                )
+            ]
+        )
+
+    def capabilities(self, _model):
+        return ModelCapabilities()
+
+
+class ShellExecProvider(ProviderClient):
+    """Emits a run_shell call that blocks (so it is EXECUTING at crash time)."""
+
+    def complete(self, **_kwargs):
+        return AssistantTurn(
+            tool_calls=[
+                ToolCall(
+                    "provider/shell-crash-window",
+                    "run_shell",
+                    {"command": "sleep 30"},
+                )
+            ]
+        )
+
+    def capabilities(self, _model):
+        return ModelCapabilities()
+
+
 def blocking_registry(roots) -> ToolRegistry:
     registry = ToolRegistry(ToolManifest())
 
@@ -109,8 +145,12 @@ async def run(
     ready: Path,
 ) -> None:
     provider: ProviderClient
+    agent = "code"
+    turn_mode = None
+    user_input = "run two reads"
     if mode == "approval":
         provider = AwaitingWriteProvider()
+        user_input = "create recovered-after-kill.txt"
     elif mode == "parallel":
         provider = ParallelReadProvider()
         server_module.build_core_registry = blocking_registry
@@ -118,8 +158,25 @@ async def run(
         provider = StreamingCrashProvider(
             workspace / "stream.started"
         )
+    elif mode == "plan":
+        provider = PlanProposalProvider()
+        agent = "plan"
+        turn_mode = "plan"
+        user_input = "plan the change"
+    elif mode == "shell":
+        provider = ShellExecProvider()
+        user_input = "run a long shell command"
     else:
         raise ValueError("unsupported crash worker mode")
+
+    async def _auto_approve(_request):
+        return ApprovalOutcome.ONCE
+
+    build_kwargs = {"provider": provider}
+    if mode == "shell":
+        # run_shell is EXEC-risk; auto-approve so it actually starts executing
+        # (we want it in-flight at crash time, not awaiting approval).
+        build_kwargs["approver"] = _auto_approve
     services = build_services(
         ServerConfig(
             token="worker-session-token-with-at-least-32-characters",
@@ -127,17 +184,16 @@ async def run(
             data_dir=data_dir,
             default_model="openai:gpt-test",
         ),
-        provider=provider,
+        **build_kwargs,
     )
-    await services.turns.start(
-        "session-kill",
-        user_input=(
-            "create recovered-after-kill.txt"
-            if mode == "approval"
-            else "run two reads"
-        ),
-        workspace=workspace,
-    )
+    start_kwargs = {
+        "user_input": user_input,
+        "workspace": workspace,
+        "agent": agent,
+    }
+    if turn_mode is not None:
+        start_kwargs["mode"] = turn_mode
+    await services.turns.start("session-kill", **start_kwargs)
     if mode == "parallel":
         while True:
             observer = ConversationStore(data_dir)
@@ -175,6 +231,66 @@ async def run(
                 break
             await asyncio.sleep(0.01)
         ready.write_text("stream checkpoint durable\n", encoding="utf-8")
+        os.kill(os.getpid(), signal.SIGSTOP)
+        return
+    if mode == "plan":
+        # Wait until the plan proposal is pending (AWAITING_APPROVAL).
+        interactions = getattr(services, "interactions", None)
+        while True:
+            observer = ConversationStore(data_dir)
+            record = observer.load("session-kill")
+            observer.close()
+            pending = (
+                interactions.pending("session-kill")
+                if interactions is not None and hasattr(
+                    interactions, "pending"
+                )
+                else []
+            )
+            if (
+                record is not None
+                and record.turn_checkpoint.status
+                is TurnStatus.AWAITING_APPROVAL
+                and any(
+                    item.get("kind") == "plan" for item in pending
+                )
+            ):
+                break
+            await asyncio.sleep(0.01)
+        ready.write_text(
+            json.dumps(
+                {
+                    "interaction_id": next(
+                        item["interaction_id"]
+                        for item in pending
+                        if item.get("kind") == "plan"
+                    )
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.kill(os.getpid(), signal.SIGSTOP)
+        return
+    if mode == "shell":
+        # Wait until the run_shell call is EXECUTING (in flight at crash).
+        while True:
+            observer = ConversationStore(data_dir)
+            record = observer.load("session-kill")
+            observer.close()
+            if (
+                record is not None
+                and record.turn_checkpoint.status
+                is TurnStatus.EXECUTING
+                and "provider/shell-crash-window"
+                in set(
+                    record.turn_checkpoint.active_tool_call_ids
+                )
+            ):
+                break
+            await asyncio.sleep(0.01)
+        ready.write_text(
+            "shell executing\n", encoding="utf-8"
+        )
         os.kill(os.getpid(), signal.SIGSTOP)
         return
     approval = None

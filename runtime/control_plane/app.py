@@ -534,6 +534,13 @@ def create_control_plane_app(
             restores = getattr(services, "restores", None)
             if restores is not None:
                 await asyncio.to_thread(restores.reconcile)
+            git_service = getattr(services, "git", None)
+            if git_service is not None and hasattr(
+                git_service, "reconcile_crashed_applies"
+            ):
+                await asyncio.to_thread(
+                    git_service.reconcile_crashed_applies
+                )
             await services.turns.recover()
             goals = getattr(services, "goals", None)
             if goals is not None:
