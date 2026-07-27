@@ -415,6 +415,35 @@ class GitControl(Protocol):
     def close(self) -> None: ...
 
 
+class GitHubControl(Protocol):
+    def create_pr(
+        self,
+        source_root: Any,
+        session_branch: str,
+        *,
+        title: str,
+        body: str = "",
+        base: str = "",
+        remote: str = "origin",
+    ) -> dict[str, object]: ...
+
+    def find_pr(
+        self,
+        source_root: Any,
+        session_branch: str,
+        *,
+        remote: str = "origin",
+    ) -> dict[str, object]: ...
+
+    def list_checks(
+        self,
+        source_root: Any,
+        ref: str,
+        *,
+        remote: str = "origin",
+    ) -> dict[str, object]: ...
+
+
 class ApprovalControl(Protocol):
     def pending(self, session_id: str) -> list[dict[str, Any]]: ...
 
@@ -518,6 +547,7 @@ class ControlPlaneServices(Protocol):
     sessions: SessionControl
     mcp: MCPControl | None
     git: GitControl | None
+    github: GitHubControl | None
     restores: RestoreControl | None
     approvals: ApprovalControl | None
     interactions: InteractionControl | None
@@ -2282,6 +2312,78 @@ def create_control_plane_app(
                 detail="Git files unavailable",
             ) from None
 
+    @app.post("/v1/sessions/{session_id}/github/pr")
+    async def github_create_pr(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        github = getattr(services, "github", None)
+        if github is None:
+            raise HTTPException(status_code=503, detail="GitHub unavailable")
+        body = await _read_github_pr_request(request)
+        record = services.git.load(session_id)
+
+        def _create() -> dict[str, object]:
+            return github.create_pr(
+                record.source_root,
+                record.session_branch,
+                title=body["title"],
+                body=body.get("body", ""),
+                base=body.get("base", ""),
+            )
+
+        try:
+            result = await services.turns.mutate_when_idle(session_id, _create)
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        return result
+
+    @app.get("/v1/sessions/{session_id}/github/pr")
+    async def github_get_pr(session_id: str) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        github = getattr(services, "github", None)
+        if github is None:
+            raise HTTPException(status_code=503, detail="GitHub unavailable")
+        record = services.git.load(session_id)
+        try:
+            return await asyncio.to_thread(
+                github.find_pr,
+                record.source_root,
+                record.session_branch,
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=502,
+                detail=str(error),
+            ) from None
+
+    @app.get("/v1/sessions/{session_id}/github/checks")
+    async def github_checks(session_id: str) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        github = getattr(services, "github", None)
+        if github is None:
+            raise HTTPException(status_code=503, detail="GitHub unavailable")
+        record = services.git.load(session_id)
+        head = services.git.status(session_id).get("head_commit", "")
+        try:
+            return await asyncio.to_thread(
+                github.list_checks,
+                record.source_root,
+                head,
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=502,
+                detail=str(error),
+            ) from None
+
     @app.get("/v1/sessions/{session_id}/checkpoints")
     async def list_checkpoints(
         session_id: str,
@@ -3529,6 +3631,35 @@ async def _read_apply_selection(request: Request) -> list[str] | None:
             detail="invalid apply selection",
         )
     return list(body["paths"])
+
+
+async def _read_github_pr_request(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid GitHub PR request",
+        ) from None
+    title = body.get("title") if isinstance(body, dict) else None
+    if (
+        not isinstance(body, dict)
+        or not isinstance(title, str)
+        or not 1 <= len(title) <= 256
+        or not set(body) <= {"title", "body", "base"}
+        or (body.get("body") is not None and not isinstance(body.get("body"), str))
+        or (body.get("base") is not None and not isinstance(body.get("base"), str))
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid GitHub PR request",
+        )
+    result: dict[str, Any] = {"title": title}
+    if "body" in body and body["body"] is not None:
+        result["body"] = body["body"][:65_536]
+    if "base" in body and body["base"] is not None:
+        result["base"] = body["base"][:128]
+    return result
 
 
 async def _read_git_push(request: Request) -> dict[str, Any]:

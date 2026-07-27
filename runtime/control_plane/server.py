@@ -23,6 +23,7 @@ from runtime.git import (
 )
 from runtime.interactions import InteractionBroker
 from runtime.mcp import MCPManager, MCPStore
+from runtime.github import GitHubService
 from runtime.oauth import OAuthCoordinator
 from runtime.policy import ApprovalBroker, Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
@@ -118,6 +119,7 @@ def build_services(
     mcp_store = MCPStore(config.data_dir)
     secret_redactor = SecretRedactor(secret_service)
     audit_ledger = AuditLedger(config.data_dir, redactor=secret_redactor)
+    github_service = GitHubService(secret_service)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -447,6 +449,7 @@ def build_services(
         goal_store=goal_store,
         mcp_store=mcp_store,
         audit=audit_ledger,
+        github=github_service,
     )
 
 

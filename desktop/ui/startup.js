@@ -103,6 +103,7 @@ const el = Object.fromEntries(
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
     "checkpoint-select", "restore-scope", "restore-checkpoint",
     "git-branch", "git-graph", "git-push",
+    "github-create-pr", "github-pr-status",
     "commit-message", "git-stage", "git-commit", "git-log",
     "model-summary", "model-catalog", "update-status", "check-update",
     "install-update",
@@ -3635,6 +3636,7 @@ async function loadDiff(showPanel = true) {
     loadGitGraph(sessionId),
     loadGitLog(sessionId),
     loadGitStatus(sessionId),
+    loadPullRequest(),
   ]);
   if (showPanel && state.sessionId === sessionId) openReview();
 }
@@ -4031,6 +4033,81 @@ async function pushBranch() {
   }
 }
 
+async function loadPullRequest() {
+  if (!state.sessionId) {
+    el["github-pr-status"].textContent = "";
+    el["github-create-pr"].disabled = true;
+    return;
+  }
+  try {
+    const pr = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/github/pr`
+    );
+    if (pr && pr.open) {
+      const label = pr.draft ? "draft PR" : "PR";
+      el["github-pr-status"].replaceChildren();
+      const link = document.createElement("a");
+      link.href = pr.url;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = `${label} #${pr.number}: ${pr.title}`;
+      el["github-pr-status"].append(link);
+      el["github-create-pr"].disabled = true;
+      await loadChecks();
+    } else {
+      el["github-pr-status"].textContent = "No open PR";
+      el["github-create-pr"].disabled = !state.sessionId;
+    }
+  } catch (error) {
+    el["github-pr-status"].textContent = "";
+    el["github-create-pr"].disabled = true;
+  }
+}
+
+async function createPullRequest() {
+  if (!state.sessionId || state.busy) return;
+  const title = el["commit-message"].value.trim()
+    || window.prompt("PR title:");
+  if (!title) return;
+  el["github-create-pr"].disabled = true;
+  try {
+    const pr = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/github/pr`,
+      {
+        method: "POST",
+        body: JSON.stringify({ title }),
+      }
+    );
+    toast(`Created PR #${pr.number}`);
+    await loadPullRequest();
+  } catch (error) {
+    toast(error.message, "error");
+    el["github-create-pr"].disabled = false;
+  }
+}
+
+async function loadChecks() {
+  if (!state.sessionId) return;
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/github/checks`
+    );
+    const total = result.total || 0;
+    if (total && Array.isArray(result.runs)) {
+      const passed = result.runs.filter((r) => r.conclusion === "success").length;
+      el["github-pr-status"].append(
+        node(
+          "span",
+          "github-checks-summary",
+          ` · CI: ${passed}/${total} passing`
+        )
+      );
+    }
+  } catch (_error) {
+    // Checks are optional; ignore failures silently.
+  }
+}
+
 function toggleTheme() {
   const current = document.documentElement.dataset.theme;
   const next = current === "dark" ? "light" : "dark";
@@ -4399,6 +4476,9 @@ function wireEvents() {
   });
   el["git-push"].addEventListener("click", () => {
     pushBranch().catch((error) => toast(error.message, "error"));
+  });
+  el["github-create-pr"].addEventListener("click", () => {
+    createPullRequest().catch((error) => toast(error.message, "error"));
   });
   el["commit-message"].addEventListener("input", renderGitStatus);
   el["checkpoint-select"].addEventListener(

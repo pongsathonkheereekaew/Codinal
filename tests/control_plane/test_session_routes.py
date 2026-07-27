@@ -2084,3 +2084,134 @@ def test_git_apply_rejects_malformed_paths():
 
     assert not_a_list.status_code == 400
     assert extra_field.status_code == 400
+
+
+class _FakeGitWithRecord:
+    def __init__(self, source_root=None):
+        self._source_root = source_root
+
+    def load(self, session_id):
+        if self._source_root is None:
+            return None
+        return SimpleNamespace(
+            source_root=self._source_root, session_branch="feature"
+        )
+
+    def status(self, _session_id):
+        return {"head_commit": "abc123"}
+
+    def close(self):
+        return None
+
+
+class _FakeGitHub:
+    def __init__(self):
+        self.created = None
+
+    def create_pr(self, source_root, branch, *, title, body="", base=""):
+        self.created = (title, body, base)
+        return {"open": True, "number": 1, "title": title, "url": "https://github.com/o/r/pull/1"}
+
+    def find_pr(self, source_root, branch):
+        return {"open": False}
+
+    def list_checks(self, source_root, ref):
+        return {"total": 0, "runs": []}
+
+
+def _github_client(git, github):
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        routing=None,
+        secrets=ProviderSecretService(),
+        oauth=OAuthCoordinator(),
+        turns=FakeTurns(),
+        sessions=FakeSessions(),
+        approvals=None,
+        mcp=None,
+        git=git,
+        github=github,
+        audit=None,
+    )
+    return TestClient(create_control_plane_app(token=TOKEN, services=services))
+
+
+def test_github_create_pr_route_creates_pr():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/github/pr",
+            headers=AUTH,
+            json={"title": "Add feature", "body": "details", "base": "main"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["open"] is True
+    assert body["number"] == 1
+    assert github.created == ("Add feature", "details", "main")
+
+
+def test_github_get_pr_route_returns_pr_info():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.get(
+            "/v1/sessions/session-1/github/pr",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"open": False}
+
+
+def test_github_checks_route_returns_check_runs():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.get(
+            "/v1/sessions/session-1/github/checks",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 0
+
+
+def test_github_routes_503_when_github_unavailable():
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github=None)
+
+    with client:
+        for method, path in [
+            ("POST", "/v1/sessions/session-1/github/pr"),
+            ("GET", "/v1/sessions/session-1/github/pr"),
+            ("GET", "/v1/sessions/session-1/github/checks"),
+        ]:
+            kwargs = {"json": {"title": "x"}} if method == "POST" else {}
+            response = client.request(method, path, headers=AUTH, **kwargs)
+            assert response.status_code == 503
+
+
+def test_github_create_pr_rejects_missing_title():
+    github = _FakeGitHub()
+    git = _FakeGitWithRecord(source_root="/repo")
+    client = _github_client(git, github)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/github/pr",
+            headers=AUTH,
+            json={"body": "no title"},
+        )
+
+    assert response.status_code == 400

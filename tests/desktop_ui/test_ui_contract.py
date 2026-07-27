@@ -221,6 +221,12 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "selectedFiles" in script
     assert "Apply selected" in script
     assert "updateApplyButton" in script
+    assert 'id="github-create-pr"' in html
+    assert 'id="github-pr-status"' in html
+    assert "/github/pr" in script
+    assert "/github/checks" in script
+    assert "createPullRequest" in script
+    assert "loadPullRequest" in script
     assert "loadArtifacts" in script
     assert "renderArtifacts" in script
     assert "readArtifact" in script
