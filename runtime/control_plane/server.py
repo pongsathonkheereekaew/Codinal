@@ -15,6 +15,7 @@ import uvicorn
 
 from runtime import RuntimeServices, compose_runtime
 from runtime.audit import AuditLedger
+from runtime.policy.managed import ManagedPolicy
 from runtime.git import (
     GitWorkspaceError,
     GitWorktreeService,
@@ -64,6 +65,7 @@ class ServerConfig:
     data_dir: Path
     default_model: str
     host: str = "127.0.0.1"
+    managed_policy_path: Path | None = None
 
 
 def load_server_config() -> ServerConfig:
@@ -92,11 +94,14 @@ def load_server_config() -> ServerConfig:
         os.environ.get("CODINAL_DEFAULT_MODEL", "openai:gpt-5").strip()
         or "openai:gpt-5"
     )
+    policy_path = os.environ.get("CODINAL_MANAGED_POLICY", "")
+    managed_policy_path = Path(policy_path).expanduser() if policy_path else None
     return ServerConfig(
         token=token,
         port=port,
         data_dir=data_dir,
         default_model=default_model,
+        managed_policy_path=managed_policy_path,
     )
 
 
@@ -108,7 +113,8 @@ def build_services(
     mcp_manager: MCPManager | None = None,
     approver: Approver = deny_all,
 ) -> RuntimeServices:
-    secret_service = secrets or ProviderSecretService()
+    managed_policy = ManagedPolicy.from_file(config.managed_policy_path)
+    secret_service = secrets or ProviderSecretService(managed_policy=managed_policy)
     store = ConversationStore(config.data_dir)
     provider_client = provider or ProviderRouter(secret_service)
     git_service = GitWorktreeService(config.data_dir)
@@ -453,6 +459,7 @@ def build_services(
         audit=audit_ledger,
         github=github_service,
         preview=preview_store,
+        managed_policy=managed_policy,
     )
 
 

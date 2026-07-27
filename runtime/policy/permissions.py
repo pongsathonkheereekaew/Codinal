@@ -133,6 +133,7 @@ class PermissionEngine:
     risk_overrides: Optional[RiskOverrides] = None
     roots: Optional[list] = None
     write_scope: tuple[str, ...] = ()
+    managed_policy: Any = None  # Optional[ManagedPolicy]
 
     def __post_init__(self) -> None:
         self.workspace_root = Path(self.workspace_root).expanduser().resolve()
@@ -190,6 +191,21 @@ class PermissionEngine:
         self, tool_name: str, arguments: dict[str, Any], metadata: Any = None
     ) -> Decision:
         arguments = arguments or {}
+        # Managed-policy deny precedence: checked BEFORE every allow path.
+        # A managed deny is absolute — the user cannot override it.
+        if self.managed_policy is not None:
+            if not self.managed_policy.tool_allowed(tool_name):
+                return Decision(
+                    False,
+                    f"tool '{tool_name}' denied by managed policy",
+                )
+            command = arguments.get("command", "")
+            if isinstance(command, str) and command:
+                if not self.managed_policy.command_allowed(command):
+                    return Decision(
+                        False,
+                        f"command denied by managed policy",
+                    )
         is_connector = getattr(metadata, "category", "") == "connector"
         is_interactive = (
             getattr(metadata, "category", "") == "interactive"

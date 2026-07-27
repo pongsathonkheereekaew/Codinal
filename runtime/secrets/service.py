@@ -20,11 +20,13 @@ class ProviderSecretService:
         profiles: dict[str, dict[str, str]] | None = None,
         *,
         sync_token: str | None = None,
+        managed_policy=None,
     ) -> None:
         self._lock = threading.RLock()
         self._profiles: dict[str, dict[str, str]] = {}
         self._listeners: list[Callable[[str], None]] = []
         self._sync_token = self._validate_sync_token(sync_token)
+        self._managed_policy = managed_policy
         for profile, data in (profiles or {}).items():
             if (
                 not isinstance(profile, str)
@@ -84,6 +86,8 @@ class ProviderSecretService:
 
     def set_api_key(self, provider: str, api_key: str) -> dict[str, Any]:
         normalized_provider = self._validate_provider(provider)
+        if self._managed_policy is not None and not self._managed_policy.provider_allowed(normalized_provider):
+            raise ValueError(f"provider '{normalized_provider}' denied by managed policy")
         normalized_key = api_key if isinstance(api_key, str) else ""
         if not normalized_key.strip():
             raise ValueError("api_key must not be empty")

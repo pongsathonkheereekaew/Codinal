@@ -716,6 +716,13 @@ def create_control_plane_app(
             },
         )
 
+    @app.get("/v1/policy")
+    async def managed_policy() -> dict[str, Any]:
+        policy = getattr(services, "managed_policy", None)
+        if policy is None:
+            return {"active": False}
+        return policy.to_dict()
+
     @app.get("/v1/settings")
     async def settings() -> dict[str, Any]:
         view = services.settings.view()
