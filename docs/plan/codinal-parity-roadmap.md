@@ -195,7 +195,9 @@ Acceptance evidence:
 - [ ] Add local/SSH worker handoff with explicit trust boundary and artifact
   pull-down.
 - [ ] Add browser/dev-server preview, screenshots, console/network evidence, and
-  element/area annotation.
+  element/area annotation. (Phase 35: dev-server URL detection + iframe preview
+  + console evidence store + DOM annotation overlay. Native screenshot capture
+  + automatic network capture deferred.)
 - [ ] Add secure external notifications, approvals, and steering for long jobs;
   remote input never expands local authority.
 

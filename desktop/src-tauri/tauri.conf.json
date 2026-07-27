@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self'; connect-src http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self'; script-src 'self'"
+      "csp": "default-src 'self'; connect-src http://127.0.0.1:* ws://127.0.0.1:*; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; frame-src http://127.0.0.1:* http://localhost:*"
     }
   },
   "plugins": {
