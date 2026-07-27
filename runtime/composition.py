@@ -75,6 +75,7 @@ class RuntimeServices:
     audit: AuditLedger | None = None
     github: Any = None
     preview: Any = None
+    managed_policy: Any = None
 
 
 def compose_runtime(
@@ -104,6 +105,7 @@ def compose_runtime(
     audit: AuditLedger | None = None,
     github: Any = None,
     preview: Any = None,
+    managed_policy: Any = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -157,6 +159,7 @@ def compose_runtime(
             mode=Mode(request.mode),
             roots=roots,
             write_scope=worker.ownership if worker is not None else (),
+            managed_policy=managed_policy,
         )
         for tool in request.grants.get("tools") or []:
             permissions.allow_tool_for_session(str(tool))
@@ -273,4 +276,5 @@ def compose_runtime(
         audit=audit,
         github=github,
         preview=preview,
+        managed_policy=managed_policy,
     )

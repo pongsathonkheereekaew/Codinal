@@ -213,8 +213,11 @@ Acceptance evidence:
 - [ ] Manage skills, plugins, hooks, MCP servers, and agent definitions with
   signed provenance, versioning, requested permissions, enable/disable, update,
   and removal.
-- [ ] Add organization model/provider/repository/tool allowlists and managed
-  policy that local users cannot silently weaken.
+- [x] Add organization model/provider/repository/tool allowlists and managed
+  policy that local users cannot silently weaken. (Phase 37: ManagedPolicy
+  loaded from JSON file, deny precedence in permission engine + provider
+  validation, GET /v1/policy route. SSO/SCIM/RBAC + per-repo allowlists +
+  tool-manifest pruning deferred.)
 - [x] Add tamper-evident audit events, export API, retention controls, redaction,
   and zero-data-retention modes. (Phase 27 audit ledger + Phase 29 redaction +
   Phase 36 extend to worker/session/terminal/approval domains + retention cap
