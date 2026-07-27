@@ -2215,3 +2215,100 @@ def test_github_create_pr_rejects_missing_title():
         )
 
     assert response.status_code == 400
+
+
+class _FakePreview:
+    def __init__(self):
+        self.store = {}
+
+    def add_evidence(self, session_id, kind, content):
+        entry = {"id": len(self.store) + 1, "session_id": session_id, "kind": kind, "content": content}
+        self.store.setdefault(session_id, []).append(entry)
+        return entry
+
+    def list_evidence(self, session_id):
+        return self.store.get(session_id, [])
+
+    def clear_evidence(self, session_id):
+        count = len(self.store.get(session_id, []))
+        self.store.pop(session_id, None)
+        return count
+
+
+def _preview_client(preview):
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        routing=None,
+        secrets=ProviderSecretService(),
+        oauth=OAuthCoordinator(),
+        turns=FakeTurns(),
+        sessions=FakeSessions(),
+        approvals=None,
+        mcp=None,
+        git=None,
+        github=None,
+        preview=preview,
+        audit=None,
+    )
+    return TestClient(create_control_plane_app(token=TOKEN, services=services))
+
+
+def test_preview_evidence_add_list_clear_round_trip():
+    preview = _FakePreview()
+    client = _preview_client(preview)
+
+    with client:
+        added = client.post(
+            "/v1/sessions/session-1/preview/evidence",
+            headers=AUTH,
+            json={"kind": "console", "content": "TypeError at line 5"},
+        )
+        listed = client.get(
+            "/v1/sessions/session-1/preview/evidence",
+            headers=AUTH,
+        )
+        cleared = client.delete(
+            "/v1/sessions/session-1/preview/evidence",
+            headers=AUTH,
+        )
+        after = client.get(
+            "/v1/sessions/session-1/preview/evidence",
+            headers=AUTH,
+        )
+
+    assert added.status_code == 200
+    assert added.json()["kind"] == "console"
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+    assert cleared.status_code == 200
+    assert cleared.json()["cleared"] == 1
+    assert after.json() == []
+
+
+def test_preview_evidence_rejects_invalid_kind():
+    preview = _FakePreview()
+    client = _preview_client(preview)
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/preview/evidence",
+            headers=AUTH,
+            json={"kind": "bogus", "content": "x"},
+        )
+
+    assert response.status_code == 400
+
+
+def test_preview_evidence_503_when_unavailable():
+    client = _preview_client(None)
+
+    with client:
+        for method, path in [
+            ("POST", "/v1/sessions/session-1/preview/evidence"),
+            ("GET", "/v1/sessions/session-1/preview/evidence"),
+            ("DELETE", "/v1/sessions/session-1/preview/evidence"),
+        ]:
+            kwargs = {"json": {"kind": "console", "content": "x"}} if method == "POST" else {}
+            response = client.request(method, path, headers=AUTH, **kwargs)
+            assert response.status_code == 503

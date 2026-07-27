@@ -227,6 +227,14 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "/github/checks" in script
     assert "createPullRequest" in script
     assert "loadPullRequest" in script
+    assert 'id="preview-panel"' in html
+    assert 'id="preview-frame"' in html
+    assert 'id="annotation-overlay"' in html
+    assert "/preview/evidence" in script
+    assert "openPreview" in script
+    assert "attachConsoleEvidence" in script
+    assert "renderDevserverChips" in script
+    assert "toggleAnnotation" in script
     assert "loadArtifacts" in script
     assert "renderArtifacts" in script
     assert "readArtifact" in script

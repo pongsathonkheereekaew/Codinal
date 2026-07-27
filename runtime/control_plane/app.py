@@ -38,6 +38,7 @@ from runtime.policy import ApprovalOutcome, ApprovalPersistenceError
 from runtime.policy import PermissionRequest
 from runtime.sandbox import InvalidCommandError, SandboxUnavailableError
 from runtime.path_scope import scopes_overlap
+from runtime.preview import detect_devserver_urls
 from runtime.sessions.context import make_project_context_item
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
@@ -444,6 +445,19 @@ class GitHubControl(Protocol):
     ) -> dict[str, object]: ...
 
 
+class PreviewControl(Protocol):
+    def add_evidence(
+        self,
+        session_id: str,
+        kind: str,
+        content: Any,
+    ) -> dict[str, Any]: ...
+
+    def list_evidence(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    def clear_evidence(self, session_id: str) -> int: ...
+
+
 class ApprovalControl(Protocol):
     def pending(self, session_id: str) -> list[dict[str, Any]]: ...
 
@@ -548,6 +562,7 @@ class ControlPlaneServices(Protocol):
     mcp: MCPControl | None
     git: GitControl | None
     github: GitHubControl | None
+    preview: PreviewControl | None
     restores: RestoreControl | None
     approvals: ApprovalControl | None
     interactions: InteractionControl | None
@@ -1456,6 +1471,13 @@ def create_control_plane_app(
                 status_code=502,
                 detail="terminal execution failed",
             )
+        # Enrich: scan stdout+stderr for localhost dev-server URLs so the UI
+        # can surface clickable "Preview" links.
+        combined_output = " ".join(
+            str(result_dict.get(key, ""))
+            for key in ("stdout", "stderr")
+        )
+        result_dict["devserver_urls"] = detect_devserver_urls(combined_output)
         return JSONResponse(result_dict)
 
 
@@ -2383,6 +2405,46 @@ def create_control_plane_app(
                 status_code=502,
                 detail=str(error),
             ) from None
+
+    @app.post("/v1/sessions/{session_id}/preview/evidence")
+    async def add_preview_evidence(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        preview = getattr(services, "preview", None)
+        if preview is None:
+            raise HTTPException(status_code=503, detail="preview unavailable")
+        body = await _read_preview_evidence(request)
+        try:
+            return await asyncio.to_thread(
+                preview.add_evidence,
+                session_id,
+                body["kind"],
+                body["content"],
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=str(error),
+            ) from None
+
+    @app.get("/v1/sessions/{session_id}/preview/evidence")
+    async def list_preview_evidence(session_id: str) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        preview = getattr(services, "preview", None)
+        if preview is None:
+            raise HTTPException(status_code=503, detail="preview unavailable")
+        return await asyncio.to_thread(preview.list_evidence, session_id)
+
+    @app.delete("/v1/sessions/{session_id}/preview/evidence")
+    async def clear_preview_evidence(session_id: str) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        preview = getattr(services, "preview", None)
+        if preview is None:
+            raise HTTPException(status_code=503, detail="preview unavailable")
+        cleared = await asyncio.to_thread(preview.clear_evidence, session_id)
+        return {"ok": True, "cleared": cleared}
 
     @app.get("/v1/sessions/{session_id}/checkpoints")
     async def list_checkpoints(
@@ -3631,6 +3693,29 @@ async def _read_apply_selection(request: Request) -> list[str] | None:
             detail="invalid apply selection",
         )
     return list(body["paths"])
+
+
+async def _read_preview_evidence(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid preview evidence",
+        ) from None
+    kind = body.get("kind") if isinstance(body, dict) else None
+    content = body.get("content") if isinstance(body, dict) else None
+    if (
+        not isinstance(body, dict)
+        or kind not in ("console", "annotation")
+        or not isinstance(content, (str, dict, list))
+        or set(body) != {"kind", "content"}
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid preview evidence",
+        )
+    return {"kind": kind, "content": content}
 
 
 async def _read_github_pr_request(request: Request) -> dict[str, Any]:

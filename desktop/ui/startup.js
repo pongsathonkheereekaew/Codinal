@@ -40,6 +40,10 @@ const state = {
   settings: null,
   diff: "",
   selectedFiles: new Set(),
+  previewUrl: "",
+  devserverUrls: [],
+  annotating: false,
+  annotationStart: null,
   checkpoints: [],
   managedSession: null,
   updateVersion: null,
@@ -100,6 +104,9 @@ const el = Object.fromEntries(
     "terminal-panel", "terminal-status", "terminal-command",
     "terminal-timeout", "terminal-run", "terminal-clear", "terminal-output",
     "terminal-stop",
+    "preview-panel", "preview-url", "preview-open", "preview-annotate",
+    "preview-attach-console", "preview-frame", "annotation-overlay",
+    "devserver-chips", "preview-evidence",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
     "checkpoint-select", "restore-scope", "restore-checkpoint",
     "git-branch", "git-graph", "git-push",
@@ -3435,6 +3442,11 @@ async function runTerminalCommand() {
     );
     el["terminal-output"].textContent = formatTerminalResult(result, command);
     updateTerminalStatus(`Exit ${result.exit_code ?? "n/a"}`);
+    if (Array.isArray(result.devserver_urls) && result.devserver_urls.length) {
+      state.devserverUrls = result.devserver_urls;
+      renderDevserverChips();
+      showPreviewPanel();
+    }
   } catch (error) {
     updateTerminalStatus("Failed");
     el["terminal-output"].textContent = `Error running: ${error.message}`;
@@ -4108,6 +4120,173 @@ async function loadChecks() {
   }
 }
 
+function showPreviewPanel() {
+  el["preview-panel"].classList.remove("is-hidden");
+}
+
+function hidePreviewPanel() {
+  el["preview-panel"].classList.add("is-hidden");
+}
+
+function renderDevserverChips() {
+  el["devserver-chips"].replaceChildren();
+  if (!state.devserverUrls.length) return;
+  for (const entry of state.devserverUrls) {
+    const chip = node("button", "devserver-chip", entry.url);
+    chip.type = "button";
+    chip.addEventListener("click", () => {
+      el["preview-url"].value = entry.url;
+      openPreview();
+    });
+    el["devserver-chips"].append(chip);
+  }
+}
+
+function openPreview() {
+  const url = el["preview-url"].value.trim();
+  if (!url) return;
+  state.previewUrl = url;
+  el["preview-frame"].src = url;
+  showPreviewPanel();
+}
+
+async function loadPreviewEvidence() {
+  if (!state.sessionId) return;
+  try {
+    const items = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/preview/evidence`
+    );
+    renderPreviewEvidence(items);
+  } catch (_error) {
+    el["preview-evidence"].replaceChildren();
+  }
+}
+
+function renderPreviewEvidence(items) {
+  el["preview-evidence"].replaceChildren();
+  if (!items || !items.length) return;
+  for (const item of items) {
+    const row = node("div", `preview-evidence-row preview-evidence-${item.kind}`);
+    const content = typeof item.content === "string"
+      ? item.content
+      : JSON.stringify(item.content);
+    row.append(
+      node("span", "preview-evidence-kind", item.kind),
+      node("span", "preview-evidence-content", content)
+    );
+    el["preview-evidence"].append(row);
+  }
+}
+
+async function attachConsoleEvidence() {
+  if (!state.sessionId) return;
+  const text = window.prompt("Paste console output to attach as evidence:");
+  if (!text || !text.trim()) return;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/preview/evidence`,
+      {
+        method: "POST",
+        body: JSON.stringify({ kind: "console", content: text }),
+      }
+    );
+    toast("Console evidence attached");
+    await loadPreviewEvidence();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function clearPreviewEvidence() {
+  if (!state.sessionId) return;
+  try {
+    await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/preview/evidence`,
+      { method: "DELETE" }
+    );
+    renderPreviewEvidence([]);
+    toast("Preview evidence cleared");
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+function toggleAnnotation() {
+  state.annotating = !state.annotating;
+  el["annotation-overlay"].classList.toggle("is-hidden", !state.annotating);
+  el["preview-annotate"].textContent = state.annotating
+    ? "Stop annotating"
+    : "Annotate";
+  if (!state.annotating) {
+    el["annotation-overlay"].replaceChildren();
+  }
+}
+
+function startAnnotationOverlay() {
+  const overlay = el["annotation-overlay"];
+  overlay.replaceChildren();
+  let drawing = false;
+  let startX = 0, startY = 0;
+  let rect = null;
+
+  overlay.addEventListener("pointerdown", (event) => {
+    if (!state.annotating) return;
+    drawing = true;
+    startX = event.offsetX;
+    startY = event.offsetY;
+    rect = node("div", "annotation-rect");
+    rect.style.left = `${startX}px`;
+    rect.style.top = `${startY}px`;
+    overlay.append(rect);
+  });
+
+  overlay.addEventListener("pointermove", (event) => {
+    if (!drawing || !rect) return;
+    const w = Math.abs(event.offsetX - startX);
+    const h = Math.abs(event.offsetY - startY);
+    rect.style.left = `${Math.min(startX, event.offsetX)}px`;
+    rect.style.top = `${Math.min(startY, event.offsetY)}px`;
+    rect.style.width = `${w}px`;
+    rect.style.height = `${h}px`;
+  });
+
+  overlay.addEventListener("pointerup", async (event) => {
+    if (!drawing || !rect) return;
+    drawing = false;
+    const x = parseInt(rect.style.left, 10) || 0;
+    const y = parseInt(rect.style.top, 10) || 0;
+    const w = parseInt(rect.style.width, 10) || 0;
+    const h = parseInt(rect.style.height, 10) || 0;
+    if (w < 5 || h < 5) {
+      rect.remove();
+      return;
+    }
+    const note = window.prompt("Annotation note:");
+    if (!note) {
+      rect.remove();
+      return;
+    }
+    rect.append(node("span", "annotation-rect-note", note));
+    if (state.sessionId) {
+      try {
+        await api(
+          `/v1/sessions/${encodeURIComponent(state.sessionId)}/preview/evidence`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              kind: "annotation",
+              content: { x, y, w, h, note },
+            }),
+          }
+        );
+        toast("Annotation saved");
+      } catch (error) {
+        toast(error.message, "error");
+      }
+    }
+  });
+}
+
 function toggleTheme() {
   const current = document.documentElement.dataset.theme;
   const next = current === "dark" ? "light" : "dark";
@@ -4480,6 +4659,18 @@ function wireEvents() {
   el["github-create-pr"].addEventListener("click", () => {
     createPullRequest().catch((error) => toast(error.message, "error"));
   });
+  el["preview-open"].addEventListener("click", openPreview);
+  el["preview-url"].addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      openPreview();
+    }
+  });
+  el["preview-annotate"].addEventListener("click", toggleAnnotation);
+  el["preview-attach-console"].addEventListener("click", () => {
+    attachConsoleEvidence().catch((error) => toast(error.message, "error"));
+  });
+  startAnnotationOverlay();
   el["commit-message"].addEventListener("input", renderGitStatus);
   el["checkpoint-select"].addEventListener(
     "change",

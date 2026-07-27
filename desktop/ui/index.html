@@ -232,6 +232,31 @@
             aria-label="Terminal output"></pre>
         </section>
 
+        <section id="preview-panel" class="preview-panel is-hidden"
+          aria-label="Dev-server preview">
+          <div class="preview-header">
+            <span class="eyebrow">Preview</span>
+            <input id="preview-url" type="url" class="preview-url-input"
+              placeholder="http://localhost:3000" />
+            <button id="preview-open" class="secondary-button" type="button"
+              disabled>Open</button>
+            <button id="preview-annotate" class="secondary-button"
+              type="button">Annotate</button>
+            <button id="preview-attach-console" class="secondary-button"
+              type="button">Attach console</button>
+          </div>
+          <div id="devserver-chips" class="devserver-chips"></div>
+          <div class="preview-frame-wrap">
+            <iframe id="preview-frame" class="preview-frame"
+              sandbox="allow-scripts allow-same-origin allow-forms"
+              title="Dev-server preview"></iframe>
+            <div id="annotation-overlay" class="annotation-overlay is-hidden"
+              role="presentation"></div>
+          </div>
+          <div id="preview-evidence" class="preview-evidence"
+            aria-label="Preview evidence"></div>
+        </section>
+
         <section class="composer-wrap" aria-label="Message composer">
           <div id="drop-hint" class="drop-hint">
             Drop a project folder, image, or PDF
