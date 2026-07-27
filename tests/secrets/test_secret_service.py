@@ -23,6 +23,8 @@ def test_provider_secret_service_never_returns_values_in_status() -> None:
         {"provider": "anthropic", "configured": False},
         {"provider": "gemini", "configured": False},
         {"provider": "openai", "configured": True},
+        {"provider": "zai", "configured": False},
+        {"provider": "deepseek", "configured": False},
         {"provider": "github", "configured": False},
     ]
     assert "sk-test-do-not-leak" not in repr(service.status())

@@ -22,6 +22,18 @@ def capabilities_for(model: str) -> ModelCapabilities:
             pdf=True,
             streaming=True,
         )
+    if provider == "zai":
+        # Z.ai GLM-4.6 / GLM-4V: streaming + vision on multimodal models.
+        return ModelCapabilities(
+            vision=True,
+            streaming=True,
+        )
+    if provider == "deepseek":
+        # DeepSeek-chat / DeepSeek-reasoner: streaming; reasoning_content is
+        # already surfaced as thinking text (openai_provider._delta_reasoning).
+        return ModelCapabilities(
+            streaming=True,
+        )
     if name.startswith(("gpt-5", "gpt-4")):
         return ModelCapabilities(
             vision=True,

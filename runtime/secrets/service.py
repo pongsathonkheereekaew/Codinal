@@ -7,7 +7,14 @@ import secrets
 import threading
 from typing import Any, Callable, TextIO
 
-SUPPORTED_PROVIDERS = ("anthropic", "gemini", "openai", "github")
+SUPPORTED_PROVIDERS = (
+    "anthropic",
+    "gemini",
+    "openai",
+    "zai",
+    "deepseek",
+    "github",
+)
 MAX_BOOTSTRAP_BYTES = 256 * 1024
 MAX_API_KEY_BYTES = 16 * 1024
 

@@ -16,11 +16,16 @@ def test_router_builds_and_caches_supported_cloud_clients() -> None:
     openai = router.client_for("openai:gpt-5.6-sol")
     anthropic = router.client_for("anthropic:claude-sonnet-4-6")
     gemini = router.client_for("gemini:gemini-2.5-flash")
+    zai = router.client_for("zai:glm-4.6")
+    deepseek = router.client_for("deepseek:deepseek-chat")
 
     assert isinstance(openai, OpenAIProvider)
     assert isinstance(anthropic, AnthropicProvider)
     assert isinstance(gemini, GeminiProvider)
+    assert isinstance(zai, OpenAIProvider)
+    assert isinstance(deepseek, OpenAIProvider)
     assert router.client_for("openai:gpt-5.6-terra") is openai
+    assert router.client_for("zai:glm-4.5-air") is zai
     assert router.resolve("anthropic:claude-sonnet-4-6") == (
         anthropic,
         "claude-sonnet-4-6",
@@ -80,6 +85,39 @@ def test_ollama_never_receives_cloud_secret_store() -> None:
     assert client._secrets is None
     assert client._base_url == "http://127.0.0.1:11434/v1"
     assert bare == "qwen2.5-coder:32b"
+
+
+@pytest.mark.parametrize(
+    "model, base_url, profile",
+    [
+        ("zai:glm-4.6", "https://api.z.ai/api/paas/v4/", "zai"),
+        ("deepseek:deepseek-chat", "https://api.deepseek.com", "deepseek"),
+    ],
+)
+def test_openai_compatible_backend_uses_own_endpoint_and_profile(
+    model, base_url, profile
+) -> None:
+    """ZAI/DeepSeek reuse OpenAIProvider but point at their own base_url and
+    read their own secret profile — never OpenAI's key."""
+    secrets = ProviderSecretService()
+    secrets.set_api_key("openai", "openai-key-must-not-leak")
+    secrets.set_api_key(profile, f"{profile}-key")
+    router = ProviderRouter(secrets)
+
+    client, bare = router.resolve(model)
+
+    assert isinstance(client, OpenAIProvider)
+    assert client._base_url == base_url
+    assert client._secret_profile == profile
+    assert client._secrets is secrets
+    # The per-profile key resolves; OpenAI's does not leak across.
+    from runtime.providers.openai_provider import resolve_api_key
+
+    assert (
+        resolve_api_key(client._secrets, client._secret_profile)
+        == f"{profile}-key"
+    )
+    assert bare == model.split(":", 1)[1]
 
 
 def test_invalidate_rebuilds_only_selected_provider() -> None:
