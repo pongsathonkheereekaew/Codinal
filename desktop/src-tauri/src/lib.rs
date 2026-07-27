@@ -2,6 +2,8 @@ pub mod control_client;
 pub mod host;
 pub mod oauth;
 pub mod project_open;
+#[cfg(target_os = "macos")]
+pub mod pty;
 pub mod secrets;
 pub mod workspace;
 
@@ -28,6 +30,8 @@ use workspace::choose_workspace;
 struct DesktopState {
     process: Mutex<Option<Child>>,
     vault: PlatformSecretVault,
+    #[cfg(target_os = "macos")]
+    ptys: pty::PtyRegistry,
     port: u16,
     token: String,
     secret_sync_token: String,
@@ -134,6 +138,149 @@ fn pick_workspace() -> Result<String, String> {
     choose_workspace()
         .map(|path| path.to_string_lossy().into_owned())
         .map_err(|error| error.to_string())
+}
+
+/// Payload for the `pty-data` event: raw bytes from the PTY master, base64
+/// (not UTF-8) because terminal output may include arbitrary byte sequences
+/// (binary cat, invalid UTF-8, etc.).
+#[derive(Clone, Serialize)]
+struct PtyData {
+    session_id: String,
+    /// base64-encoded bytes from the child.
+    data: String,
+}
+
+/// Payload for the `pty-exit` event: emitted when the reader thread hits EOF.
+#[derive(Clone, Serialize)]
+struct PtyExit {
+    session_id: String,
+}
+
+#[cfg(not(target_os = "macos"))]
+fn pty_unsupported<T>() -> Result<T, String> {
+    Err("pty terminal is unavailable on this platform".to_owned())
+}
+
+/// Open a new interactive PTY session in the workspace. Returns the session id
+/// (caller-supplied) on success. The frontend listens for `pty-data` /
+/// `pty-exit` events emitted from the reader thread.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn pty_open(
+    session_id: String,
+    workspace: String,
+    cols: u16,
+    rows: u16,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<String, String> {
+    let emit_app = app.clone();
+    let target = session_id.clone();
+    state
+        .ptys
+        .open(
+            &session_id,
+            &workspace,
+            None,
+            cols,
+            rows,
+            move |sid, chunk| match chunk {
+                Some(bytes) => {
+                    use base64::Engine;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    let _ = emit_app.emit(
+                        "pty-data",
+                        PtyData {
+                            session_id: sid.to_owned(),
+                            data: encoded,
+                        },
+                    );
+                }
+                None => {
+                    let _ = emit_app.emit(
+                        "pty-exit",
+                        PtyExit {
+                            session_id: sid.to_owned(),
+                        },
+                    );
+                }
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(target)
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn pty_open(
+    _session_id: String,
+    _workspace: String,
+    _cols: u16,
+    _rows: u16,
+    _app: tauri::AppHandle,
+    _state: State<'_, DesktopState>,
+) -> Result<String, String> {
+    pty_unsupported()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn pty_input(
+    session_id: String,
+    data: String,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .ptys
+        .write(&session_id, data.as_bytes())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn pty_input(
+    _session_id: String,
+    _data: String,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    pty_unsupported()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn pty_resize(
+    session_id: String,
+    cols: u16,
+    rows: u16,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .ptys
+        .resize(&session_id, cols, rows)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn pty_resize(
+    _session_id: String,
+    _cols: u16,
+    _rows: u16,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    pty_unsupported()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn pty_kill(session_id: String, state: State<'_, DesktopState>) -> Result<bool, String> {
+    state.ptys.kill(&session_id).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn pty_kill(_session_id: String, _state: State<'_, DesktopState>) -> Result<bool, String> {
+    pty_unsupported()
 }
 
 #[tauri::command]
@@ -267,7 +414,11 @@ pub fn run() {
             pick_workspace,
             check_for_update,
             install_update,
-            rollback_update
+            rollback_update,
+            pty_open,
+            pty_input,
+            pty_resize,
+            pty_kill
         ])
         .setup(|app| {
             let token = mint_session_token()?;
@@ -288,6 +439,8 @@ pub fn run() {
             app.manage(DesktopState {
                 process: Mutex::new(Some(child)),
                 vault,
+                #[cfg(target_os = "macos")]
+                ptys: pty::PtyRegistry::default(),
                 port,
                 token: token.clone(),
                 secret_sync_token,

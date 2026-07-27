@@ -4,6 +4,15 @@ const HTTP = window.__CODINAL_HTTP__;
 const WS = window.__CODINAL_WS__;
 const TOKEN = window.__CODINAL_TOKEN__;
 const invoke = window.__TAURI__?.core?.invoke;
+// Tauri event listener shim: returns an unlisten function, or null if the
+// Tauri event API isn't available (web/preview context).
+const __codinalListen = window.__TAURI__?.event?.listen
+  ? async (name, handler) => {
+      const unlisten = await window.__TAURI__.event.listen(name, handler);
+      return () => { try { unlisten(); } catch { /* noop */ } };
+    }
+  : null;
+window.__codinalListen = __codinalListen;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_ATTACHMENTS = 5;
 const ATTACHMENT_TYPES = new Set([
@@ -85,6 +94,7 @@ const state = {
   routingResolution: null,
   routingPending: false,
   terminalRunning: false,
+  terminal: null, // { term, fitAddon, sessionId, resizeObserver, unlisten* }
   mcpServers: [],
   mcpLoadGeneration: 0,
   artifacts: [],
@@ -102,9 +112,8 @@ const el = Object.fromEntries(
     "workspace-label", "agent-mode", "routing-profile", "model-select",
     "routing-resolution", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
-    "terminal-panel", "terminal-status", "terminal-command",
-    "terminal-timeout", "terminal-run", "terminal-clear", "terminal-output",
-    "terminal-stop",
+    "terminal-panel", "terminal-status",
+    "terminal-restart", "terminal-clear", "terminal-host",
     "preview-panel", "preview-url", "preview-open", "preview-annotate",
     "preview-attach-console", "preview-frame", "annotation-overlay",
     "devserver-chips", "preview-evidence",
@@ -1658,8 +1667,7 @@ async function selectSession(session) {
   state.activities.clear();
   state.routingResolution = null;
   el["task-title"].textContent = session.title || "New task";
-  el["terminal-command"].value = "";
-  clearTerminalOutput();
+  closeTerminalView();
   clearArtifactPreview();
   syncAgentMode(session);
   selectModel(session.model);
@@ -1775,11 +1783,9 @@ function switchWorkspace(workspace) {
   state.goals = [];
   state.goalGeneration += 1;
   el["task-title"].textContent = "New task";
-  el["terminal-command"].value = "";
-  clearTerminalOutput();
+  closeTerminalView();
   clearArtifactPreview();
   updateWorkspaceLabel();
-  setTerminalBusy(false);
   renderSessions();
   renderConversation();
   renderDiff();
@@ -1862,15 +1868,8 @@ function setBusy(busy) {
   el["agent-mode"].disabled = busy;
   el["new-task"].disabled = busy;
   el["choose-workspace"].disabled = busy;
-  el["terminal-run"].disabled = (
-    busy || state.terminalRunning || !state.workspace || !state.sessionId
-  );
-  el["terminal-stop"].disabled = (
-    busy || !state.terminalRunning || !state.workspace || !state.sessionId
-  );
-  el["terminal-clear"].disabled = busy || state.terminalRunning;
-  el["terminal-command"].disabled = busy;
-  el["terminal-timeout"].disabled = busy;
+  el["terminal-restart"].disabled = busy || !state.workspace;
+  el["terminal-clear"].disabled = busy;
   el["add-context-root"].disabled = (
     busy || state.rootMutationPending || !state.roots.length
   );
@@ -3355,133 +3354,153 @@ async function stopTurn() {
   }
 }
 
-function setTerminalBusy(running) {
-  state.terminalRunning = running;
-  el["terminal-run"].disabled = (
-    running
-    || state.busy
-    || !state.workspace
-    || !state.sessionId
-  );
-  el["terminal-stop"].disabled = (
-    !running || state.busy || !state.workspace || !state.sessionId
-  );
-  el["terminal-clear"].disabled = running;
-  el["terminal-command"].disabled = running || state.busy;
-  el["terminal-timeout"].disabled = running || state.busy;
-  el["terminal-status"].textContent = running
-    ? "Running…"
-    : "Ready";
-}
+// --- Interactive PTY terminal (xterm.js + Rust pty backend) ---
+//
+// The terminal is a real persistent PTY owned by the Rust shell. We mount an
+// xterm.js Terminal into #terminal-host lazily on first show, open a PTY
+// session via the `pty_open` command, and stream bytes both ways:
+//   - input:  term.onData → invoke("pty_input")
+//   - output: "pty-data" event → term.write
+//   - exit:   "pty-exit" event → show banner, offer Restart
+// Resize is observed via ResizeObserver and forwarded via `pty_resize`.
+// Teardown on workspace/session switch kills the PTY and disposes the term.
 
 function updateTerminalStatus(status) {
   el["terminal-status"].textContent = status;
 }
 
-function formatTerminalResult(result, command) {
-  const lines = [`$ ${command}`];
-  const exitCode = result.exit_code;
-  if (exitCode !== undefined) {
-    lines.push(`exit_code: ${exitCode}`);
-  }
-  if (typeof result.timed_out === "boolean") {
-    lines.push(`timed_out: ${result.timed_out}`);
-  }
-  if (typeof result.interrupted === "boolean") {
-    lines.push(`interrupted: ${result.interrupted}`);
-  }
-  if (typeof result.output_truncated === "boolean") {
-    lines.push(`output_truncated: ${result.output_truncated}`);
-  }
-  if (result.stdout) {
-    lines.push("");
-    lines.push("stdout:");
-    lines.push(String(result.stdout));
-  }
-  if (result.stderr) {
-    lines.push("");
-    lines.push("stderr:");
-    lines.push(String(result.stderr));
-  }
-  if (result.stdout == null && result.stderr == null) {
-    lines.push("no output");
-  }
-  return lines.join("\n");
-}
-
-async function runTerminalCommand() {
-  if (state.terminalRunning || state.busy || !state.sessionId || !state.workspace) return;
-  const command = el["terminal-command"].value.trim();
-  const timeoutInput = el["terminal-timeout"].value.trim();
-  const timeoutSeconds = timeoutInput ? Number(timeoutInput) : null;
-  if (state.sessionId === null || !command) {
-    toast("Enter a command to run", "error");
-    return;
-  }
-  if (
-    timeoutInput && (
-      !Number.isFinite(timeoutSeconds)
-      || timeoutSeconds <= 0
-      || timeoutSeconds > 600
-    )
-  ) {
-    toast("Timeout must be 1 to 600 seconds", "error");
-    return;
-  }
-  setTerminalBusy(true);
-  updateTerminalStatus("Running");
-  try {
-    const payload = {
-      command,
-      ...(timeoutSeconds ? { timeout_seconds: timeoutSeconds } : {}),
-    };
-    const result = await api(
-      `/v1/sessions/${encodeURIComponent(state.sessionId)}/terminal/run`,
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }
-    );
-    el["terminal-output"].textContent = formatTerminalResult(result, command);
-    updateTerminalStatus(`Exit ${result.exit_code ?? "n/a"}`);
-    if (Array.isArray(result.devserver_urls) && result.devserver_urls.length) {
-      state.devserverUrls = result.devserver_urls;
-      renderDevserverChips();
-      showPreviewPanel();
-    }
-  } catch (error) {
-    updateTerminalStatus("Failed");
-    el["terminal-output"].textContent = `Error running: ${error.message}`;
-    toast(error.message, "error");
-  } finally {
-    setTerminalBusy(false);
-  }
-}
-
-async function stopTerminalCommand() {
-  if (!state.terminalRunning || !state.sessionId) return;
-  el["terminal-stop"].disabled = true;
-  updateTerminalStatus("Stopping");
-  try {
-    const result = await api(
-      `/v1/sessions/${encodeURIComponent(state.sessionId)}/terminal/interrupt`,
-      { method: "POST" }
-    );
-    if (!result.ok) {
-      updateTerminalStatus("No active command");
-      return;
-    }
-  } catch (error) {
-    updateTerminalStatus("Failed");
-    toast(error.message, "error");
-    return;
-  }
-  updateTerminalStatus("Stop requested");
-}
-
 function clearTerminalOutput() {
-  el["terminal-output"].textContent = "";
+  if (state.terminal?.term) {
+    state.terminal.term.clear();
+  }
   updateTerminalStatus("Ready");
+}
+
+function setTerminalBusy(running) {
+  // Kept as a no-op shim for legacy callers (session switch resets). The new
+  // terminal has no "busy" state — it's always interactive.
+  void running;
+}
+
+/** Decode a base64 string into a Uint8Array for xterm.write. */
+function decodeBase64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+/** Mount xterm.js + open a PTY session for the current workspace. */
+async function openTerminalView() {
+  if (!invoke || !state.workspace) return;
+  const host = el["terminal-host"];
+  // If a term is already mounted, dispose it first.
+  if (state.terminal?.term) {
+    await closeTerminalView();
+  }
+  const TermCtor = window.Terminal;
+  const FitCtor = window.FitAddon?.FitAddon;
+  if (!TermCtor || !FitCtor) {
+    updateTerminalStatus("Terminal unavailable");
+    host.textContent = "Terminal libraries failed to load.";
+    return;
+  }
+  const term = new TermCtor({
+    cursorBlink: true,
+    fontFamily: "var(--mono, ui-monospace, Menlo, monospace)",
+    fontSize: 12,
+    theme: document.documentElement.dataset.theme === "dark"
+      ? { background: "#121212", foreground: "#e0e0e0", cursor: "#a78bfa" }
+      : { background: "#ffffff", foreground: "#212529", cursor: "#6d4aff" },
+    allowProposedApi: true,
+  });
+  const fitAddon = new FitCtor();
+  term.loadAddon(fitAddon);
+  term.open(host);
+  try { fitAddon.fit(); } catch { /* host not laid out yet */ }
+  const cols = term.cols || 80;
+  const rows = term.rows || 24;
+  const sessionId = `pty-${state.sessionId || "default"}-${Date.now()}`;
+  let unlistenData = null;
+  let unlistenExit = null;
+  const writeData = (event) => {
+    if (event?.payload?.session_id !== sessionId) return;
+    if (typeof event.payload.data === "string") {
+      term.write(decodeBase64ToBytes(event.payload.data));
+    }
+  };
+  const handleExit = (event) => {
+    if (event?.payload?.session_id !== sessionId) return;
+    term.write("\r\n\x1b[2m— session exited —\x1b[0m\r\n");
+    updateTerminalStatus("Exited");
+  };
+  if (typeof window.__codinalListen === "function") {
+    unlistenData = await window.__codinalListen("pty-data", writeData);
+    unlistenExit = await window.__codinalListen("pty-exit", handleExit);
+  }
+  term.onData((text) => {
+    invoke("pty_input", { sessionId, data: text }).catch((error) => {
+      toast(String(error), "error");
+    });
+  });
+  // Resize observer → fit + pty_resize.
+  let resizeTimer = null;
+  const resizeObserver = new ResizeObserver(() => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      try {
+        fitAddon.fit();
+        invoke("pty_resize", {
+          sessionId,
+          cols: term.cols,
+          rows: term.rows,
+        }).catch(() => { /* best-effort */ });
+      } catch { /* host hidden */ }
+    }, 80);
+  });
+  resizeObserver.observe(host);
+  state.terminal = {
+    term,
+    fitAddon,
+    sessionId,
+    resizeObserver,
+    unlistenData,
+    unlistenExit,
+  };
+  updateTerminalStatus("Starting…");
+  try {
+    await invoke("pty_open", {
+      sessionId,
+      workspace: state.workspace,
+      cols,
+      rows,
+    });
+    updateTerminalStatus("Live");
+    term.focus();
+  } catch (error) {
+    updateTerminalStatus("Failed");
+    term.write(`\x1b[31mFailed to open terminal: ${String(error)}\x1b[0m\r\n`);
+  }
+}
+
+/** Kill the PTY + dispose the xterm instance. */
+async function closeTerminalView() {
+  const t = state.terminal;
+  if (!t) return;
+  state.terminal = null;
+  try { t.resizeObserver?.disconnect(); } catch { /* noop */ }
+  try { t.unlistenData?.(); } catch { /* noop */ }
+  try { t.unlistenExit?.(); } catch { /* noop */ }
+  if (t.sessionId && invoke) {
+    try { await invoke("pty_kill", { sessionId: t.sessionId }); }
+    catch { /* best-effort */ }
+  }
+  try { t.term.dispose(); } catch { /* noop */ }
+}
+
+async function restartTerminalView() {
+  await closeTerminalView();
+  await openTerminalView();
 }
 
 function updateComposer() {
@@ -4680,25 +4699,22 @@ function wireEvents() {
   el["attach-files"].addEventListener("click", () => {
     el["attachment-input"].click();
   });
-  el["terminal-run"].addEventListener("click", () => {
-    runTerminalCommand().catch((error) => toast(error.message, "error"));
-  });
-  el["terminal-stop"].addEventListener("click", () => {
-    stopTerminalCommand().catch((error) => toast(error.message, "error"));
+  el["terminal-restart"].addEventListener("click", () => {
+    restartTerminalView().catch((error) => toast(String(error), "error"));
   });
   el["terminal-clear"].addEventListener("click", clearTerminalOutput);
-  el["terminal-command"].addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && event.metaKey) {
-      event.preventDefault();
-      runTerminalCommand().catch((error) => toast(error.message, "error"));
-      return;
-    }
-    if (event.key === "Escape" && state.terminalRunning) {
-      event.preventDefault();
-      stopTerminalCommand().catch((error) => toast(error.message, "error"));
-      return;
-    }
-  });
+  // Lazy-mount the terminal the first time the panel becomes visible.
+  const terminalPanel = el["terminal-panel"];
+  if (typeof IntersectionObserver !== "undefined" && terminalPanel) {
+    const termObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && !state.terminal && state.workspace) {
+          openTerminalView().catch((error) => toast(String(error), "error"));
+        }
+      }
+    }, { threshold: 0.1 });
+    termObserver.observe(terminalPanel);
+  }
   el["attachment-input"].addEventListener("change", (event) => {
     queueAttachments(event.target.files);
   });
