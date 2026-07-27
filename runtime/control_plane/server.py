@@ -26,8 +26,12 @@ from runtime.mcp import MCPManager, MCPStore
 from runtime.oauth import OAuthCoordinator
 from runtime.policy import ApprovalBroker, Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
-from runtime.secrets import ProviderSecretService, load_secret_bootstrap
 from runtime.sandbox import SandboxedShell
+from runtime.secrets import (
+    ProviderSecretService,
+    SecretRedactor,
+    load_secret_bootstrap,
+)
 from runtime.sessions import (
     RootDir,
     SessionCleanupError,
@@ -112,7 +116,8 @@ def build_services(
     plan_build_store = PlanBuildStore(config.data_dir)
     goal_store = GoalStore(config.data_dir)
     mcp_store = MCPStore(config.data_dir)
-    audit_ledger = AuditLedger(config.data_dir)
+    secret_redactor = SecretRedactor(secret_service)
+    audit_ledger = AuditLedger(config.data_dir, redactor=secret_redactor)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -339,6 +344,7 @@ def build_services(
                 ),
             ],
             turn_start_hooks=[shell.begin_turn],
+            redactor=secret_redactor,
         )
         engine._terminal_shell = shell
         engine.agent = context.request.agent

@@ -44,6 +44,20 @@ class ProviderSecretService:
             value = self._profiles.get(profile)
             return dict(value) if value is not None else None
 
+    def snapshot(self) -> dict[str, str]:
+        """Return ``{provider: api_key}`` for internal redaction only.
+
+        Co-located callers (the outbound redactor) need the raw key values to
+        scrub exact matches before provider send / audit persistence. This
+        never crosses a process or trust boundary.
+        """
+        with self._lock:
+            return {
+                provider.removeprefix("provider:"): data["api_key"]
+                for provider, data in self._profiles.items()
+                if isinstance(data, dict) and isinstance(data.get("api_key"), str)
+            }
+
     def authorize_sync(self, candidate: str) -> bool:
         return (
             self._sync_token is not None

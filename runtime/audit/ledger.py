@@ -87,11 +87,17 @@ def _event_hash(
 
 
 class AuditLedger:
-    def __init__(self, data_dir: str | Path) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path,
+        *,
+        redactor: Any = None,
+    ) -> None:
         self.base = Path(data_dir).expanduser().resolve()
         secure_directory(self.base)
         self.db_path = self.base / "audit.db"
         self._lock = threading.RLock()
+        self._redactor = redactor
         previous_version = prepare_sqlite_database(
             self.db_path,
             _SCHEMA_VERSION,
@@ -135,6 +141,13 @@ class AuditLedger:
         payload: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         at = time.time()
+        normalized_payload = payload or {}
+        if self._redactor is not None and isinstance(
+            normalized_payload, dict
+        ):
+            normalized_payload = self._redactor.redact_payload(
+                normalized_payload
+            )
         prev_hash = self._last_hash()
         event_hash = _event_hash(
             at=at,
@@ -142,7 +155,7 @@ class AuditLedger:
             action=action,
             actor=actor,
             subject=subject,
-            payload=payload or {},
+            payload=normalized_payload,
             prev_hash=prev_hash,
         )
         row = {
@@ -151,7 +164,7 @@ class AuditLedger:
             "action": action,
             "actor": actor,
             "subject": subject,
-            "payload": _canonical(payload or {}),
+            "payload": _canonical(normalized_payload),
             "prev_hash": prev_hash,
             "hash": event_hash,
         }
@@ -171,7 +184,7 @@ class AuditLedger:
             "action": action,
             "actor": actor,
             "subject": subject,
-            "payload": payload or {},
+            "payload": normalized_payload,
             "prev_hash": prev_hash,
             "hash": event_hash,
         }
