@@ -6,7 +6,8 @@ use zeroize::Zeroize;
 
 use crate::host::validate_session_token;
 
-pub const SUPPORTED_PROVIDERS: [&str; 4] = ["anthropic", "gemini", "openai", "github"];
+pub const SUPPORTED_PROVIDERS: [&str; 6] =
+    ["anthropic", "gemini", "openai", "zai", "deepseek", "github"];
 pub const MAX_API_KEY_BYTES: usize = 16 * 1024;
 const KEYCHAIN_SERVICE: &str = "dev.codinal.desktop.provider-secrets";
 

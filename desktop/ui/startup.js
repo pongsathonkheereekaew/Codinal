@@ -4419,7 +4419,19 @@ async function renderProviders() {
     );
     return;
   }
-  const providers = await invoke("list_provider_secret_status");
+  let providers;
+  try {
+    providers = await invoke("list_provider_secret_status");
+  } catch (error) {
+    el["provider-list"].append(
+      node(
+        "p",
+        "settings-copy provider-error",
+        `Unable to load provider credentials: ${String(error?.message || error)}`
+      )
+    );
+    return;
+  }
   for (const provider of providers) {
     const row = node("div", "provider-row");
     const label = node("label", "", provider.provider);
