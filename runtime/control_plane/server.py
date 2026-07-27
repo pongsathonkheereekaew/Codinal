@@ -14,6 +14,7 @@ from typing import Any, TextIO
 import uvicorn
 
 from runtime import RuntimeServices, compose_runtime
+from runtime.audit import AuditLedger
 from runtime.git import (
     GitWorkspaceError,
     GitWorktreeService,
@@ -21,7 +22,7 @@ from runtime.git import (
     TransactionalShell,
 )
 from runtime.interactions import InteractionBroker
-from runtime.mcp import MCPManager
+from runtime.mcp import MCPManager, MCPStore
 from runtime.oauth import OAuthCoordinator
 from runtime.policy import ApprovalBroker, Approver, deny_all
 from runtime.providers import ProviderClient, ProviderRouter
@@ -110,6 +111,8 @@ def build_services(
     worker_store = WorkerStore(config.data_dir)
     plan_build_store = PlanBuildStore(config.data_dir)
     goal_store = GoalStore(config.data_dir)
+    mcp_store = MCPStore(config.data_dir)
+    audit_ledger = AuditLedger(config.data_dir)
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:
@@ -436,6 +439,8 @@ def build_services(
         worker_store=worker_store,
         plan_build_store=plan_build_store,
         goal_store=goal_store,
+        mcp_store=mcp_store,
+        audit=audit_ledger,
     )
 
 

@@ -3629,6 +3629,7 @@ def test_mcp_server_lifecycle_routes_expose_list_and_disconnect(
                 "tools": [connected.json()["tools"][0]],
                 "include_tools": None,
                 "exclude_tools": [],
+                "enabled": True,
             }
         ]
 
@@ -3653,3 +3654,124 @@ def test_mcp_server_lifecycle_routes_expose_list_and_disconnect(
             headers=AUTH,
         )
         assert missing.status_code == 404
+
+
+def test_mcp_connections_survive_restart_and_reconnect(tmp_path):
+    class FakeMCPManager:
+        def __init__(self):
+            self.connect_calls: list[str] = []
+            self.live: set[str] = set()
+
+        async def connect(self, server, *, approved):
+            self.connect_calls.append(server.name)
+            self.live.add(server.name)
+            return [
+                SimpleNamespace(
+                    name="search",
+                    description="Search remote docs",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                )
+            ]
+
+        async def call(self, _server, _tool, _arguments):
+            return {"matches": ["policy.md"]}
+
+        async def disconnect(self, server_name):
+            self.live.discard(server_name)
+            return True
+
+        async def list(self):
+            return sorted(self.live)
+
+        async def aclose(self):
+            self.live.clear()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    from runtime.sessions import SessionRecord, TurnCheckpoint
+
+    data_dir = tmp_path / "data"
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=data_dir,
+        default_model="openai:gpt-test",
+    )
+
+    # First lifecycle: connect docs (stays enabled) + cache (gets disabled).
+    first_manager = FakeMCPManager()
+    services = build_services(config, mcp_manager=first_manager)
+    services.sessions._store.save(
+        SessionRecord(
+            session_id="session-restart",
+            workspace=str(workspace),
+            model="openai:gpt-test",
+            mode="interactive",
+            turn_checkpoint=TurnCheckpoint(),
+        )
+    )
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=services)
+    ) as client:
+        connect_docs = client.post(
+            "/v1/sessions/session-restart/mcp/connect",
+            headers=AUTH,
+            json={
+                "server": {
+                    "name": "docs",
+                    "transport": "http",
+                    "url": "https://mcp.example.com/v1",
+                }
+            },
+        )
+        connect_cache = client.post(
+            "/v1/sessions/session-restart/mcp/connect",
+            headers=AUTH,
+            json={
+                "server": {
+                    "name": "cache",
+                    "transport": "http",
+                    "url": "https://mcp.example.com/cache",
+                }
+            },
+        )
+        disable_cache = client.patch(
+            "/v1/sessions/session-restart/mcp/servers/cache",
+            headers=AUTH,
+            json={"enabled": False},
+        )
+    assert connect_docs.status_code == 200
+    assert connect_cache.status_code == 200
+    assert disable_cache.status_code == 200
+
+    # Second lifecycle: rebuild services from the same data_dir. lifespan must
+    # reconnect docs (enabled) and leave cache (disabled) dormant.
+    second_manager = FakeMCPManager()
+    restarted = build_services(config, mcp_manager=second_manager)
+    with TestClient(
+        create_control_plane_app(token=TOKEN, services=restarted)
+    ) as client:
+        listed = client.get(
+            "/v1/sessions/session-restart/mcp/servers",
+            headers=AUTH,
+        )
+    rows = {row["name"]: row for row in listed.json()}
+    assert rows["docs"]["enabled"] is True
+    assert rows["docs"]["tools"] == ["mcp__docs__search"]
+    assert rows["cache"]["enabled"] is False
+    assert rows["cache"]["tools"] == []
+    assert second_manager.connect_calls == ["docs"]
+
+    # Audit chain survived restart and recorded every lifecycle event.
+    events = restarted.audit.list(domain="mcp")
+    actions = [event["action"] for event in events]
+    # Restart lifecycle: connect docs, connect cache, disable cache,
+    # then recover docs. Newest first.
+    assert "connect" in actions
+    assert "disable" in actions
+    assert "recover" in actions
+    assert restarted.audit.verify_chain() is True

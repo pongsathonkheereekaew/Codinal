@@ -55,6 +55,10 @@ class ToolManifest:
     def add(self, spec: ToolSpec) -> None:
         self.tools[spec.name] = spec
 
+    def remove(self, name: str) -> None:
+        """Drop a tool declaration so it can be re-registered later (MCP lifecycle)."""
+        self.tools.pop(name, None)
+
     def metadata_for(self, name: str):
         spec = self.tools.get(name)
         if spec is None:

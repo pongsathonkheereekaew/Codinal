@@ -1620,3 +1620,175 @@ def test_terminal_route_404s_when_session_engine_is_missing():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "session not found"
+
+
+class FakeMcpService:
+    def __init__(self, *, raises_value_error=False):
+        self.enabled_calls: list[tuple[str, str, bool]] = []
+        self.raises_value_error = raises_value_error
+        self._servers = [
+            {
+                "name": "docs",
+                "transport": "http",
+                "url": "https://mcp.example.com/v1",
+                "command": None,
+                "cwd": None,
+                "tools": ["mcp__docs__search"],
+                "include_tools": None,
+                "exclude_tools": [],
+                "enabled": True,
+            }
+        ]
+
+    async def connect(self, *_args, **_kwargs):
+        return {"ok": True, "server": "docs", "tools": ["mcp__docs__search"]}
+
+    def list_connected(self, _session_id):
+        return list(self._servers)
+
+    async def disconnect(self, *_args, **_kwargs):
+        return {"ok": True, "server": "docs", "tools": []}
+
+    async def set_enabled(self, session_id, name, *, enabled):
+        if self.raises_value_error:
+            raise ValueError("MCP server not connected")
+        self.enabled_calls.append((session_id, name, enabled))
+        for server in self._servers:
+            if server["name"] == name:
+                server["enabled"] = enabled
+        return {"ok": True, "server": name, "enabled": enabled, "tools": []}
+
+    async def recover(self):
+        return 0
+
+    async def aclose(self):
+        return None
+
+
+def _make_mcp_client(mcp):
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        routing=None,
+        secrets=ProviderSecretService(),
+        oauth=OAuthCoordinator(),
+        turns=FakeTurns(),
+        sessions=FakeSessions(),
+        approvals=None,
+        mcp=mcp,
+        git=None,
+    )
+    return TestClient(create_control_plane_app(token=TOKEN, services=services))
+
+
+def test_mcp_list_includes_enabled_field():
+    client = _make_mcp_client(FakeMcpService())
+
+    with client:
+        response = client.get(
+            "/v1/sessions/session-1/mcp/servers",
+            headers=AUTH,
+        )
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert rows[0]["enabled"] is True
+
+
+def test_mcp_patch_route_toggles_enabled_state():
+    mcp = FakeMcpService()
+    client = _make_mcp_client(mcp)
+
+    with client:
+        disabled = client.patch(
+            "/v1/sessions/session-1/mcp/servers/docs",
+            headers=AUTH,
+            json={"enabled": False},
+        )
+        listed = client.get(
+            "/v1/sessions/session-1/mcp/servers",
+            headers=AUTH,
+        )
+        re_enabled = client.patch(
+            "/v1/sessions/session-1/mcp/servers/docs",
+            headers=AUTH,
+            json={"enabled": True},
+        )
+
+    assert disabled.json() == {
+        "ok": True,
+        "server": "docs",
+        "enabled": False,
+        "tools": [],
+    }
+    assert listed.json()[0]["enabled"] is False
+    assert re_enabled.json()["enabled"] is True
+    assert mcp.enabled_calls == [
+        ("session-1", "docs", False),
+        ("session-1", "docs", True),
+    ]
+
+
+def test_mcp_patch_route_returns_404_when_server_unknown():
+    client = _make_mcp_client(FakeMcpService(raises_value_error=True))
+
+    with client:
+        response = client.patch(
+            "/v1/sessions/session-1/mcp/servers/unknown",
+            headers=AUTH,
+            json={"enabled": False},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "MCP server not connected"
+
+
+def test_mcp_patch_route_rejects_malformed_body():
+    client = _make_mcp_client(FakeMcpService())
+
+    with client:
+        bad_enabled_type = client.patch(
+            "/v1/sessions/session-1/mcp/servers/docs",
+            headers=AUTH,
+            json={"enabled": "yes"},
+        )
+        extra_field = client.patch(
+            "/v1/sessions/session-1/mcp/servers/docs",
+            headers=AUTH,
+            json={"enabled": True, "other": "extra"},
+        )
+        invalid_name = client.patch(
+            "/v1/sessions/session-1/mcp/servers/bad name",
+            headers=AUTH,
+            json={"enabled": True},
+        )
+
+    assert bad_enabled_type.status_code == 400
+    assert extra_field.status_code == 400
+    assert invalid_name.status_code == 400
+
+
+def test_mcp_patch_route_returns_503_when_mcp_unavailable():
+    services = SimpleNamespace(
+        events=EventHub(),
+        settings=FakeSettings(),
+        routing=None,
+        secrets=ProviderSecretService(),
+        oauth=OAuthCoordinator(),
+        turns=FakeTurns(),
+        sessions=FakeSessions(),
+        approvals=None,
+        mcp=None,
+        git=None,
+    )
+    client = TestClient(create_control_plane_app(token=TOKEN, services=services))
+
+    with client:
+        response = client.patch(
+            "/v1/sessions/session-1/mcp/servers/docs",
+            headers=AUTH,
+            json={"enabled": False},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "MCP unavailable"

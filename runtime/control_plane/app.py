@@ -312,6 +312,16 @@ class MCPControl(Protocol):
         name: str,
     ) -> dict[str, Any]: ...
 
+    async def set_enabled(
+        self,
+        session_id: str,
+        name: str,
+        *,
+        enabled: bool,
+    ) -> dict[str, Any]: ...
+
+    async def recover(self) -> int: ...
+
     async def aclose(self) -> None: ...
 
 
@@ -500,6 +510,9 @@ def create_control_plane_app(
             builds = getattr(services, "builds", None)
             if builds is not None:
                 await builds.recover()
+            mcp = getattr(services, "mcp", None)
+            if mcp is not None:
+                await mcp.recover()
             yield
         finally:
             goals = getattr(services, "goals", None)
@@ -1954,6 +1967,43 @@ def create_control_plane_app(
                 detail="MCP server not connected",
             ) from None
 
+    @app.patch("/v1/sessions/{session_id}/mcp/servers/{server_name}")
+    async def set_mcp_server_enabled(
+        session_id: str,
+        server_name: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if not re.fullmatch(MCP_SERVER_NAME, server_name):
+            raise HTTPException(
+                status_code=400,
+                detail="invalid MCP server name",
+            )
+        if services.mcp is None:
+            raise HTTPException(status_code=503, detail="MCP unavailable")
+        body = await _read_mcp_enable(request)
+        try:
+            return await services.mcp.set_enabled(
+                session_id,
+                server_name,
+                enabled=body["enabled"],
+            )
+        except SessionNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail="session not found",
+            ) from None
+        except SessionBusyError:
+            raise HTTPException(
+                status_code=409,
+                detail="session already has an active turn",
+            ) from None
+        except ValueError:
+            raise HTTPException(
+                status_code=404,
+                detail="MCP server not connected",
+            ) from None
+
     @app.get("/v1/sessions/{session_id}/git/status")
     async def git_status(session_id: str) -> dict[str, object]:
         _validate_public_session_id(session_id)
@@ -3125,6 +3175,26 @@ async def _read_mcp_server(request: Request) -> MCPServerDef:
         return MCPServerDef(**server)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="invalid MCP server") from None
+
+
+async def _read_mcp_enable(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid MCP enable update",
+        ) from None
+    if (
+        not isinstance(body, dict)
+        or set(body) != {"enabled"}
+        or not isinstance(body.get("enabled"), bool)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid MCP enable update",
+        )
+    return body
 
 
 async def _read_api_key(request: Request) -> str:
