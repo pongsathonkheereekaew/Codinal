@@ -877,6 +877,23 @@ def create_control_plane_app(
             )
         return services.settings.set_failover_enabled(body["enabled"])
 
+    @app.patch("/v1/settings/stirling")
+    async def update_stirling_url(request: Request) -> dict[str, Any]:
+        body = await _read_bounded_object(
+            request,
+            limit=1024,
+            detail="invalid Stirling URL",
+        )
+        if set(body) != {"url"} or not isinstance(body.get("url"), str):
+            raise HTTPException(status_code=400, detail="invalid Stirling URL")
+        result = services.settings.set_stirling_url(body["url"])
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "invalid Stirling URL"),
+            )
+        return result
+
     @app.get("/v1/sessions")
     async def list_sessions(
         workspace: str | None = None,

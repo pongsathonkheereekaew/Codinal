@@ -295,6 +295,60 @@ def test_pdf_attachment_preferences_validate_as_one_atomic_update(tmp_path):
     }
 
 
+def test_stirling_url_only_accepts_explicit_loopback_http_endpoints(tmp_path):
+    path = tmp_path / "prefs.json"
+    service = SettingsService(
+        JsonPreferenceStore(path),
+        default_model="openai:gpt-default",
+    )
+
+    assert service.view()["stirling_url"] is None
+    assert service.set_stirling_url("http://localhost:8080/") == {
+        "ok": True,
+        "stirling_url": "http://localhost:8080",
+    }
+    assert service.set_stirling_url("http://[::1]:8081") == {
+        "ok": True,
+        "stirling_url": "http://[::1]:8081",
+    }
+    for value in (
+        "https://localhost:8080",
+        "http://localhost",
+        "http://localhost:0",
+        "http://[::1]:0",
+        "http://localhost:8080/api",
+        "http://localhost:8080?x=1",
+        "http://user@localhost:8080",
+        "http://127.0.0.2:8080",
+        "http://example.com:8080",
+    ):
+        assert service.set_stirling_url(value)["ok"] is False
+
+    reborn = SettingsService(
+        JsonPreferenceStore(path),
+        default_model="openai:gpt-default",
+    )
+    assert reborn.view()["stirling_url"] == "http://[::1]:8081"
+
+
+def test_stirling_url_rolls_back_when_persistence_fails():
+    class FailingStore:
+        def load(self):
+            return {}
+
+        def save(self, _preferences):
+            raise OSError("disk unavailable")
+
+    service = SettingsService(
+        FailingStore(),
+        default_model="openai:gpt-default",
+    )
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        service.set_stirling_url("http://localhost:8080")
+    assert service.view()["stirling_url"] is None
+
+
 def test_default_model_is_required(tmp_path):
     with pytest.raises(ValueError, match="default_model"):
         SettingsService(
