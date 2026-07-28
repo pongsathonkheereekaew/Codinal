@@ -215,18 +215,19 @@ fn lsp_start(
     workspace_root: String,
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     let emit_app = app.clone();
     state
         .lsp
         .start(
             &language,
             &workspace_root,
-            Arc::new(move |lang, msg| {
+            Arc::new(move |key, msg| {
                 let _ = emit_app.emit(
                     "lsp-notification",
                     serde_json::json!({
-                        "language": lang,
+                        "language": key.language,
+                        "workspaceRoot": key.workspace_root,
                         "message": msg,
                     }),
                 );
@@ -242,7 +243,7 @@ fn lsp_start(
     _workspace_root: String,
     _app: tauri::AppHandle,
     _state: State<'_, DesktopState>,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     lsp_unsupported()
 }
 
@@ -251,13 +252,14 @@ fn lsp_start(
 #[tauri::command]
 fn lsp_request(
     language: String,
+    workspace_root: String,
     method: String,
     params: serde_json::Value,
     state: State<'_, DesktopState>,
 ) -> Result<serde_json::Value, String> {
     state
         .lsp
-        .request(&language, &method, params, 10)
+        .request(&language, &workspace_root, &method, params, 10)
         .map_err(|e| e.to_string())
 }
 
@@ -265,6 +267,7 @@ fn lsp_request(
 #[tauri::command]
 fn lsp_request(
     _language: String,
+    _workspace_root: String,
     _method: String,
     _params: serde_json::Value,
     _state: State<'_, DesktopState>,
@@ -277,13 +280,14 @@ fn lsp_request(
 #[tauri::command]
 fn lsp_notify(
     language: String,
+    workspace_root: String,
     method: String,
     params: serde_json::Value,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
     state
         .lsp
-        .notify(&language, &method, params)
+        .notify(&language, &workspace_root, &method, params)
         .map_err(|e| e.to_string())
 }
 
@@ -291,6 +295,7 @@ fn lsp_notify(
 #[tauri::command]
 fn lsp_notify(
     _language: String,
+    _workspace_root: String,
     _method: String,
     _params: serde_json::Value,
     _state: State<'_, DesktopState>,
@@ -301,13 +306,24 @@ fn lsp_notify(
 /// Stop a language server.
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn lsp_stop(language: String, state: State<'_, DesktopState>) -> Result<bool, String> {
-    state.lsp.stop(&language).map_err(|e| e.to_string())
+fn lsp_stop(
+    language: String,
+    workspace_root: String,
+    state: State<'_, DesktopState>,
+) -> Result<bool, String> {
+    state
+        .lsp
+        .stop(&language, &workspace_root)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(not(target_os = "macos"))]
 #[tauri::command]
-fn lsp_stop(_language: String, _state: State<'_, DesktopState>) -> Result<bool, String> {
+fn lsp_stop(
+    _language: String,
+    _workspace_root: String,
+    _state: State<'_, DesktopState>,
+) -> Result<bool, String> {
     lsp_unsupported()
 }
 

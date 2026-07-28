@@ -12,16 +12,18 @@
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use std::path::Path;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use url::Url;
 
 /// A running language server session.
 struct LspServer {
     #[allow(dead_code)]
     language: String,
-    child: Child,
+    child: Mutex<Child>,
     stdin: Arc<Mutex<std::process::ChildStdin>>,
     /// Pending requests waiting for responses: id → sender.
     pending: Arc<Mutex<HashMap<u64, PendingResponse>>>,
@@ -29,20 +31,63 @@ struct LspServer {
 }
 
 struct PendingResponse {
-    tx: std::sync::mpsc::Sender<serde_json::Value>,
+    tx: std::sync::mpsc::Sender<Result<serde_json::Value, String>>,
 }
 
 impl Drop for LspServer {
     fn drop(&mut self) {
-        // Best-effort kill on drop.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.shutdown();
     }
 }
 
-/// Registry of active language servers, keyed by language name.
+impl LspServer {
+    fn shutdown(&self) {
+        let Ok(mut child) = self.child.lock() else {
+            return;
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// A language server is isolated by its canonical workspace root and language.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct LspKey {
+    pub language: String,
+    pub workspace_root: String,
+}
+
+impl LspKey {
+    fn new(language: &str, workspace_root: &str) -> io::Result<Self> {
+        if language.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "language is empty",
+            ));
+        }
+        let root = Path::new(workspace_root).canonicalize()?;
+        if !root.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "workspace root is not a directory",
+            ));
+        }
+        Ok(Self {
+            language: language.to_owned(),
+            workspace_root: root.to_string_lossy().into_owned(),
+        })
+    }
+
+    fn root_uri(&self) -> io::Result<String> {
+        Url::from_directory_path(&self.workspace_root)
+            .map(|url| url.into())
+            .map_err(|()| io::Error::new(io::ErrorKind::InvalidInput, "invalid workspace root"))
+    }
+}
+
+/// Registry of active language servers, keyed by workspace and language.
 pub struct LspRegistry {
-    servers: Mutex<HashMap<String, Arc<LspServer>>>,
+    servers: Mutex<HashMap<LspKey, Arc<LspServer>>>,
 }
 
 impl Default for LspRegistry {
@@ -68,21 +113,21 @@ fn server_command(language: &str) -> Option<Vec<&'static str>> {
 }
 
 /// Emit callback for notifications (diagnostics etc.) → Tauri events.
-pub type NotificationEmitter = Arc<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
+pub type NotificationEmitter = Arc<dyn Fn(&LspKey, &serde_json::Value) + Send + Sync>;
 
 impl LspRegistry {
-    /// Start a language server for the given language + workspace root.
-    /// Returns Ok(()) if already running or successfully started.
+    /// Start and initialize a language server for the workspace/language key.
     /// Returns Err if the server binary is not found or fails to start.
     pub fn start(
         &self,
         language: &str,
         workspace_root: &str,
         emit: NotificationEmitter,
-    ) -> io::Result<()> {
+    ) -> io::Result<serde_json::Value> {
+        let key = LspKey::new(language, workspace_root)?;
         let mut guard = self.servers.lock().expect("lsp lock poisoned");
-        if guard.contains_key(language) {
-            return Ok(()); // already running
+        if guard.contains_key(&key) {
+            return Ok(serde_json::json!({})); // already running
         }
         let cmd_parts = server_command(language).ok_or_else(|| {
             io::Error::new(
@@ -97,7 +142,7 @@ impl LspRegistry {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .current_dir(workspace_root)
+            .current_dir(&key.workspace_root)
             .spawn()
             .map_err(|e| {
                 io::Error::new(
@@ -111,36 +156,71 @@ impl LspRegistry {
         let stdout = child.stdout.take().expect("stdout");
         let server = Arc::new(LspServer {
             language: language.to_owned(),
-            child,
+            child: Mutex::new(child),
             stdin: Arc::new(Mutex::new(stdin)),
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU64::new(1),
         });
         // Spawn reader thread for stdout (JSON-RPC responses + notifications).
         let server_for_reader = Arc::clone(&server);
-        let lang = language.to_owned();
+        let key_for_reader = key.clone();
         thread::Builder::new()
-            .name(format!("lsp-reader-{lang}"))
+            .name(format!("lsp-reader-{}", key.language))
             .spawn(move || {
-                read_lsp_messages(stdout, &server_for_reader, &lang, &emit);
+                read_lsp_messages(stdout, &server_for_reader, &key_for_reader, &emit);
             })?;
-        guard.insert(language.to_owned(), server);
-        Ok(())
+        guard.insert(key.clone(), server);
+        drop(guard);
+        let root_uri = key.root_uri()?;
+        let capabilities = match self.request_key(
+            &key,
+            "initialize",
+            serde_json::json!({
+                "processId": null,
+                "rootUri": root_uri.clone(),
+                "workspaceFolders": [{"uri": root_uri, "name": Path::new(&key.workspace_root).file_name().and_then(|name| name.to_str()).unwrap_or("workspace")}],
+                "capabilities": {},
+            }),
+            10,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = self.stop_key(&key);
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.notify_key(&key, "initialized", serde_json::json!({})) {
+            let _ = self.stop_key(&key);
+            return Err(error);
+        }
+        Ok(capabilities)
     }
 
     /// Send a JSON-RPC request and wait for the response (blocking, with timeout).
     pub fn request(
         &self,
         language: &str,
+        workspace_root: &str,
+        method: &str,
+        params: serde_json::Value,
+        timeout_secs: u64,
+    ) -> io::Result<serde_json::Value> {
+        let key = LspKey::new(language, workspace_root)?;
+        self.request_key(&key, method, params, timeout_secs)
+    }
+
+    fn request_key(
+        &self,
+        key: &LspKey,
         method: &str,
         params: serde_json::Value,
         timeout_secs: u64,
     ) -> io::Result<serde_json::Value> {
         let guard = self.servers.lock().expect("lsp lock poisoned");
-        let server = guard.get(language).cloned().ok_or_else(|| {
+        let server = guard.get(key).cloned().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("language server '{language}' is not running"),
+                format!("language server '{}' is not running", key.language),
             )
         })?;
         drop(guard);
@@ -159,7 +239,8 @@ impl LspRegistry {
         });
         send_message(&server.stdin, &msg)?;
         match rx.recv_timeout(std::time::Duration::from_secs(timeout_secs)) {
-            Ok(response) => Ok(response),
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(message)) => Err(io::Error::other(message)),
             Err(_) => {
                 server.pending.lock().expect("pending lock").remove(&id);
                 Err(io::Error::other("LSP request timed out"))
@@ -171,14 +252,20 @@ impl LspRegistry {
     pub fn notify(
         &self,
         language: &str,
+        workspace_root: &str,
         method: &str,
         params: serde_json::Value,
     ) -> io::Result<()> {
+        let key = LspKey::new(language, workspace_root)?;
+        self.notify_key(&key, method, params)
+    }
+
+    fn notify_key(&self, key: &LspKey, method: &str, params: serde_json::Value) -> io::Result<()> {
         let guard = self.servers.lock().expect("lsp lock poisoned");
-        let server = guard.get(language).cloned().ok_or_else(|| {
+        let server = guard.get(key).cloned().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("language server '{language}' is not running"),
+                format!("language server '{}' is not running", key.language),
             )
         })?;
         drop(guard);
@@ -191,17 +278,31 @@ impl LspRegistry {
     }
 
     /// Stop a language server.
-    pub fn stop(&self, language: &str) -> io::Result<bool> {
+    pub fn stop(&self, language: &str, workspace_root: &str) -> io::Result<bool> {
+        let key = LspKey::new(language, workspace_root)?;
+        self.stop_key(&key)
+    }
+
+    fn stop_key(&self, key: &LspKey) -> io::Result<bool> {
         let mut guard = self.servers.lock().expect("lsp lock poisoned");
-        Ok(guard.remove(language).is_some())
+        let server = guard.remove(key);
+        drop(guard);
+        if let Some(server) = server {
+            server.shutdown();
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Check if a server is running for the given language.
-    pub fn is_running(&self, language: &str) -> bool {
+    pub fn is_running(&self, language: &str, workspace_root: &str) -> bool {
+        let Ok(key) = LspKey::new(language, workspace_root) else {
+            return false;
+        };
         self.servers
             .lock()
             .expect("lsp lock poisoned")
-            .contains_key(language)
+            .contains_key(&key)
     }
 }
 
@@ -225,7 +326,7 @@ fn send_message(
 fn read_lsp_messages(
     stdout: ChildStdout,
     server: &Arc<LspServer>,
-    language: &str,
+    key: &LspKey,
     emit: &NotificationEmitter,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -265,11 +366,15 @@ fn read_lsp_messages(
             // It's a response — find the pending requester.
             let pending = server.pending.lock().expect("pending lock").remove(&id);
             if let Some(p) = pending {
-                let result = msg
-                    .get("result")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                let _ = p.tx.send(result);
+                let response = if msg.get("error").is_some() {
+                    Err("language server rejected request".to_owned())
+                } else {
+                    Ok(msg
+                        .get("result")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null))
+                };
+                let _ = p.tx.send(response);
             }
         } else if let Some(method) = msg.get("method").and_then(|v| v.as_str()) {
             // It's a notification — emit to frontend.
@@ -278,7 +383,7 @@ fn read_lsp_messages(
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
             emit(
-                language,
+                key,
                 &serde_json::json!({ "method": method, "params": params }),
             );
         }
@@ -309,16 +414,18 @@ mod tests {
         // but we can verify the registry's start/stop state machine with a
         // fake command that fails gracefully.
         let registry = LspRegistry::default();
-        assert!(!registry.is_running("rust"));
+        let workspace = tempfile::tempdir().unwrap();
+        let root = workspace.path().to_str().unwrap();
+        assert!(!registry.is_running("rust", root));
         // start() with a missing server should fail gracefully.
         let emit: NotificationEmitter = Arc::new(|_, _| {});
-        let result = registry.start("rust", "/tmp", emit);
+        let result = registry.start("rust", root, emit);
         // This may succeed or fail depending on whether rust-analyzer is on PATH.
         // The important thing is it doesn't panic.
         let _ = result;
-        if registry.is_running("rust") {
-            assert!(registry.stop("rust").unwrap_or(false));
-            assert!(!registry.is_running("rust"));
+        if registry.is_running("rust", root) {
+            assert!(registry.stop("rust", root).unwrap_or(false));
+            assert!(!registry.is_running("rust", root));
         }
     }
 }
