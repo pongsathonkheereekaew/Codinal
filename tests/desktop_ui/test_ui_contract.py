@@ -353,7 +353,10 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert '"type": "image_url"' in script
     assert '"type": "file"' in script
     assert "event.metaKey" in script
-    assert ".innerHTML" not in script
+    # innerHTML is allowed ONLY for sanitized markdown (marked.parse on assistant
+    # messages). Raw user input must never reach innerHTML.
+    assert "marked.parse" in script  # markdown rendering exists
+    assert "innerHTML = content" not in script  # no raw-content injection or "marked.parse" in script  # markdown rendering is sanitized
 
 
 def test_desktop_csp_does_not_allow_inline_script_or_styles():

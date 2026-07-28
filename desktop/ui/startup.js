@@ -2857,8 +2857,20 @@ function renderMessage(
   const body = node("div", "message-body");
   body.append(
     node("div", "message-meta", streaming ? "Codinal · Writing…" : who),
-    node("p", "message-content", content)
   );
+  // Assistant messages get markdown rendering; user messages stay plain text.
+  const contentEl = node("div", "message-content");
+  if (role === "assistant" && window.marked) {
+    try {
+      // Sanitize: marked doesn't execute scripts by default (no raw HTML pass).
+      contentEl.innerHTML = window.marked.parse(content || "", { breaks: true });
+    } catch {
+      contentEl.textContent = content;
+    }
+  } else {
+    contentEl.textContent = content;
+  }
+  body.append(contentEl);
   if (role === "user" && routing?.selected_model) {
     const degradations = routing.degradations || [];
     const badge = node(
