@@ -51,6 +51,7 @@ interface CodinalEditorAPI {
   closeTab(path: string): void;
   setActive(path: string): void;
   getContent(path: string): string | null;
+  getActivePath(): string | null;
   hasTab(path: string): boolean;
   onSave(handler: SaveHandler): void;
   /** Fired when the last tab closes, so the host can hide the panel. */
@@ -338,6 +339,10 @@ const api: CodinalEditorAPI = {
   getContent(path: string): string | null {
     const tab = _tabs.get(path);
     return tab ? tab.view.state.doc.toString() : null;
+  },
+
+  getActivePath(): string | null {
+    return _activePath;
   },
 
   hasTab(path: string): boolean {

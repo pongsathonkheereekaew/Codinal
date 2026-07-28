@@ -411,6 +411,56 @@ fn lsp_document_close(
     lsp_unsupported()
 }
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_document_symbols(
+    language: String,
+    workspace_root: String,
+    path: String,
+    state: State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .lsp
+        .document_symbols(&language, &workspace_root, &path)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_document_symbols(
+    _language: String,
+    _workspace_root: String,
+    _path: String,
+    _state: State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    lsp_unsupported()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_workspace_symbols(
+    language: String,
+    workspace_root: String,
+    query: String,
+    state: State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .lsp
+        .workspace_symbols(&language, &workspace_root, &query)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_workspace_symbols(
+    _language: String,
+    _workspace_root: String,
+    _query: String,
+    _state: State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    lsp_unsupported()
+}
+
 /// Stop a language server.
 #[cfg(target_os = "macos")]
 #[tauri::command]
@@ -731,7 +781,9 @@ pub fn run() {
             lsp_document_open,
             lsp_document_change,
             lsp_document_save,
-            lsp_document_close
+            lsp_document_close,
+            lsp_document_symbols,
+            lsp_workspace_symbols
         ])
         .setup(|app| {
             let token = mint_session_token()?;

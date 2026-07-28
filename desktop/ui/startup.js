@@ -104,7 +104,10 @@ const state = {
   lspDocuments: new Map(),
   lspClosing: new Map(),
   lspServers: new Map(),
-  palette: { mode: null, items: [], selected: 0, returnFocus: null, filesForSession: null },
+  palette: {
+    mode: null, items: [], selected: 0, returnFocus: null, filesForSession: null,
+    symbolGeneration: 0, symbolRequestGeneration: 0, symbolTimer: null,
+  },
   mention: null,
   mentionGeneration: 0,
 };
@@ -2167,6 +2170,123 @@ async function openPalette(mode) {
   if (!el["command-palette"].open) el["command-palette"].showModal();
   renderPalette();
   el["command-palette-input"].focus();
+}
+
+function symbolRange(value) {
+  return value?.selectionRange || value?.range || value?.location?.range || null;
+}
+
+function relativeSymbolPath(uri) {
+  if (typeof uri !== "string" || !state.workspace) return null;
+  try {
+    const path = decodeURIComponent(new URL(uri).pathname);
+    const root = state.workspace.endsWith("/") ? state.workspace : `${state.workspace}/`;
+    return path.startsWith(root) ? path.slice(root.length) : null;
+  } catch {
+    return null;
+  }
+}
+
+function symbolItem(symbol, path) {
+  const range = symbolRange(symbol);
+  if (!path || !range?.start) return null;
+  const line = (range.start.line || 0) + 1;
+  return {
+    label: `${symbol.name || "Unnamed symbol"} · ${path}:${line}`,
+    run: async () => {
+      await openEditorTab(path);
+      window.CodinalEditor?.revealRange?.(
+        path,
+        range.start.line || 0,
+        range.start.character || 0,
+        range.end?.line ?? (range.start.line || 0),
+        range.end?.character ?? (range.start.character || 0),
+      );
+    },
+  };
+}
+
+function documentSymbolItems(symbols, path) {
+  const items = [];
+  const visit = (symbol) => {
+    const item = symbolItem(symbol, path);
+    if (item) items.push(item);
+    for (const child of symbol.children || []) visit(child);
+  };
+  for (const symbol of Array.isArray(symbols) ? symbols : []) visit(symbol);
+  return items;
+}
+
+async function openSymbolPalette(scope) {
+  const generation = (state.palette.symbolGeneration || 0) + 1;
+  state.palette.symbolGeneration = generation;
+  state.palette.mode = scope;
+  state.palette.selected = 0;
+  state.palette.returnFocus = document.activeElement;
+  state.palette.items = [];
+  el["command-palette-input"].value = "";
+  el["command-palette-title"].textContent = scope === "document-symbols" ? "Document Symbols" : "Workspace Symbols";
+  el["command-palette-input"].placeholder = "Search symbols";
+  if (!el["command-palette"].open) el["command-palette"].showModal();
+  el["command-palette-status"].textContent = "Loading symbols…";
+  renderPalette();
+  el["command-palette-input"].focus();
+  if (!invoke || !state.workspace) {
+    el["command-palette-status"].textContent = "Language services are unavailable";
+    return;
+  }
+  if (scope === "document-symbols") {
+    const path = window.CodinalEditor?.getActivePath?.();
+    const document = path && state.lspDocuments.get(path);
+    if (!path || !document) {
+      el["command-palette-status"].textContent = "No language server for the active document";
+      return;
+    }
+    try {
+      const symbols = await invoke("lsp_document_symbols", {
+        language: document.language, workspaceRoot: document.workspaceRoot, path,
+      });
+      if (generation !== state.palette.symbolGeneration) return;
+      state.palette.items = documentSymbolItems(symbols, path);
+    } catch {
+      if (generation !== state.palette.symbolGeneration) return;
+      state.palette.items = [];
+      el["command-palette-status"].textContent = "Document symbols are unavailable";
+    }
+    renderPalette();
+    return;
+  }
+  await loadWorkspaceSymbols("");
+}
+
+async function loadWorkspaceSymbols(query) {
+  const generation = state.palette.symbolGeneration;
+  const requestGeneration = (state.palette.symbolRequestGeneration || 0) + 1;
+  state.palette.symbolRequestGeneration = requestGeneration;
+  const servers = [...state.lspServers.values()];
+  if (!servers.length) {
+    el["command-palette-status"].textContent = "No workspace language servers are active";
+    return;
+  }
+  const results = await Promise.all(servers.map(async (server) => {
+    try {
+      return await invoke("lsp_workspace_symbols", { ...server, query });
+    } catch {
+      return [];
+    }
+  }));
+  if (
+    generation !== state.palette.symbolGeneration
+    || requestGeneration !== state.palette.symbolRequestGeneration
+    || state.palette.mode !== "workspace-symbols"
+  ) return;
+  state.palette.items = results.flat().flatMap((symbol) => {
+    if (!symbol || typeof symbol !== "object") return [];
+    const path = symbol.codinalPath || relativeSymbolPath(symbol.location?.uri);
+    return [symbolItem(symbol, path)].filter(Boolean);
+  });
+  state.palette.selected = 0;
+  renderPalette();
 }
 
 function closeMentionPicker() {
@@ -5309,6 +5429,13 @@ function wireEvents() {
   el["command-palette-close"].addEventListener("click", closePalette);
   el["command-palette-input"].addEventListener("input", () => {
     state.palette.selected = 0;
+    if (state.palette.mode === "workspace-symbols") {
+      clearTimeout(state.palette.symbolTimer);
+      state.palette.symbolTimer = setTimeout(() => {
+        loadWorkspaceSymbols(el["command-palette-input"].value);
+      }, 150);
+      return;
+    }
     renderPalette();
   });
   el["command-palette"].addEventListener("keydown", (event) => {
@@ -5473,6 +5600,14 @@ function wireEvents() {
     if (event.metaKey && event.shiftKey && event.key.toLowerCase() === "p") {
       event.preventDefault();
       openPalette("commands");
+    }
+    if (event.metaKey && event.shiftKey && event.key.toLowerCase() === "o") {
+      event.preventDefault();
+      openSymbolPalette("document-symbols");
+    }
+    if (event.metaKey && event.key.toLowerCase() === "t") {
+      event.preventDefault();
+      openSymbolPalette("workspace-symbols");
     }
     if (event.metaKey && event.key.toLowerCase() === "n") {
       event.preventDefault();
