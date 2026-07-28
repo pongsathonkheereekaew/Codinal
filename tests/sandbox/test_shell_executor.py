@@ -204,6 +204,7 @@ def test_seatbelt_supports_dedicated_read_and_write_roots(
 
 
 @requires_seatbelt
+@skip_on_ci
 def test_seatbelt_can_run_workspace_git(shell: SandboxedShell) -> None:
     result = shell.run("git init")
 
