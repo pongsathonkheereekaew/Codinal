@@ -1,0 +1,14 @@
+{
+  "name": "codinal-desktop-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CodeMirror 6 editor surface for Codinal (bundled via esbuild; the rest of the UI stays zero-build vanilla JS).",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "=0.25.0"
+  }
+}

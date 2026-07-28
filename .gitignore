@@ -19,3 +19,8 @@ backups/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# editor build artifacts (esbuild output; built by `npm run build`)
+/desktop/ui/dist/editor.js
+/desktop/ui/dist/editor.js.map
+/desktop/ui/dist/editor.css

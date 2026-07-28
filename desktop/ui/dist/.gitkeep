@@ -1,0 +1,3 @@
+// Editor output directory — esbuild writes editor.js here.
+// This .gitkeep is committed so the dir exists before the first build.
+// dist/editor.js itself is gitignored (built artifact, not source).
