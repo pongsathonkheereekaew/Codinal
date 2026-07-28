@@ -136,6 +136,15 @@ def test_editor_has_native_find_replace_keybindings():
     assert 'key: "Mod-h", run: openSearchPanel' in editor
 
 
+def test_editor_enables_native_multi_cursor_selection():
+    """Phase 57: CodeMirror exposes Cmd/Ctrl-D and modifier-click selections."""
+    editor = (ROOT / "desktop" / "ui-src" / "editor.ts").read_text(encoding="utf-8")
+
+    assert "EditorState.allowMultipleSelections.of(true)" in editor
+    assert "drawSelection()," in editor
+    assert "...searchKeymap," in editor
+
+
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")

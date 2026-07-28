@@ -9,7 +9,7 @@
 // and calls: openTab, closeTab, setActive, getContent, onSave.
 
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorView, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, indentOnInput } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
@@ -176,6 +176,8 @@ function createView(path: string, content: string, readOnly: boolean): EditorVie
   const isDark = _theme === "dark";
   const extensions = [
     history(),
+    EditorState.allowMultipleSelections.of(true),
+    drawSelection(),
     lineNumbers(),
     foldGutter(),
     highlightActiveLine(),
