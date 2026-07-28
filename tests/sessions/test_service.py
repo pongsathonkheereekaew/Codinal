@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -1750,6 +1751,108 @@ def test_read_artifact_encodes_binary_preview_and_caps_large_files(tmp_path):
         "ok": True,
         "path": "slides.pptx",
         "kind": "office",
+        "preview_status": "unconfigured",
+    }
+
+
+def test_read_artifact_converts_local_office_preview_without_touching_source(
+    tmp_path,
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = workspace / "sheet.xlsx"
+    source.write_bytes(b"original spreadsheet")
+    converted = tmp_path / "converted.pdf"
+    converted.write_bytes(b"%PDF-preview")
+    calls = []
+
+    class Converter:
+        def convert(self, target):
+            calls.append(target)
+            return SimpleNamespace(status="ready", pdf_path=converted)
+
+        def close(self):
+            return None
+
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+        stirling_url_provider=lambda: "http://localhost:8080",
+        stirling_converter_factory=lambda url, cache: Converter(),
+    )
+
+    preview = service.read_artifact("s1", "sheet.xlsx")
+
+    assert preview == {
+        "ok": True,
+        "path": "sheet.xlsx",
+        "kind": "pdf",
+        "source_kind": "sheet",
+        "mime": "application/pdf",
+        "data_url": "data:application/pdf;base64,JVBERi1wcmV2aWV3",
+    }
+    assert calls == [source]
+    assert source.read_bytes() == b"original spreadsheet"
+
+
+def test_read_artifact_reports_unconfigured_local_office_preview(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "slides.pptx").write_bytes(b"office")
+
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    assert service.read_artifact("s1", "slides.pptx") == {
+        "ok": True,
+        "path": "slides.pptx",
+        "kind": "office",
+        "preview_status": "unconfigured",
+    }
+
+
+def test_read_artifact_maps_conversion_setup_failures_to_failed_preview(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "slides.pptx").write_bytes(b"office")
+
+    def unavailable_converter(_url, _cache):
+        raise OSError("cache unavailable")
+
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+        stirling_converter_factory=unavailable_converter,
+    )
+
+    assert service.read_artifact("s1", "slides.pptx") == {
+        "ok": True,
+        "path": "slides.pptx",
+        "kind": "office",
+        "preview_status": "failed",
     }
 
 

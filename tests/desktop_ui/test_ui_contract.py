@@ -170,6 +170,9 @@ def test_artifact_preview_uses_typed_local_renderers():
     assert "artifact-preview-image" in script
     assert "artifact-preview-pdf" in script
     assert "Local Office preview requires a configured Stirling endpoint." in script
+    assert "Set a local Stirling endpoint to preview this file." in script
+    assert "The original file was not changed." in script
+    assert "generation === state.artifactPreviewGeneration" in script
     assert "artifactPreviewGeneration" in script
     assert "state.sessionId !== sessionId" in script
 

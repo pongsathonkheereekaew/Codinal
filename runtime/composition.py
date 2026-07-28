@@ -195,6 +195,8 @@ def compose_runtime(
         artifact_opener=artifact_opener,
         default_model=default_model,
         default_model_provider=lambda: str(settings.view()["model"]),
+        stirling_url_provider=lambda: settings.view()["stirling_url"],
+        stirling_cache_dir=base / "artifact-preview-cache",
     )
     turns = TurnCoordinator(
         sessions=sessions,
