@@ -1,5 +1,7 @@
 pub mod control_client;
 pub mod host;
+#[cfg(target_os = "macos")]
+pub mod lsp;
 pub mod oauth;
 pub mod project_open;
 #[cfg(target_os = "macos")]
@@ -8,7 +10,7 @@ pub mod secrets;
 pub mod workspace;
 
 use std::process::Child;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
@@ -32,6 +34,8 @@ struct DesktopState {
     vault: PlatformSecretVault,
     #[cfg(target_os = "macos")]
     ptys: pty::PtyRegistry,
+    #[cfg(target_os = "macos")]
+    lsp: lsp::LspRegistry,
     port: u16,
     token: String,
     secret_sync_token: String,
@@ -196,6 +200,115 @@ fn delete_custom_provider(slug: String, state: State<'_, DesktopState>) -> Resul
         )
     })
     .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn lsp_unsupported<T>() -> Result<T, String> {
+    Err("lsp is unavailable on this platform".to_owned())
+}
+
+/// Start a language server. Emits `lsp-notification` events for diagnostics etc.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_start(
+    language: String,
+    workspace_root: String,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    let emit_app = app.clone();
+    state
+        .lsp
+        .start(
+            &language,
+            &workspace_root,
+            Arc::new(move |lang, msg| {
+                let _ = emit_app.emit(
+                    "lsp-notification",
+                    serde_json::json!({
+                        "language": lang,
+                        "message": msg,
+                    }),
+                );
+            }),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_start(
+    _language: String,
+    _workspace_root: String,
+    _app: tauri::AppHandle,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    lsp_unsupported()
+}
+
+/// Send a JSON-RPC request (blocking, with timeout). Returns the result.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_request(
+    language: String,
+    method: String,
+    params: serde_json::Value,
+    state: State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    state
+        .lsp
+        .request(&language, &method, params, 10)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_request(
+    _language: String,
+    _method: String,
+    _params: serde_json::Value,
+    _state: State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    lsp_unsupported()
+}
+
+/// Send a notification (fire-and-forget, no response).
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_notify(
+    language: String,
+    method: String,
+    params: serde_json::Value,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .lsp
+        .notify(&language, &method, params)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_notify(
+    _language: String,
+    _method: String,
+    _params: serde_json::Value,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    lsp_unsupported()
+}
+
+/// Stop a language server.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_stop(language: String, state: State<'_, DesktopState>) -> Result<bool, String> {
+    state.lsp.stop(&language).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_stop(_language: String, _state: State<'_, DesktopState>) -> Result<bool, String> {
+    lsp_unsupported()
 }
 
 #[tauri::command]
@@ -486,7 +599,11 @@ pub fn run() {
             pty_open,
             pty_input,
             pty_resize,
-            pty_kill
+            pty_kill,
+            lsp_start,
+            lsp_request,
+            lsp_notify,
+            lsp_stop
         ])
         .setup(|app| {
             let token = mint_session_token()?;
@@ -509,6 +626,8 @@ pub fn run() {
                 vault,
                 #[cfg(target_os = "macos")]
                 ptys: pty::PtyRegistry::default(),
+                #[cfg(target_os = "macos")]
+                lsp: lsp::LspRegistry::default(),
                 port,
                 token: token.clone(),
                 secret_sync_token,

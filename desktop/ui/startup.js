@@ -756,6 +756,31 @@ function initEditor() {
       throw error;
     }
   });
+  // Phase 50: listen for LSP diagnostic notifications → forward to editor.
+  if (__codinalListen) {
+    __codinalListen("lsp-notification", (event) => {
+      const msg = event?.payload;
+      if (!msg || msg?.message?.method !== "textDocument/publishDiagnostics")
+        return;
+      const uri = msg.message.params?.uri || "";
+      const path = uri.startsWith("file://") ? uri.slice(7) : uri;
+      if (!path) return;
+      const diags = (msg.message.params?.diagnostics || []).map((d) => ({
+        from: d.range?.start?.line ?? 0,
+        to: d.range?.end?.line ?? 0,
+        severity: d.severity === 1 ? "error" : d.severity === 2 ? "warning" : "info",
+        message: d.message || "",
+      }));
+      window.CodinalEditor?.setDiagnostics?.(path, diags);
+    });
+  }
+  // Phase 50: goto-def opens the target file in a new editor tab.
+  window.CodinalEditor.onGotoDef((path, line, _col) => {
+    openEditorTab(path).then(() => {
+      // Could scroll to line; CM6 scrollIntoView needs the view ref.
+      // For Phase 50 we just open the file; line-jump is a follow-up.
+    }).catch(() => {});
+  });
   state.editorReady = true;
 }
 
