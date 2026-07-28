@@ -98,6 +98,18 @@
   outline: none;
 }
 
+.editor-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  color: var(--text-muted, #6c757d);
+  font-size: 13px;
+  text-align: center;
+  user-select: none;
+}
+
 /* Scrollbar styling for the tab strip */
 .editor-strip::-webkit-scrollbar {
   height: 4px;
