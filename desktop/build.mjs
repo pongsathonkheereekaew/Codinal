@@ -27,6 +27,13 @@ const options = {
   sourcemap: false,
 };
 
+// Also copy the editor CSS (tab strip + pane styling) to dist/.
+// CM6 injects its own editor chrome via JS; this is for our UI chrome only.
+import { copyFileSync } from "node:fs";
+try {
+  copyFileSync("ui-src/editor.css", "ui/dist/editor.css");
+} catch { /* may not exist on first clean build */ }
+
 if (watch) {
   const ctx = await esbuild.context(options);
   await ctx.watch();

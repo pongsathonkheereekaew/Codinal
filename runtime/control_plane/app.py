@@ -2134,6 +2134,48 @@ def create_control_plane_app(
             )
         return result
 
+    @app.post("/v1/sessions/{session_id}/artifacts/write")
+    async def write_artifact(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Write text content to a file within the session workspace.
+
+        User-initiated save from the code editor (Phase 49). Workspace-scoped
+        — no policy gate (same trust boundary as read_artifact). The path must
+        resolve within the workspace root; parent dirs are created as needed.
+        """
+        _validate_public_session_id(session_id)
+        body = await _read_bounded_object(
+            request,
+            limit=2 * 1024 * 1024,  # 2MB max content
+            detail="invalid write payload",
+        )
+        if (
+            set(body) != {"path", "content"}
+            or not isinstance(body.get("path"), str)
+            or not isinstance(body.get("content"), str)
+        ):
+            raise HTTPException(status_code=400, detail="invalid write payload")
+        path = body["path"]
+        content = body["content"]
+        _validate_artifact_path(path)
+        result = await asyncio.to_thread(
+            services.sessions.write_artifact,
+            session_id,
+            path,
+            content,
+        )
+        if not result.get("ok"):
+            error = result.get("error", "write failed")
+            if error == "path escapes workspace":
+                raise HTTPException(status_code=400, detail=error)
+            raise HTTPException(status_code=400, detail=error)
+        _audit_action(
+            services, "editor", "write", subject=session_id, payload={"path": path[:100]}
+        )
+        return result
+
     @app.post(
         "/v1/sessions/{session_id}/interactions/{interaction_id}"
     )

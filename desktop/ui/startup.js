@@ -99,6 +99,7 @@ const state = {
   mcpLoadGeneration: 0,
   artifacts: [],
   artifactLoadGeneration: 0,
+  editorReady: false,
 };
 
 const el = Object.fromEntries(
@@ -149,6 +150,7 @@ const el = Object.fromEntries(
     "plan-build-dialog", "plan-build-tasks", "plan-build-models",
     "create-plan-build",
     "goal-panel", "goal-summary", "goal-list", "new-goal",
+    "editor-panel", "editor-strip", "editor-pane",
     "goal-dialog", "goal-objective", "goal-requirements",
     "goal-continuation", "goal-token-budget", "goal-time-budget",
     "create-goal", "goal-evidence-dialog", "goal-evidence-requirement",
@@ -734,6 +736,53 @@ async function revealArtifact(path, mode) {
     el["artifact-preview"].textContent = `Revealed ${path} in Finder.`;
   }
   el["artifact-preview-path"].textContent = path;
+}
+
+// --- Code editor (Phase 49: CodeMirror 6 via window.CodinalEditor bridge) ---
+
+function initEditor() {
+  if (state.editorReady || !window.CodinalEditor?.mount) return;
+  window.CodinalEditor.mount(el["editor-strip"], el["editor-pane"]);
+  window.CodinalEditor.onSave(async (path, content) => {
+    if (!state.sessionId) return;
+    try {
+      await api(
+        `/v1/sessions/${encodeURIComponent(state.sessionId)}/artifacts/write`,
+        { method: "POST", body: JSON.stringify({ path, content }) }
+      );
+      toast(`Saved ${path.split("/").pop()}`);
+    } catch (error) {
+      toast(`Save failed: ${error.message}`, "error");
+      throw error;
+    }
+  });
+  state.editorReady = true;
+}
+
+async function openEditorTab(path) {
+  if (!state.sessionId) {
+    toast("Select a task first", "error");
+    return;
+  }
+  initEditor();
+  el["editor-panel"].classList.remove("is-hidden");
+  // If tab already open, just focus it.
+  if (window.CodinalEditor?.hasTab?.(path)) {
+    window.CodinalEditor.setActive(path);
+    return;
+  }
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/artifacts/read?path=${encodeURIComponent(path)}`
+    );
+    if (result.kind === "text" || result.content !== undefined) {
+      window.CodinalEditor.openTab(path, result.content || "");
+    } else {
+      toast(`${path} is not a text file`, "error");
+    }
+  } catch (error) {
+    toast(`Could not open ${path}: ${error.message}`, "error");
+  }
 }
 
 async function connectMcpServer() {
@@ -2458,6 +2507,17 @@ async function loadTreeDirectory(container, root, path, generation) {
           })
         );
       }
+      // Click the file row (not an action button) → open in editor tab.
+      row.style.cursor = "pointer";
+      row.addEventListener("click", (event) => {
+        // Don't intercept clicks on action buttons.
+        if (event.target.closest("button")) return;
+        if (entry.kind === "file") {
+          openEditorTab(entry.path).catch((error) =>
+            toast(error.message, "error")
+          );
+        }
+      });
       container.append(row);
     }
   }

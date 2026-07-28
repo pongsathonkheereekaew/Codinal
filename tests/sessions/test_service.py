@@ -1605,6 +1605,57 @@ def test_read_artifact_returns_text_and_blocks_workspace_escape(tmp_path):
     assert escaped == {"ok": False, "error": "path escapes workspace"}
 
 
+def test_write_artifact_creates_and_overwrites(tmp_path):
+    """write_artifact creates new files, overwrites existing ones, and
+    creates parent directories as needed (Phase 49 editor save)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "existing.py").write_text("old", encoding="utf-8")
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    # Overwrite existing.
+    result = service.write_artifact("s1", "existing.py", "new content")
+    assert result == {"ok": True, "path": "existing.py"}
+    assert (workspace / "existing.py").read_text() == "new content"
+
+    # Create new file in nested dir.
+    result = service.write_artifact("s1", "src/new_file.ts", "export const x = 1;")
+    assert result["ok"] is True
+    assert (workspace / "src" / "new_file.ts").read_text() == "export const x = 1;"
+
+
+def test_write_artifact_blocks_workspace_escape(tmp_path):
+    """write_artifact must enforce the same sandbox as read_artifact."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+    service = SessionService(
+        MemorySessionStore(
+            SessionRecord(
+                session_id="s1",
+                workspace=str(workspace),
+                model="test-model",
+                mode="interactive",
+            )
+        ),
+        scratch_base=tmp_path / "scratch",
+    )
+
+    result = service.write_artifact("s1", "../evil.txt", "pwned")
+    assert result == {"ok": False, "error": "path escapes workspace"}
+    assert not (tmp_path / "evil.txt").exists()
+
+
 def test_list_artifacts_filters_hidden_build_and_unsupported_files(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

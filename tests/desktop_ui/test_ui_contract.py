@@ -271,11 +271,11 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert ".routing-resolution.has-degradation" in css
     assert ".message-routing" in css
     assert ".message-routing.has-degradation" in css
-    assert "58px repeat(4, auto) minmax(0, 1fr) auto" in css
-    assert ".terminal-panel { grid-row: 7; }" in css
+    assert "58px repeat(4, auto) 0fr minmax(0, 1fr) auto auto" in css
+    assert ".terminal-panel { grid-row: 8; }" in css
     assert "#terminal-stop," in css
     assert "grid-template-columns: minmax(0, 1fr) 130px auto auto auto;" in css
-    assert ".composer-wrap { grid-row: 8; }" in css
+    assert ".composer-wrap { grid-row: 9; }" in css
     workspace_css = css.split(".workspace {", 1)[1].split("}", 1)[0]
     assert "min-height: 0" in workspace_css
     assert "overflow: hidden" in workspace_css
