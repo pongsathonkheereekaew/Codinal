@@ -702,10 +702,23 @@ async function readArtifact(path) {
   if (!state.sessionId || state.busy) return;
   const sessionId = state.sessionId;
   const generation = ++state.artifactPreviewGeneration;
+  el["artifact-preview"].textContent = "Loading preview…";
   const query = new URLSearchParams({ path }).toString();
-  const result = await api(
-    `/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/read?${query}`
-  );
+  let result;
+  try {
+    result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/read?${query}`
+    );
+  } catch (error) {
+    if (
+      state.sessionId === sessionId
+      && generation === state.artifactPreviewGeneration
+    ) {
+      clearArtifactPreview();
+      throw error;
+    }
+    return;
+  }
   if (
     state.sessionId !== sessionId
     || generation !== state.artifactPreviewGeneration
@@ -731,7 +744,13 @@ async function readArtifact(path) {
     return;
   }
   if (result.kind === "sheet" || result.kind === "office") {
-    preview.textContent = "Local Office preview requires a configured Stirling endpoint.";
+    const messages = {
+      unconfigured: "Set a local Stirling endpoint to preview this file.",
+      unsupported: "This Office file cannot be previewed.",
+      failed: "Local Office conversion failed. The original file was not changed.",
+    };
+    preview.textContent = messages[result.preview_status]
+      || "Local Office preview requires a configured Stirling endpoint.";
     return;
   }
   if (typeof result.content !== "string") {

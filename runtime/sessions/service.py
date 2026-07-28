@@ -28,6 +28,7 @@ from typing import (
 )
 
 from runtime.events import Event
+from runtime.artifacts import StirlingConverter
 from runtime.indexing import SemanticIndexService
 from runtime.policy import Mode
 from runtime.search import RepositorySearchCoordinator
@@ -200,6 +201,9 @@ class SessionService:
         default_model: str = "gpt-5.6-sol",
         default_model_provider: Optional[Callable[[], str]] = None,
         default_mode: str = "interactive",
+        stirling_url_provider: Optional[Callable[[], str | None]] = None,
+        stirling_cache_dir: str | Path | None = None,
+        stirling_converter_factory: Callable[..., Any] = StirlingConverter,
     ) -> None:
         self._store = store
         self._scratch_base = Path(scratch_base).expanduser().resolve()
@@ -210,6 +214,13 @@ class SessionService:
         self._default_model = default_model
         self._default_model_provider = default_model_provider
         self._default_mode = default_mode
+        self._stirling_url_provider = stirling_url_provider or (lambda: None)
+        self._stirling_cache_dir = (
+            Path(stirling_cache_dir).expanduser().resolve()
+            if stirling_cache_dir is not None
+            else self._scratch_base.parent / "artifact-preview-cache"
+        )
+        self._stirling_converter_factory = stirling_converter_factory
         self._engines: dict[str, SessionEngine] = {}
         self._project_search = RepositorySearchCoordinator()
         self._semantic_index = semantic_index or SemanticIndexService(
@@ -1704,8 +1715,53 @@ class SessionService:
         if target is None:
             return {"ok": False, "error": error}
         kind = _artifact_kind(target)
-        if kind == "office":
-            return {"ok": True, "path": path, "kind": kind}
+        if kind in {"office", "sheet"}:
+            try:
+                converter = self._stirling_converter_factory(
+                    self._stirling_url_provider(),
+                    self._stirling_cache_dir,
+                )
+                try:
+                    preview = converter.convert(target)
+                finally:
+                    close = getattr(converter, "close", None)
+                    if close is not None:
+                        close()
+            except (OSError, RuntimeError, ValueError):
+                preview = None
+            if preview is None:
+                return {
+                    "ok": True,
+                    "path": path,
+                    "kind": kind,
+                    "preview_status": "failed",
+                }
+            if preview.status != "ready" or preview.pdf_path is None:
+                return {
+                    "ok": True,
+                    "path": path,
+                    "kind": kind,
+                    "preview_status": preview.status,
+                }
+            try:
+                encoded = base64.b64encode(preview.pdf_path.read_bytes()).decode(
+                    "ascii"
+                )
+            except OSError:
+                return {
+                    "ok": True,
+                    "path": path,
+                    "kind": kind,
+                    "preview_status": "failed",
+                }
+            return {
+                "ok": True,
+                "path": path,
+                "kind": "pdf",
+                "source_kind": kind,
+                "mime": "application/pdf",
+                "data_url": f"data:application/pdf;base64,{encoded}",
+            }
         if kind in {"image", "pdf", "sheet"}:
             if target.stat().st_size > _MAX_BINARY_PREVIEW:
                 return {"ok": False, "error": "file too large to preview"}
