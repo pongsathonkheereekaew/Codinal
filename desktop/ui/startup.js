@@ -4951,6 +4951,15 @@ async function boot() {
     const first = state.sessions.find((session) => !session.archived);
     if (first) await selectSession(first);
     else updateWorkspaceLabel();
+    // Phase 48 build-infra health check: confirm the bundled editor module
+    // loaded and exposed its bridge. Non-fatal if absent (e.g. unbundled dev
+    // context) — Phase 49 will hard-require it.
+    if (window.CodinalEditor?.hello) {
+      try {
+        const ok = window.CodinalEditor.hello();
+        if (ok === "ok") toast("Editor surface ready");
+      } catch { /* bridge present but errored — non-fatal for the spike */ }
+    }
   } catch (error) {
     el["startup-status"].textContent = `Runtime unavailable: ${error.message}`;
   }

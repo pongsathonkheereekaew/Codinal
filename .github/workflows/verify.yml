@@ -13,8 +13,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
       - name: Install product test dependencies
         run: python -m pip install -r requirements-dev.txt
+      - name: Build editor surface (Phase 48 esbuild)
+        run: cd desktop && npm ci && npm run build
       - name: Run Codinal product verification
         run: bash verify.sh
 

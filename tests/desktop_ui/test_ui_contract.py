@@ -116,6 +116,16 @@ def test_desktop_ui_has_diagnostics_and_audit_surface():
     assert "secrets redacted" in script
 
 
+def test_desktop_ui_loads_editor_bundle():
+    """Phase 48: the bundled editor surface (dist/editor.js) is included so
+    the window.CodinalEditor bridge is available. The build step is run in
+    CI; this guard catches a missing <script src> or a silent regression."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    assert './dist/editor.js' in html
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert "window.CodinalEditor" in script
+
+
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
