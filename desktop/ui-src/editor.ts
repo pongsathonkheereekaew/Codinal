@@ -8,7 +8,7 @@
 // The vanilla JS side owns the DOM host elements (#editor-strip + #editor-pane)
 // and calls: openTab, closeTab, setActive, getContent, onSave.
 
-import { EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView, drawSelection, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, indentOnInput } from "@codemirror/language";
@@ -73,6 +73,7 @@ interface CodinalEditorAPI {
   onInlineEdit(handler: (text: string, instruction: string, from: number, to: number) => Promise<string | null>): void;
   /** Phase 52: apply a replacement to the active tab. */
   applyEdit(path: string, from: number, to: number, replacement: string): void;
+  revealRange(path: string, startLine: number, startColumn: number, endLine: number, endColumn: number): void;
 }
 
 // --- State ---
@@ -414,6 +415,24 @@ const api: CodinalEditorAPI = {
     const tab = _tabs.get(path);
     if (!tab) return;
     applyReplacement(tab.view, from, to, replacement);
+  },
+
+  revealRange(path: string, startLine: number, startColumn: number, endLine: number, endColumn: number): void {
+    const tab = _tabs.get(path);
+    if (!tab) return;
+    const document = tab.view.state.doc;
+    const offsetFor = (line: number, column: number) => {
+      const safeLine = Math.max(1, Math.min(document.lines, line + 1));
+      const details = document.line(safeLine);
+      return Math.max(details.from, Math.min(details.to, details.from + Math.max(0, column)));
+    };
+    const from = offsetFor(startLine, startColumn);
+    const to = Math.max(from, offsetFor(endLine, endColumn));
+    api.setActive(path);
+    tab.view.dispatch({
+      selection: EditorSelection.range(from, to),
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
   },
 };
 
