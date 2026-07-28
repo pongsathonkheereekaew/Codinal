@@ -101,6 +101,9 @@ const state = {
   artifactLoadGeneration: 0,
   artifactPreviewGeneration: 0,
   editorReady: false,
+  lspDocuments: new Map(),
+  lspClosing: new Map(),
+  lspServers: new Map(),
   palette: { mode: null, items: [], selected: 0, returnFocus: null, filesForSession: null },
   mention: null,
   mentionGeneration: 0,
@@ -783,6 +786,148 @@ async function revealArtifact(path, mode) {
 
 // --- Code editor (Phase 49: CodeMirror 6 via window.CodinalEditor bridge) ---
 
+function lspLanguageForPath(path) {
+  const extension = path.split(".").pop()?.toLowerCase();
+  return {
+    js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
+    ts: "typescript", tsx: "typescript", py: "python", rs: "rust",
+    json: "json", css: "css", scss: "css", html: "html", htm: "html",
+  }[extension] || null;
+}
+
+function lspServerKey(language, workspaceRoot) {
+  return `${workspaceRoot}\u0000${language}`;
+}
+
+async function lspOpenDocument(path, text) {
+  const language = lspLanguageForPath(path);
+  const workspaceRoot = state.workspace;
+  if (!invoke || !language || !workspaceRoot) return;
+  const document = {
+    language, workspaceRoot, version: 1, timer: null, queue: Promise.resolve(),
+    cancelled: false, closing: false, opened: false, latestText: text,
+  };
+  state.lspDocuments.set(path, document);
+  enqueueLsp(document, async () => {
+    const priorClose = state.lspClosing.get(path);
+    if (priorClose) await priorClose;
+    await invoke("lsp_start", { language, workspaceRoot });
+    state.lspServers.set(lspServerKey(language, workspaceRoot), { language, workspaceRoot });
+    if (document.cancelled || state.workspace !== workspaceRoot || state.lspDocuments.get(path) !== document) {
+      if (!hasActiveLspDocument(document)) {
+        state.lspServers.delete(lspServerKey(language, workspaceRoot));
+        await invoke("lsp_stop", { language, workspaceRoot }).catch(() => {});
+      }
+      return;
+    }
+    await invoke("lsp_document_open", {
+      language, workspaceRoot, path, text: document.latestText, version: document.version,
+    });
+    document.opened = true;
+  });
+}
+
+function hasActiveLspDocument(document) {
+  return [...state.lspDocuments.values()].some((candidate) => (
+    candidate !== document
+    && !candidate.cancelled
+    && candidate.language === document.language
+    && candidate.workspaceRoot === document.workspaceRoot
+  ));
+}
+
+function enqueueLsp(document, action) {
+  document.queue = document.queue.then(action).catch(() => {});
+  return document.queue;
+}
+
+function queueLspChange(path, document, text) {
+  const version = ++document.version;
+  const snapshot = text;
+  return enqueueLsp(document, async () => {
+    if (document.cancelled || !document.opened || state.workspace !== document.workspaceRoot) return;
+    await invoke("lsp_document_change", {
+      language: document.language,
+      workspaceRoot: document.workspaceRoot,
+      path,
+      text: snapshot,
+      version,
+    });
+  });
+}
+
+function lspChangeDocument(path, text) {
+  const document = state.lspDocuments.get(path);
+  if (!document || !invoke || state.workspace !== document.workspaceRoot) return;
+  document.latestText = text;
+  clearTimeout(document.timer);
+  document.timer = setTimeout(() => {
+    document.timer = null;
+    if (document.opened) queueLspChange(path, document, text);
+  }, 250);
+}
+
+function lspSaveDocument(path) {
+  const document = state.lspDocuments.get(path);
+  if (!document || !invoke || state.workspace !== document.workspaceRoot) return;
+  if (document.timer) {
+    clearTimeout(document.timer);
+    document.timer = null;
+    if (document.opened) queueLspChange(path, document, document.latestText);
+  }
+  enqueueLsp(document, () => invoke("lsp_document_save", {
+    language: document.language, workspaceRoot: document.workspaceRoot, path,
+  }));
+}
+
+function lspCloseDocument(path) {
+  const document = state.lspDocuments.get(path);
+  if (!document) return;
+  if (document.timer) {
+    clearTimeout(document.timer);
+    document.timer = null;
+    if (document.opened) queueLspChange(path, document, document.latestText);
+  }
+  state.lspDocuments.delete(path);
+  if (!document.opened) {
+    document.cancelled = true;
+    return;
+  }
+  document.closing = true;
+  if (!invoke || state.workspace !== document.workspaceRoot) return;
+  const closing = enqueueLsp(document, () => invoke("lsp_document_close", {
+    language: document.language, workspaceRoot: document.workspaceRoot, path,
+  }));
+  state.lspClosing.set(path, closing);
+  closing.finally(() => {
+    document.cancelled = true;
+    if (state.lspClosing.get(path) === closing) state.lspClosing.delete(path);
+  });
+}
+
+function stopLspWorkspace(workspaceRoot) {
+  const documents = [...state.lspDocuments.entries()]
+    .filter(([, document]) => document.workspaceRoot === workspaceRoot);
+  const languages = new Set();
+  for (const [path, document] of documents) {
+    clearTimeout(document.timer);
+    document.cancelled = true;
+    state.lspDocuments.delete(path);
+    languages.add(document.language);
+  }
+  for (const [key, server] of state.lspServers) {
+    if (server.workspaceRoot === workspaceRoot) {
+      languages.add(server.language);
+      state.lspServers.delete(key);
+    }
+  }
+  if (invoke) {
+    for (const language of languages) {
+      invoke("lsp_stop", { language, workspaceRoot }).catch(() => {});
+    }
+  }
+}
+
 function initEditor() {
   if (state.editorReady || !window.CodinalEditor?.mount) return;
   window.CodinalEditor.mount(el["editor-strip"], el["editor-pane"]);
@@ -793,6 +938,7 @@ function initEditor() {
         `/v1/sessions/${encodeURIComponent(state.sessionId)}/artifacts/write`,
         { method: "POST", body: JSON.stringify({ path, content }) }
       );
+      lspSaveDocument(path);
       toast(`Saved ${path.split("/").pop()}`);
     } catch (error) {
       toast(`Save failed: ${error.message}`, "error");
@@ -803,6 +949,15 @@ function initEditor() {
   // as an empty void (Phase 49 follow-up — matches Codex/VS Code behavior).
   window.CodinalEditor.onEmpty(() => {
     el["editor-panel"].classList.add("is-hidden");
+  });
+  window.CodinalEditor.onDocumentOpen((path, text) => {
+    lspOpenDocument(path, text);
+  });
+  window.CodinalEditor.onDocumentChange((path, text) => {
+    lspChangeDocument(path, text);
+  });
+  window.CodinalEditor.onDocumentClose((path) => {
+    lspCloseDocument(path);
   });
   // Phase 50: listen for LSP diagnostic notifications → forward to editor.
   if (__codinalListen) {
@@ -1805,6 +1960,12 @@ async function selectSession(session) {
   }
   const selectionGeneration = ++state.sessionSelectionGeneration;
   const sessionId = session.session_id;
+  const previousWorkspace = state.workspace;
+  if (previousWorkspace && previousWorkspace !== session.workspace) {
+    stopLspWorkspace(previousWorkspace);
+    window.CodinalEditor?.dispose?.();
+    state.editorReady = false;
+  }
   disconnectSocket();
   cancelProjectSearch(state.sessionId);
   el["thread-search"].value = "";
@@ -2100,6 +2261,11 @@ function switchWorkspace(workspace) {
     return false;
   }
   disconnectSocket();
+  if (state.workspace && state.workspace !== workspace) {
+    stopLspWorkspace(state.workspace);
+    window.CodinalEditor?.dispose?.();
+    state.editorReady = false;
+  }
   cancelProjectSearch(state.sessionId);
   state.sessionId = `session-${crypto.randomUUID()}`;
   state.parentSessionId = null;

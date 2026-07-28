@@ -303,6 +303,114 @@ fn lsp_notify(
     lsp_unsupported()
 }
 
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_document_open(
+    language: String,
+    workspace_root: String,
+    path: String,
+    text: String,
+    version: u64,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .lsp
+        .document_open(&language, &workspace_root, &path, text, version)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_document_open(
+    _language: String,
+    _workspace_root: String,
+    _path: String,
+    _text: String,
+    _version: u64,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    lsp_unsupported()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_document_change(
+    language: String,
+    workspace_root: String,
+    path: String,
+    text: String,
+    version: u64,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .lsp
+        .document_change(&language, &workspace_root, &path, text, version)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_document_change(
+    _language: String,
+    _workspace_root: String,
+    _path: String,
+    _text: String,
+    _version: u64,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    lsp_unsupported()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_document_save(
+    language: String,
+    workspace_root: String,
+    path: String,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .lsp
+        .document_save(&language, &workspace_root, &path)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_document_save(
+    _language: String,
+    _workspace_root: String,
+    _path: String,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    lsp_unsupported()
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn lsp_document_close(
+    language: String,
+    workspace_root: String,
+    path: String,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    state
+        .lsp
+        .document_close(&language, &workspace_root, &path)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn lsp_document_close(
+    _language: String,
+    _workspace_root: String,
+    _path: String,
+    _state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    lsp_unsupported()
+}
+
 /// Stop a language server.
 #[cfg(target_os = "macos")]
 #[tauri::command]
@@ -619,7 +727,11 @@ pub fn run() {
             lsp_start,
             lsp_request,
             lsp_notify,
-            lsp_stop
+            lsp_stop,
+            lsp_document_open,
+            lsp_document_change,
+            lsp_document_save,
+            lsp_document_close
         ])
         .setup(|app| {
             let token = mint_session_token()?;
