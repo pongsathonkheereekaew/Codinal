@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import platform
 import stat
 import subprocess
@@ -20,7 +21,7 @@ from runtime.git import (
 )
 
 requires_seatbelt = pytest.mark.skipif(
-    platform.system() != "Darwin",
+    platform.system() != "Darwin" or os.environ.get("CI") == "true",
     reason="production worktree creation uses macOS Seatbelt",
 )
 

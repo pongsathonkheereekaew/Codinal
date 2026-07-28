@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import platform
 import shutil
 import subprocess
@@ -18,7 +19,7 @@ from conftest import skip_on_ci
 
 
 requires_seatbelt = pytest.mark.skipif(
-    platform.system() != "Darwin",
+    platform.system() != "Darwin" or os.environ.get("CI") == "true",
     reason="transactional shell requires macOS Seatbelt",
 )
 

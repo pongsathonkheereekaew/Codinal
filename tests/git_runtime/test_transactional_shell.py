@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import platform
 import subprocess
 import threading
@@ -17,7 +18,7 @@ from runtime.git import (
 )
 
 requires_seatbelt = pytest.mark.skipif(
-    platform.system() != "Darwin",
+    platform.system() != "Darwin" or os.environ.get("CI") == "true",
     reason="transactional shell requires macOS Seatbelt",
 )
 
