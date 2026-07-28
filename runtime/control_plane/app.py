@@ -200,6 +200,10 @@ class SessionControl(Protocol):
         limit: int,
     ) -> dict[str, Any]: ...
 
+    def workspace_files(
+        self, session_id: str, *, limit: int
+    ) -> dict[str, Any]: ...
+
     def cancel_project_search(self, session_id: str) -> bool: ...
 
     def project_index_status(self, session_id: str) -> dict[str, Any]: ...
@@ -1071,6 +1075,26 @@ def create_control_plane_app(
                 else 400
             )
             raise HTTPException(status_code=status, detail=result["error"])
+        return result
+
+    @app.get("/v1/sessions/{session_id}/workspace/files")
+    async def workspace_files(
+        session_id: str,
+        limit: int = 1_000,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        if not 1 <= limit <= 2_000:
+            raise HTTPException(status_code=400, detail="invalid file index limit")
+        result = await asyncio.to_thread(
+            services.sessions.workspace_files,
+            session_id,
+            limit=limit,
+        )
+        if not result.get("ok"):
+            raise HTTPException(
+                status_code=404,
+                detail=result.get("error", "workspace files unavailable"),
+            )
         return result
 
     @app.get("/v1/sessions/{session_id}/project/index")

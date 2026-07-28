@@ -364,6 +364,7 @@ class FakeSessions:
         self.removed_roots = []
         self.opened_project_paths = []
         self.cancelled_project_searches = []
+        self.workspace_file_indexes = []
         self.rebuilt_project_indexes = []
         self.cleared_project_indexes = []
         self.export_too_large = False
@@ -437,6 +438,15 @@ class FakeSessions:
             ][:limit],
             "files_scanned": 1,
             "duration_ms": 1,
+            "truncated": False,
+        }
+
+    def workspace_files(self, session_id, *, limit):
+        self.workspace_file_indexes.append((session_id, limit))
+        return {
+            "ok": True,
+            "root": "/tmp/project",
+            "paths": ["README.md", "src/main.py"][:limit],
             "truncated": False,
         }
 
@@ -999,6 +1009,27 @@ def test_project_search_route_is_bounded():
     assert searched.json()["matches"][0]["line"] == 7
     assert invalid.status_code == 400
     assert cancelled.json() == {"ok": True}
+
+
+def test_workspace_file_index_is_authenticated_and_bounded():
+    client, sessions, _turns = make_client()
+    with client:
+        unauthorized = client.get("/v1/sessions/session-1/workspace/files")
+        indexed = client.get(
+            "/v1/sessions/session-1/workspace/files",
+            headers=AUTH,
+            params={"limit": 20},
+        )
+        invalid = client.get(
+            "/v1/sessions/session-1/workspace/files",
+            headers=AUTH,
+            params={"limit": 2001},
+        )
+
+    assert unauthorized.status_code == 401
+    assert indexed.json()["paths"] == ["README.md", "src/main.py"]
+    assert invalid.status_code == 400
+    assert sessions.workspace_file_indexes == [("session-1", 20)]
 
 
 def test_semantic_index_lifecycle_routes_are_authenticated():

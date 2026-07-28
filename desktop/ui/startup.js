@@ -100,6 +100,7 @@ const state = {
   artifacts: [],
   artifactLoadGeneration: 0,
   editorReady: false,
+  palette: { mode: null, items: [], selected: 0, returnFocus: null, filesForSession: null },
 };
 
 const el = Object.fromEntries(
@@ -152,6 +153,8 @@ const el = Object.fromEntries(
     "goal-panel", "goal-summary", "goal-list", "new-goal",
     "editor-panel", "editor-strip", "editor-pane",
     "goal-dialog", "goal-objective", "goal-requirements",
+    "command-palette", "command-palette-close", "command-palette-input",
+    "command-palette-status", "command-palette-results",
     "goal-continuation", "goal-token-budget", "goal-time-budget",
     "create-goal", "goal-evidence-dialog", "goal-evidence-requirement",
     "goal-evidence-kind", "goal-evidence-summary",
@@ -1869,6 +1872,99 @@ async function newTask() {
   if (!workspace) return;
   switchWorkspace(workspace);
   el.prompt.focus();
+}
+
+function paletteScore(query, label) {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return 0;
+  let cursor = 0;
+  let score = 0;
+  for (const character of needle) {
+    const found = label.toLocaleLowerCase().indexOf(character, cursor);
+    if (found < 0) return -1;
+    score += found === cursor ? 4 : 1;
+    cursor = found + 1;
+  }
+  return score;
+}
+
+function renderPalette() {
+  const query = el["command-palette-input"].value;
+  const filtered = state.palette.items
+    .map((item) => ({ item, score: paletteScore(query, item.label) }))
+    .filter(({ score }) => score >= 0)
+    .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label))
+    .slice(0, 100)
+    .map(({ item }) => item);
+  state.palette.filtered = filtered;
+  state.palette.selected = Math.min(state.palette.selected, Math.max(0, filtered.length - 1));
+  el["command-palette-results"].replaceChildren();
+  if (!filtered.length) {
+    el["command-palette-status"].textContent = query ? "No matching results" : "No results available";
+    return;
+  }
+  el["command-palette-status"].textContent = `${filtered.length} result${filtered.length === 1 ? "" : "s"}`;
+  filtered.forEach((item, index) => {
+    const option = node("button", `command-palette-option${index === state.palette.selected ? " is-selected" : ""}`, item.label);
+    option.type = "button";
+    option.role = "option";
+    option.setAttribute("aria-selected", String(index === state.palette.selected));
+    option.addEventListener("click", () => selectPaletteItem(index));
+    el["command-palette-results"].append(option);
+  });
+}
+
+function closePalette() {
+  if (!el["command-palette"].open) return;
+  el["command-palette"].close();
+  state.palette.returnFocus?.focus?.();
+  state.palette.returnFocus = null;
+}
+
+async function selectPaletteItem(index = state.palette.selected) {
+  const item = state.palette.filtered?.[index];
+  if (!item) return;
+  closePalette();
+  await item.run();
+}
+
+async function openPalette(mode) {
+  state.palette.mode = mode;
+  state.palette.selected = 0;
+  state.palette.returnFocus = document.activeElement;
+  el["command-palette-input"].value = "";
+  el["command-palette-title"].textContent = mode === "files" ? "Quick Open" : "Command Palette";
+  el["command-palette-input"].placeholder = mode === "files" ? "Search files" : "Search commands";
+  if (mode === "files") {
+    if (!state.sessionId) {
+      state.palette.items = [];
+      el["command-palette-status"].textContent = "Select a task first";
+    } else {
+      try {
+        if (state.palette.filesForSession !== state.sessionId) {
+          const result = await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/workspace/files?limit=1000`);
+          state.palette.files = result.paths || [];
+          state.palette.filesForSession = state.sessionId;
+        }
+        state.palette.items = state.palette.files.map((path) => ({ label: path, run: () => openEditorTab(path) }));
+      } catch (error) {
+        state.palette.items = [];
+        el["command-palette-status"].textContent = error.message;
+      }
+    }
+  } else {
+    state.palette.items = [
+      { label: "New task", run: newTask },
+      { label: "Focus composer", run: () => el.prompt.focus() },
+      { label: "Open settings", run: openSettings },
+      { label: "Toggle sidebar", run: () => el.app.classList.toggle("sidebar-collapsed") },
+      { label: "Open diff", run: () => loadDiff(true) },
+      { label: "Open terminal", run: () => { el["terminal-panel"].scrollIntoView({ block: "nearest" }); el["terminal-restart"].focus(); } },
+    ];
+  }
+  if (!el["command-palette"].open) el["command-palette"].showModal();
+  renderPalette();
+  el["command-palette-input"].focus();
 }
 
 function switchWorkspace(workspace) {
@@ -4917,6 +5013,22 @@ function wireEvents() {
   el["toggle-sidebar"].addEventListener("click", () => {
     el.app.classList.toggle("sidebar-collapsed");
   });
+  el["command-palette-close"].addEventListener("click", closePalette);
+  el["command-palette-input"].addEventListener("input", () => {
+    state.palette.selected = 0;
+    renderPalette();
+  });
+  el["command-palette"].addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.preventDefault(); closePalette(); }
+    if (event.target !== el["command-palette-input"]) return;
+    if (event.key === "ArrowDown") { event.preventDefault(); state.palette.selected += 1; renderPalette(); }
+    if (event.key === "ArrowUp") { event.preventDefault(); state.palette.selected = Math.max(0, state.palette.selected - 1); renderPalette(); }
+    if (event.key === "Enter") { event.preventDefault(); selectPaletteItem(); }
+  });
+  el["command-palette"].addEventListener("close", () => {
+    state.palette.returnFocus?.focus?.();
+    state.palette.returnFocus = null;
+  });
   el["choose-workspace"].addEventListener("click", async () => {
     const workspace = await pickWorkspace();
     if (!workspace) return;
@@ -5049,6 +5161,14 @@ function wireEvents() {
     });
   }
   document.addEventListener("keydown", (event) => {
+    if (event.metaKey && !event.shiftKey && event.key.toLowerCase() === "p") {
+      event.preventDefault();
+      openPalette("files");
+    }
+    if (event.metaKey && event.shiftKey && event.key.toLowerCase() === "p") {
+      event.preventDefault();
+      openPalette("commands");
+    }
     if (event.metaKey && event.key.toLowerCase() === "n") {
       event.preventDefault();
       newTask();

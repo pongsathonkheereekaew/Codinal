@@ -145,6 +145,20 @@ def test_editor_enables_native_multi_cursor_selection():
     assert "...searchKeymap," in editor
 
 
+def test_command_palette_has_separate_quick_open_and_safe_commands():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert 'id="command-palette"' in html
+    assert 'role="listbox"' in html
+    assert "/workspace/files?limit=1000" in script
+    assert 'openPalette("files")' in script
+    assert 'openPalette("commands")' in script
+    assert 'event.key === "ArrowDown"' in script
+    assert 'event.key === "Enter"' in script
+    assert "closePalette" in script
+
+
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")

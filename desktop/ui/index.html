@@ -641,6 +641,21 @@
       </form>
     </dialog>
 
+    <dialog id="command-palette" class="command-palette" aria-modal="true"
+      aria-labelledby="command-palette-title">
+      <header class="command-palette-header">
+        <strong id="command-palette-title">Quick Open</strong>
+        <button id="command-palette-close" class="icon-button" type="button"
+          aria-label="Close command palette">×</button>
+      </header>
+      <label class="sr-only" for="command-palette-input">Filter results</label>
+      <input id="command-palette-input" class="command-palette-input" type="search"
+        autocomplete="off" placeholder="Search files" />
+      <p id="command-palette-status" class="command-palette-status" aria-live="polite"></p>
+      <div id="command-palette-results" class="command-palette-results"
+        role="listbox" aria-label="Command palette results"></div>
+    </dialog>
+
     <div id="toast-region" class="toast-region"
       aria-live="polite" aria-atomic="true"></div>
 

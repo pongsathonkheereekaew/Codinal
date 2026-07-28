@@ -2658,6 +2658,26 @@ body.is-dragging .drop-hint {
   pointer-events: none;
 }
 
+.command-palette {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 48px));
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.command-palette::backdrop { background: rgb(0 0 0 / 45%); }
+.command-palette-header { display: flex; align-items: center; padding: 12px 14px 6px; }
+.command-palette-header .icon-button { margin-left: auto; }
+.command-palette-input { box-sizing: border-box; width: calc(100% - 28px); margin: 4px 14px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: inherit; }
+.command-palette-status { min-height: 18px; margin: 4px 14px; color: var(--muted); font-size: 12px; }
+.command-palette-results { max-height: 360px; overflow: auto; padding: 4px 8px 10px; }
+.command-palette-option { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; }
+.command-palette-option:hover, .command-palette-option.is-selected { background: var(--surface-subtle); }
+
 .toast {
   padding: 10px 12px;
   border: 1px solid var(--line-strong);
