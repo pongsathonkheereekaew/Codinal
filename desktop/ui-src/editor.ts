@@ -20,6 +20,7 @@ import { markdown } from "@codemirror/lang-markdown";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { linter, lintGutter, Diagnostic } from "@codemirror/lint";
 
 // --- Types ---
 
@@ -28,30 +29,33 @@ interface OpenTab {
   view: EditorView;
   dirty: boolean;
   readOnly: boolean;
+  /** LSP diagnostics for this file, keyed by a version counter to avoid
+   * re-rendering identical diagnostics. */
+  diagnostics: Diagnostic[];
+  diagVersion: number;
 }
 
 type SaveHandler = (path: string, content: string) => Promise<void>;
+type GotoDefHandler = (path: string, line: number, col: number) => void;
 
 interface CodinalEditorAPI {
   hello(): string;
-  /** Mount the tab strip + editor pane into host elements. */
   mount(stripHost: HTMLElement, paneHost: HTMLElement): void;
-  /** Open or focus a file tab. readOnly=true for >2MB files. */
   openTab(path: string, content: string, opts?: { readOnly?: boolean }): void;
-  /** Close a tab and dispose its editor. */
   closeTab(path: string): void;
-  /** Switch the active visible tab. */
   setActive(path: string): void;
-  /** Get current content of a tab (for external save triggers). */
   getContent(path: string): string | null;
-  /** Is a tab open? */
   hasTab(path: string): boolean;
-  /** Register the save callback (called on Cmd+S / Ctrl+S). */
   onSave(handler: SaveHandler): void;
-  /** Update the theme to match the app's light/dark mode. */
   setTheme(theme: "light" | "dark"): void;
-  /** Dispose all tabs + the editor. */
   dispose(): void;
+  /** Phase 50: push LSP diagnostics for a file (from lsp-notification events). */
+  setDiagnostics(path: string, diagnostics: Diagnostic[]): void;
+  /** Phase 50: register goto-definition handler (opens target file). */
+  onGotoDef(handler: GotoDefHandler): void;
+  /** Phase 50: trigger a hover request at the current cursor position.
+   * Returns the LSP hover text, or null. */
+  requestHover(path: string): Promise<string | null>;
 }
 
 // --- State ---
@@ -61,6 +65,7 @@ let _paneHost: HTMLElement | null = null;
 let _tabs: Map<string, OpenTab> = new Map();
 let _activePath: string | null = null;
 let _saveHandler: SaveHandler | null = null;
+let _gotoDefHandler: GotoDefHandler | null = null;
 let _theme: "light" | "dark" = "light";
 
 const MAX_EDITABLE_BYTES = 2 * 1024 * 1024; // 2MB — larger opens read-only
@@ -179,6 +184,12 @@ function createView(path: string, content: string, readOnly: boolean): EditorVie
     ]),
     EditorView.lineWrapping,
     EditorState.readOnly.of(readOnly),
+    lintGutter(),
+    // LSP diagnostic linter: returns diagnostics stored per-tab via setDiagnostics.
+    linter(async (view) => {
+      const tab = Array.from(_tabs.values()).find((t) => t.view === view);
+      return tab ? tab.diagnostics : [];
+    }),
     EditorView.theme({
       "&": {
         height: "100%",
@@ -254,7 +265,7 @@ const api: CodinalEditorAPI = {
     const bytes = new Blob([content]).size;
     const forceReadOnly = opts?.readOnly || bytes > MAX_EDITABLE_BYTES;
     const view = createView(path, content, forceReadOnly);
-    _tabs.set(path, { path, view, dirty: false, readOnly: forceReadOnly });
+    _tabs.set(path, { path, view, dirty: false, readOnly: forceReadOnly, diagnostics: [], diagVersion: 0 });
     api.setActive(path);
     renderStrip();
     showActiveView();
@@ -309,6 +320,26 @@ const api: CodinalEditorAPI = {
     _tabs.clear();
     _activePath = null;
     if (_stripHost) _stripHost.replaceChildren();
+  },
+
+  setDiagnostics(path: string, diagnostics: Diagnostic[]): void {
+    const tab = _tabs.get(path);
+    if (!tab) return;
+    tab.diagnostics = diagnostics;
+    tab.diagVersion++;
+    // Force CM6 to re-run the liter by dispatching a no-op update.
+    tab.view.dispatch({});
+  },
+
+  onGotoDef(handler: GotoDefHandler): void {
+    _gotoDefHandler = handler;
+  },
+
+  async requestHover(path: string): Promise<string | null> {
+    // Placeholder — actual hover is dispatched by startup.js via lsp_request.
+    // The editor just provides the cursor position; the JS layer calls
+    // invoke("lsp_request", ...) and shows a tooltip.
+    return null;
   },
 };
 

@@ -208,6 +208,8 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert "pty_kill" in script
     assert "pty-data" in script
     assert "pty-exit" in script
+    assert "lsp-notification" in script
+    assert "setDiagnostics" in script
     assert "/mcp/servers" in script
     assert "/artifacts" in script
     assert 'id="git-graph"' in html
