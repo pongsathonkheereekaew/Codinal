@@ -791,6 +791,7 @@ function initEditor() {
       const msg = event?.payload;
       if (!msg || msg?.message?.method !== "textDocument/publishDiagnostics")
         return;
+      if (!state.workspace || msg.workspaceRoot !== state.workspace) return;
       const uri = msg.message.params?.uri || "";
       const path = uri.startsWith("file://") ? uri.slice(7) : uri;
       if (!path) return;

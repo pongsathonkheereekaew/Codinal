@@ -145,6 +145,12 @@ def test_editor_enables_native_multi_cursor_selection():
     assert "...searchKeymap," in editor
 
 
+def test_lsp_diagnostics_are_scoped_to_the_active_workspace():
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert 'msg.workspaceRoot !== state.workspace' in script
+
+
 def test_command_palette_has_separate_quick_open_and_safe_commands():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
