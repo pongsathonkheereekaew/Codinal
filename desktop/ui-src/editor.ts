@@ -22,6 +22,7 @@ import { html } from "@codemirror/lang-html";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { linter, lintGutter, Diagnostic } from "@codemirror/lint";
 import { completionExtension, clearCompletion } from "./completion";
+import { inlineEditExtension, applyReplacement, dismissEditBar, setEditHandler } from "./inline-edit";
 
 // --- Types ---
 
@@ -59,6 +60,10 @@ interface CodinalEditorAPI {
   requestHover(path: string): Promise<string | null>;
   /** Phase 51: register the inline completion fetcher (ghost text). */
   onComplete(fetcher: (doc: string, pos: number) => Promise<string | null>): void;
+  /** Phase 52: register the inline edit handler (Cmd-K on selection). */
+  onInlineEdit(handler: (text: string, instruction: string, from: number, to: number) => Promise<string | null>): void;
+  /** Phase 52: apply a replacement to the active tab. */
+  applyEdit(path: string, from: number, to: number, replacement: string): void;
 }
 
 // --- State ---
@@ -210,6 +215,8 @@ function createView(path: string, content: string, readOnly: boolean): EditorVie
       },
     }),
     languageExtension(path),
+    // Phase 52: inline edit (Cmd-K) — always active; shows on selection + Cmd-K.
+    ...inlineEditExtension(),
     // Phase 51: inline completion (ghost text). Only active if a fetcher is set.
     ...(_completionFetcher
       ? completionExtension(_completionFetcher)
@@ -355,6 +362,16 @@ const api: CodinalEditorAPI = {
     // Note: existing views won't get the completion extension until re-created.
     // For Phase 51 this means completion activates on the next file open after
     // onComplete is registered. A full re-init of all views is deferred.
+  },
+
+  onInlineEdit(handler: (text: string, instruction: string, from: number, to: number) => Promise<string | null>): void {
+    setEditHandler(handler);
+  },
+
+  applyEdit(path: string, from: number, to: number, replacement: string): void {
+    const tab = _tabs.get(path);
+    if (!tab) return;
+    applyReplacement(tab.view, from, to, replacement);
   },
 };
 

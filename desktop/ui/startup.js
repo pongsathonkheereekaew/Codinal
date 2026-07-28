@@ -806,6 +806,26 @@ function initEditor() {
       return null; // silent — completion is best-effort
     }
   });
+  // Phase 52: inline edit (Cmd-K) — select code → Cmd-K → type instruction → AI replaces.
+  window.CodinalEditor.onInlineEdit(async (selectedText, instruction, from, to) => {
+    if (!state.sessionId) return null;
+    try {
+      const result = await api(
+        `/v1/sessions/${encodeURIComponent(state.sessionId)}/inline-edit`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            selected_text: selectedText,
+            instruction,
+            language: "auto",
+          }),
+        }
+      );
+      return result.replacement || null;
+    } catch {
+      return null;
+    }
+  });
   state.editorReady = true;
 }
 

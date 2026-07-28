@@ -106,3 +106,18 @@
   background: var(--line-strong, #ced4da);
   border-radius: 2px;
 }
+
+/* Phase 51: ghost text (inline completion suggestion) */
+.cm-ghost-text {
+  color: var(--faint, #999);
+  opacity: 0.55;
+  font-style: italic;
+  white-space: pre-wrap;
+  pointer-events: none;
+}
+
+/* Phase 52: inline edit highlight (Cmd-K selection) */
+.cm-inline-edit-highlight {
+  background: var(--accent-soft, rgba(109, 74, 255, 0.12));
+  border-radius: 3px;
+}

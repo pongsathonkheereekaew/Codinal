@@ -2134,6 +2134,63 @@ def create_control_plane_app(
             )
         return result
 
+    @app.post("/v1/sessions/{session_id}/inline-edit")
+    async def inline_edit(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Phase 52: inline edit (Cmd-K). Replaces selected code per instruction.
+
+        Sends the selected text + instruction to the session's model and
+        returns the replacement. Best-effort — errors return empty.
+        """
+        _validate_public_session_id(session_id)
+        body = await _read_bounded_object(
+            request, limit=65536, detail="invalid inline-edit payload"
+        )
+        selected_text = str(body.get("selected_text", ""))[:32000]
+        instruction = str(body.get("instruction", "")).strip()[:2000]
+        language = str(body.get("language", "auto"))
+        if not selected_text or not instruction:
+            raise HTTPException(status_code=400, detail="selected_text and instruction are required")
+        try:
+            engine = services.sessions.get_engine(session_id)
+        except Exception:
+            return {"replacement": ""}
+        if engine is None:
+            return {"replacement": ""}
+        try:
+            provider = getattr(engine, "provider", None) or getattr(
+                engine, "_provider", None
+            )
+            if provider is None:
+                return {"replacement": ""}
+            model = getattr(engine, "model", None) or "openai:gpt-5.6-sol"
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        f"You are a code editor. The user selected code ({language}) "
+                        "and wants you to modify it per their instruction. "
+                        "Return ONLY the replacement code, no explanation, no markdown fences."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Instruction: {instruction}\n\nSelected code:\n```\n{selected_text}\n```",
+                },
+            ]
+            turn = await asyncio.to_thread(
+                provider.complete, model=model, messages=messages,
+            )
+            text = (turn.text or "").strip() if hasattr(turn, "text") else ""
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
+            return {"replacement": text}
+        except Exception:
+            return {"replacement": ""}
+
     @app.post("/v1/sessions/{session_id}/complete")
     async def inline_complete(
         session_id: str,
