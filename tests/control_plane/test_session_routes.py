@@ -28,6 +28,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 class FakeSettings:
     def __init__(self):
         self.routing_profile = "manual"
+        self.stirling_url = None
 
     def view(self):
         return {
@@ -40,6 +41,12 @@ class FakeSettings:
             return {"ok": False, "error": "invalid routing profile"}
         self.routing_profile = profile
         return {"ok": True, "routing_profile": profile}
+
+    def set_stirling_url(self, url):
+        if url != "http://localhost:8080":
+            return {"ok": False, "error": "invalid Stirling URL"}
+        self.stirling_url = url
+        return {"ok": True, "stirling_url": url}
 
 
 class FakeRouting:
@@ -673,6 +680,34 @@ def test_settings_expose_and_persist_transparent_routing_profile():
     assert initial.json()["routing"]["profile"] == "manual"
     assert updated.json()["routing"]["profile"] == "balanced"
     assert invalid.status_code == 400
+
+
+def test_settings_accept_stirling_url_only_through_validated_route():
+    client, _sessions, _turns = make_client()
+
+    with client:
+        configured = client.patch(
+            "/v1/settings/stirling",
+            headers=AUTH,
+            json={"url": "http://localhost:8080"},
+        )
+        invalid = client.patch(
+            "/v1/settings/stirling",
+            headers=AUTH,
+            json={"url": "https://example.com"},
+        )
+        malformed = client.patch(
+            "/v1/settings/stirling",
+            headers=AUTH,
+            json={"url": "http://localhost:8080", "extra": True},
+        )
+
+    assert configured.json() == {
+        "ok": True,
+        "stirling_url": "http://localhost:8080",
+    }
+    assert invalid.status_code == 400
+    assert malformed.status_code == 400
 
 
 def test_turn_routing_returns_exact_resolution_and_uses_selected_model():

@@ -12,6 +12,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Protocol
+from urllib.parse import urlsplit
 
 from runtime.storage import UnsupportedSchemaVersionError
 from runtime.storage.migrations import (
@@ -24,6 +25,37 @@ from runtime.storage.migrations import (
 
 _PREFERENCES_SCHEMA_VERSION = 1
 _ROUTING_PROFILES = {"manual", "quality", "balanced", "economy"}
+_STIRLING_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _normalize_stirling_url(value: Any) -> tuple[str | None, str | None]:
+    if not isinstance(value, str):
+        return None, "stirling_url must be a string"
+    candidate = value.strip()
+    if not candidate:
+        return None, None
+    try:
+        parsed = urlsplit(candidate)
+        port = parsed.port
+    except ValueError:
+        return None, "invalid Stirling URL"
+    if parsed.scheme != "http":
+        return None, "Stirling URL must use http"
+    if (
+        parsed.hostname not in _STIRLING_LOOPBACK_HOSTS
+        or port is None
+        or port == 0
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        return None, "Stirling URL must be a loopback http URL with a port"
+    host = parsed.hostname
+    assert host is not None
+    host_text = f"[{host}]" if ":" in host else host
+    return f"http://{host_text}:{port}", None
 
 
 def _migrate_preferences_to_v1(value: dict[str, Any]) -> None:
@@ -198,12 +230,19 @@ class SettingsService:
             "sessions_peek": self._sessions_peek(),
             "pdf": self._pdf_preferences(),
             "failover_enabled": self._failover_enabled(),
+            "stirling_url": self._stirling_url(),
         }
 
     def _failover_enabled(self) -> bool:
         """Auto-failover toggle (default True). When off, FailoverRouter
         delegates straight to the wrapped router — zero behavior change."""
         return bool(self._preferences.get("failover_enabled", True))
+
+    def _stirling_url(self) -> str | None:
+        normalized, _ = _normalize_stirling_url(
+            self._preferences.get("stirling_url", "")
+        )
+        return normalized
 
     def set_default_model(self, model: str) -> dict[str, Any]:
         normalized = (model or "").strip()
@@ -245,6 +284,26 @@ class SettingsService:
                 self._preferences["failover_enabled"] = previous
             raise
         return {"ok": True, "failover_enabled": normalized}
+
+    def set_stirling_url(self, value: str) -> dict[str, Any]:
+        normalized, error = _normalize_stirling_url(value)
+        if error:
+            return {"ok": False, "error": error}
+        sentinel = object()
+        previous = self._preferences.get("stirling_url", sentinel)
+        if normalized is None:
+            self._preferences.pop("stirling_url", None)
+        else:
+            self._preferences["stirling_url"] = normalized
+        try:
+            self._persist()
+        except Exception:
+            if previous is sentinel:
+                self._preferences.pop("stirling_url", None)
+            else:
+                self._preferences["stirling_url"] = previous
+            raise
+        return {"ok": True, "stirling_url": normalized}
 
     def set_onboarded(self, value: bool = True) -> dict[str, Any]:
         self._preferences["onboarded"] = bool(value)
