@@ -2134,6 +2134,70 @@ def create_control_plane_app(
             )
         return result
 
+    @app.post("/v1/sessions/{session_id}/complete")
+    async def inline_complete(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        """Phase 51: inline code completion (ghost text).
+
+        Sends a minimal FIM (fill-in-the-middle) prompt to the session's
+        configured model and returns a short suggestion. Best-effort —
+        errors return an empty suggestion (the UI shows no ghost text).
+        """
+        _validate_public_session_id(session_id)
+        body = await _read_bounded_object(
+            request, limit=8192, detail="invalid completion payload"
+        )
+        prefix = str(body.get("prefix", ""))[-2000:]
+        suffix = str(body.get("suffix", ""))[:500]
+        if not prefix:
+            return {"suggestion": ""}
+        try:
+            engine = services.sessions.get_engine(session_id)
+        except Exception:
+            return {"suggestion": ""}
+        if engine is None:
+            return {"suggestion": ""}
+        try:
+            # Build a FIM-style prompt. Model-agnostic: most OpenAI-compat
+            # models handle this instruction well enough for short completions.
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Complete the code at the cursor position. "
+                        "Return ONLY the code to insert, no explanation. "
+                        "Keep it short (1-3 lines)."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Code before cursor:\n```\n{prefix}\n```\n\n"
+                    f"Code after cursor:\n```\n{suffix}\n```\n\n"
+                    "What should be inserted at the cursor?",
+                },
+            ]
+            provider = getattr(engine, "provider", None) or getattr(
+                engine, "_provider", None
+            )
+            if provider is None:
+                return {"suggestion": ""}
+            model = getattr(engine, "model", None) or "openai:gpt-5.6-sol"
+            turn = await asyncio.to_thread(
+                provider.complete,
+                model=model,
+                messages=messages,
+            )
+            text = (turn.text or "").strip() if hasattr(turn, "text") else ""
+            # Strip markdown fences if the model wrapped the completion.
+            if text.startswith("```"):
+                lines = text.split("\n")
+                text = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
+            return {"suggestion": text[:500]}
+        except Exception:
+            return {"suggestion": ""}
+
     @app.post("/v1/sessions/{session_id}/artifacts/write")
     async def write_artifact(
         session_id: str,

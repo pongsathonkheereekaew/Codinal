@@ -781,6 +781,31 @@ function initEditor() {
       // For Phase 50 we just open the file; line-jump is a follow-up.
     }).catch(() => {});
   });
+  // Phase 51: inline completion — debounce + ghost text via the model API.
+  window.CodinalEditor.onComplete(async (doc, pos) => {
+    if (!state.sessionId || state.busy) return null;
+    // Build a minimal completion prompt: prefix + suffix around the cursor.
+    const prefix = doc.slice(0, pos);
+    const suffix = doc.slice(pos);
+    // Only trigger if the cursor is mid-line (not at very start of empty doc).
+    if (!prefix.trim()) return null;
+    try {
+      const result = await api(
+        `/v1/sessions/${encodeURIComponent(state.sessionId)}/complete`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            prefix: prefix.slice(-2000), // last 2K chars for context
+            suffix: suffix.slice(0, 500), // next 500 chars for continuity
+            language: "auto",
+          }),
+        }
+      );
+      return result.suggestion || null;
+    } catch {
+      return null; // silent — completion is best-effort
+    }
+  });
   state.editorReady = true;
 }
 

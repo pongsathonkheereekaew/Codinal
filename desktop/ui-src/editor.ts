@@ -21,6 +21,7 @@ import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { linter, lintGutter, Diagnostic } from "@codemirror/lint";
+import { completionExtension, clearCompletion } from "./completion";
 
 // --- Types ---
 
@@ -56,6 +57,8 @@ interface CodinalEditorAPI {
   /** Phase 50: trigger a hover request at the current cursor position.
    * Returns the LSP hover text, or null. */
   requestHover(path: string): Promise<string | null>;
+  /** Phase 51: register the inline completion fetcher (ghost text). */
+  onComplete(fetcher: (doc: string, pos: number) => Promise<string | null>): void;
 }
 
 // --- State ---
@@ -66,6 +69,7 @@ let _tabs: Map<string, OpenTab> = new Map();
 let _activePath: string | null = null;
 let _saveHandler: SaveHandler | null = null;
 let _gotoDefHandler: GotoDefHandler | null = null;
+let _completionFetcher: ((doc: string, pos: number) => Promise<string | null>) | null = null;
 let _theme: "light" | "dark" = "light";
 
 const MAX_EDITABLE_BYTES = 2 * 1024 * 1024; // 2MB — larger opens read-only
@@ -206,6 +210,10 @@ function createView(path: string, content: string, readOnly: boolean): EditorVie
       },
     }),
     languageExtension(path),
+    // Phase 51: inline completion (ghost text). Only active if a fetcher is set.
+    ...(_completionFetcher
+      ? completionExtension(_completionFetcher)
+      : []),
     ...(isDark ? [oneDark] : []),
     EditorView.updateListener.of((update) => {
       if (update.docChanged) {
@@ -340,6 +348,13 @@ const api: CodinalEditorAPI = {
     // The editor just provides the cursor position; the JS layer calls
     // invoke("lsp_request", ...) and shows a tooltip.
     return null;
+  },
+
+  onComplete(fetcher: (doc: string, pos: number) => Promise<string | null>): void {
+    _completionFetcher = fetcher;
+    // Note: existing views won't get the completion extension until re-created.
+    // For Phase 51 this means completion activates on the next file open after
+    // onComplete is registered. A full re-init of all views is deferred.
   },
 };
 
