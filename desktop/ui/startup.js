@@ -756,6 +756,11 @@ function initEditor() {
       throw error;
     }
   });
+  // When the last tab closes, hide the editor panel so it doesn't show
+  // as an empty void (Phase 49 follow-up — matches Codex/VS Code behavior).
+  window.CodinalEditor.onEmpty(() => {
+    el["editor-panel"].classList.add("is-hidden");
+  });
   // Phase 50: listen for LSP diagnostic notifications → forward to editor.
   if (__codinalListen) {
     __codinalListen("lsp-notification", (event) => {

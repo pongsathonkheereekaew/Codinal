@@ -39,6 +39,7 @@ interface OpenTab {
 
 type SaveHandler = (path: string, content: string) => Promise<void>;
 type GotoDefHandler = (path: string, line: number, col: number) => void;
+type EmptyHandler = () => void;
 
 interface CodinalEditorAPI {
   hello(): string;
@@ -49,6 +50,8 @@ interface CodinalEditorAPI {
   getContent(path: string): string | null;
   hasTab(path: string): boolean;
   onSave(handler: SaveHandler): void;
+  /** Fired when the last tab closes, so the host can hide the panel. */
+  onEmpty(handler: EmptyHandler): void;
   setTheme(theme: "light" | "dark"): void;
   dispose(): void;
   /** Phase 50: push LSP diagnostics for a file (from lsp-notification events). */
@@ -73,6 +76,7 @@ let _paneHost: HTMLElement | null = null;
 let _tabs: Map<string, OpenTab> = new Map();
 let _activePath: string | null = null;
 let _saveHandler: SaveHandler | null = null;
+let _emptyHandler: EmptyHandler | null = null;
 let _gotoDefHandler: GotoDefHandler | null = null;
 let _completionFetcher: ((doc: string, pos: number) => Promise<string | null>) | null = null;
 let _theme: "light" | "dark" = "light";
@@ -277,6 +281,8 @@ const api: CodinalEditorAPI = {
       api.setActive(path);
       return;
     }
+    // Remove the empty-state placeholder (if present) before mounting the view.
+    _paneHost?.querySelector(".editor-empty")?.remove();
     const bytes = new Blob([content]).size;
     const forceReadOnly = opts?.readOnly || bytes > MAX_EDITABLE_BYTES;
     const view = createView(path, content, forceReadOnly);
@@ -297,6 +303,9 @@ const api: CodinalEditorAPI = {
       showActiveView();
     }
     renderStrip();
+    if (_tabs.size === 0) {
+      try { _emptyHandler?.(); } catch { /* host error is non-fatal */ }
+    }
   },
 
   setActive(path: string): void {
@@ -319,6 +328,10 @@ const api: CodinalEditorAPI = {
 
   onSave(handler: SaveHandler): void {
     _saveHandler = handler;
+  },
+
+  onEmpty(handler: EmptyHandler): void {
+    _emptyHandler = handler;
   },
 
   setTheme(theme: "light" | "dark"): void {
