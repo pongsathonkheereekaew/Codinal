@@ -99,6 +99,7 @@ const state = {
   mcpLoadGeneration: 0,
   artifacts: [],
   artifactLoadGeneration: 0,
+  artifactPreviewGeneration: 0,
   editorReady: false,
   palette: { mode: null, items: [], selected: 0, returnFocus: null, filesForSession: null },
 };
@@ -601,8 +602,9 @@ function formatArtifactSize(size) {
 }
 
 function renderArtifacts() {
+  state.artifactPreviewGeneration += 1;
   el["artifact-list"].replaceChildren();
-  el["artifact-preview"].textContent = "";
+  el["artifact-preview"].replaceChildren();
   el["artifact-preview-path"].textContent = "";
   if (!state.sessionId) {
     el["artifact-empty"].textContent = "Open settings with an active task to load artifacts.";
@@ -660,7 +662,8 @@ function renderArtifacts() {
 }
 
 function clearArtifactPreview() {
-  el["artifact-preview"].textContent = "";
+  state.artifactPreviewGeneration += 1;
+  el["artifact-preview"].replaceChildren();
   el["artifact-preview-path"].textContent = "";
 }
 
@@ -694,34 +697,49 @@ async function loadArtifacts(sessionId = state.sessionId) {
 
 async function readArtifact(path) {
   if (!state.sessionId || state.busy) return;
+  const sessionId = state.sessionId;
+  const generation = ++state.artifactPreviewGeneration;
   const query = new URLSearchParams({ path }).toString();
   const result = await api(
-    `/v1/sessions/${encodeURIComponent(state.sessionId)}/artifacts/read?${query}`
+    `/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/read?${query}`
   );
+  if (
+    state.sessionId !== sessionId
+    || generation !== state.artifactPreviewGeneration
+  ) return;
   el["artifact-preview-path"].textContent = `${result.path} (${result.kind})`;
-  if (result.kind === "image" || result.kind === "pdf" || result.kind === "sheet") {
-    if (result.data_url) {
-      el["artifact-preview"].textContent = (
-        result.data_url.startsWith("data:")
-          ? "(binary artifact, opening in preview is not yet supported)"
-          : result.data_url
-      );
-      return;
-    }
-    el["artifact-preview"].textContent = "(binary artifact available, open to inspect)";
+  const preview = el["artifact-preview"];
+  preview.replaceChildren();
+  if (result.kind === "image" && result.data_url?.startsWith("data:image/")) {
+    const image = document.createElement("img");
+    image.src = result.data_url;
+    image.alt = result.path;
+    image.className = "artifact-preview-image";
+    preview.append(image);
     return;
   }
-  if (result.kind === "office") {
-    el["artifact-preview"].textContent = "(office artifact available, open to inspect)";
+  if (result.kind === "pdf" && result.data_url?.startsWith("data:application/pdf")) {
+    const viewer = document.createElement("iframe");
+    viewer.src = result.data_url;
+    viewer.sandbox = "";
+    viewer.title = `Preview: ${result.path}`;
+    viewer.className = "artifact-preview-pdf";
+    preview.append(viewer);
+    return;
+  }
+  if (result.kind === "sheet" || result.kind === "office") {
+    preview.textContent = "Local Office preview requires a configured Stirling endpoint.";
     return;
   }
   if (typeof result.content !== "string") {
-    el["artifact-preview"].textContent = "(artifact content unavailable)";
+    preview.textContent = "(artifact content unavailable)";
     return;
   }
-  el["artifact-preview"].textContent = result.truncated
+  const text = document.createElement("pre");
+  text.textContent = result.truncated
     ? `${result.content}\n[truncated for preview]`
     : result.content;
+  preview.append(text);
 }
 
 async function revealArtifact(path, mode) {

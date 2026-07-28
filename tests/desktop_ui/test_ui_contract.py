@@ -159,6 +159,21 @@ def test_command_palette_has_separate_quick_open_and_safe_commands():
     assert "closePalette" in script
 
 
+def test_artifact_preview_uses_typed_local_renderers():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert '<div id="artifact-preview"' in html
+    assert 'result.kind === "image"' in script
+    assert 'result.kind === "pdf"' in script
+    assert 'viewer.sandbox = ""' in script
+    assert "artifact-preview-image" in script
+    assert "artifact-preview-pdf" in script
+    assert "Local Office preview requires a configured Stirling endpoint." in script
+    assert "artifactPreviewGeneration" in script
+    assert "state.sessionId !== sessionId" in script
+
+
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
