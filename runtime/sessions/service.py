@@ -1660,6 +1660,25 @@ class SessionService:
             "truncated": len(text) > 500_000,
         }
 
+    def write_artifact(
+        self, session_id: str, path: str, content: str
+    ) -> dict[str, Any]:
+        """Write text content to a file within the session workspace.
+
+        Workspace-scoped user action (no policy gate) — the same sandbox
+        boundary as read_artifact: the resolved path must stay within the
+        workspace root. Creates parent directories if needed.
+        """
+        target, error = self._writable_target(session_id, path)
+        if target is None:
+            return {"ok": False, "error": error}
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        except OSError as write_error:
+            return {"ok": False, "error": str(write_error)}
+        return {"ok": True, "path": path}
+
     def reveal_artifact(
         self, session_id: str, path: str, *, mode: str = "reveal"
     ) -> dict[str, Any]:
@@ -1726,6 +1745,23 @@ class SessionService:
             return None, "path escapes workspace"
         if not target.is_file():
             return None, "not found"
+        return target, None
+
+    def _writable_target(
+        self, session_id: str, path: str
+    ) -> tuple[Optional[Path], Optional[str]]:
+        """Resolve a path for writing. Unlike ``_artifact_target``, the file
+        does NOT need to exist (new-file creation is allowed), but the
+        resolved path must still stay within the workspace root (sandbox)."""
+        record = self._store.load(session_id)
+        if record is None or not record.workspace:
+            return None, "no workspace"
+        root = Path(record.workspace).expanduser().resolve()
+        target = (root / path).expanduser().resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return None, "path escapes workspace"
         return target, None
 
     @staticmethod

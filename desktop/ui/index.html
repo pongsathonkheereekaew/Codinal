@@ -7,6 +7,7 @@
     <title>Codinal</title>
     <link rel="stylesheet" href="./app.css" />
     <link rel="stylesheet" href="./vendor/xterm.css" />
+    <link rel="stylesheet" href="./dist/editor.css" />
   </head>
   <body>
     <a href="#conversation" class="skip-link">Skip to conversation</a>
@@ -182,6 +183,13 @@
             </button>
           </header>
           <div id="goal-list" class="goal-list" aria-live="polite"></div>
+        </section>
+
+        <section id="editor-panel" class="editor-panel is-hidden"
+          aria-label="Code editor">
+          <div id="editor-strip" class="editor-strip" role="tablist"
+            aria-label="Open files"></div>
+          <div id="editor-pane" class="editor-pane"></div>
         </section>
 
         <section id="conversation" class="conversation"

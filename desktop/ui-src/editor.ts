@@ -1,31 +1,318 @@
-// Codinal editor surface — Phase 48 build-infrastructure spike.
+// Codinal multi-file code editor — Phase 49.
 //
-// This file proves the esbuild → dist/editor.js → <script src> →
-// window.CodinalEditor bridge works under Tauri's CSP before any real
-// editor code lands (Phase 49). The global is the same bridge pattern
-// xterm.js uses: vanilla JS in startup.js calls into it.
+// CodeMirror 6 with tab strip, syntax highlighting (8 languages), dirty-state
+// tracking, and a save callback bridge. The editor is bundled by esbuild
+// into dist/editor.js and loaded as window.CodinalEditor by the vanilla JS
+// in startup.js — same bridge pattern as xterm.js.
 //
-// Phase 49 will replace this stub with a real CodeMirror 6 multi-file editor.
+// The vanilla JS side owns the DOM host elements (#editor-strip + #editor-pane)
+// and calls: openTab, closeTab, setActive, getContent, onSave.
 
-interface CodinalEditor {
-  /** Phase 48 health check. Returns "ok" once the bundled module loaded. */
-  hello(): string;
-  /** Phase 49+ will add openTab / closeTab / setActive / getContent / onSave. */
+import { EditorState } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, indentOnInput } from "@codemirror/language";
+import { javascript } from "@codemirror/lang-javascript";
+import { python } from "@codemirror/lang-python";
+import { rust } from "@codemirror/lang-rust";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { oneDark } from "@codemirror/theme-one-dark";
+
+// --- Types ---
+
+interface OpenTab {
+  path: string;
+  view: EditorView;
+  dirty: boolean;
+  readOnly: boolean;
 }
 
-declare global {
-  interface Window {
-    CodinalEditor: CodinalEditor;
+type SaveHandler = (path: string, content: string) => Promise<void>;
+
+interface CodinalEditorAPI {
+  hello(): string;
+  /** Mount the tab strip + editor pane into host elements. */
+  mount(stripHost: HTMLElement, paneHost: HTMLElement): void;
+  /** Open or focus a file tab. readOnly=true for >2MB files. */
+  openTab(path: string, content: string, opts?: { readOnly?: boolean }): void;
+  /** Close a tab and dispose its editor. */
+  closeTab(path: string): void;
+  /** Switch the active visible tab. */
+  setActive(path: string): void;
+  /** Get current content of a tab (for external save triggers). */
+  getContent(path: string): string | null;
+  /** Is a tab open? */
+  hasTab(path: string): boolean;
+  /** Register the save callback (called on Cmd+S / Ctrl+S). */
+  onSave(handler: SaveHandler): void;
+  /** Update the theme to match the app's light/dark mode. */
+  setTheme(theme: "light" | "dark"): void;
+  /** Dispose all tabs + the editor. */
+  dispose(): void;
+}
+
+// --- State ---
+
+let _stripHost: HTMLElement | null = null;
+let _paneHost: HTMLElement | null = null;
+let _tabs: Map<string, OpenTab> = new Map();
+let _activePath: string | null = null;
+let _saveHandler: SaveHandler | null = null;
+let _theme: "light" | "dark" = "light";
+
+const MAX_EDITABLE_BYTES = 2 * 1024 * 1024; // 2MB — larger opens read-only
+
+// --- Language detection ---
+
+function languageExtension(path: string) {
+  const ext = path.split(".").pop()?.toLowerCase() || "";
+  switch (ext) {
+    case "js":
+    case "mjs":
+    case "cjs":
+    case "jsx":
+      return javascript({ jsx: true });
+    case "ts":
+    case "tsx":
+      return javascript({ typescript: true, jsx: true });
+    case "py":
+      return python();
+    case "rs":
+      return rust();
+    case "json":
+      return json();
+    case "md":
+    case "markdown":
+      return markdown();
+    case "css":
+    case "scss":
+      return css();
+    case "html":
+    case "htm":
+    case "xml":
+      return html();
+    default:
+      return [];
   }
 }
 
-// esbuild's `globalName: "CodinalEditor"` + `format: "iife"` assigns the
-// module's default export to window.CodinalEditor. We also set it explicitly
-// so the bridge works regardless of how the script is loaded.
-const api: CodinalEditor = {
+// --- Tab strip rendering ---
+
+function basename(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
+}
+
+function renderStrip(): void {
+  if (!_stripHost) return;
+  _stripHost.replaceChildren();
+  for (const [path, tab] of _tabs) {
+    const el = document.createElement("div");
+    el.className = "editor-tab" + (path === _activePath ? " is-active" : "");
+    el.dataset.path = path;
+    const label = document.createElement("span");
+    label.className = "editor-tab-label";
+    label.textContent = basename(path);
+    if (tab.dirty) {
+      const dot = document.createElement("span");
+      dot.className = "editor-tab-dirty";
+      dot.textContent = "●";
+      el.appendChild(dot);
+    }
+    el.appendChild(label);
+    if (tab.readOnly) {
+      const ro = document.createElement("span");
+      ro.className = "editor-tab-ro";
+      ro.textContent = "RO";
+      el.appendChild(ro);
+    }
+    const close = document.createElement("button");
+    close.className = "editor-tab-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", `Close ${basename(path)}`);
+    close.addEventListener("click", (e) => {
+      e.stopPropagation();
+      api.closeTab(path);
+    });
+    el.appendChild(close);
+    el.addEventListener("click", () => api.setActive(path));
+    _stripHost.appendChild(el);
+  }
+}
+
+function showActiveView(): void {
+  if (!_paneHost || !_activePath) return;
+  // Hide all views, show only the active one.
+  for (const [path, tab] of _tabs) {
+    tab.view.dom.style.display = path === _activePath ? "" : "none";
+  }
+}
+
+// --- Editor creation ---
+
+function createView(path: string, content: string, readOnly: boolean): EditorView {
+  const isDark = _theme === "dark";
+  const extensions = [
+    history(),
+    lineNumbers(),
+    foldGutter(),
+    highlightActiveLine(),
+    highlightActiveLineGutter(),
+    indentOnInput(),
+    bracketMatching(),
+    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    keymap.of([
+      ...defaultKeymap,
+      ...historyKeymap,
+      indentWithTab,
+      {
+        key: "Mod-s",
+        preventDefault: true,
+        run: (view) => {
+          handleSave();
+          return true;
+        },
+      },
+    ]),
+    EditorView.lineWrapping,
+    EditorState.readOnly.of(readOnly),
+    EditorView.theme({
+      "&": {
+        height: "100%",
+        fontSize: "13px",
+      },
+      ".cm-scroller": {
+        fontFamily: "var(--mono, ui-monospace, Menlo, monospace)",
+        overflow: "auto",
+      },
+      ".cm-content": { padding: "8px 0" },
+      ".cm-gutters": {
+        backgroundColor: "transparent",
+        borderRight: "1px solid var(--line, #dee2e6)",
+      },
+    }),
+    languageExtension(path),
+    ...(isDark ? [oneDark] : []),
+    EditorView.updateListener.of((update) => {
+      if (update.docChanged) {
+        const tab = _tabs.get(path);
+        if (tab && !tab.dirty) {
+          tab.dirty = true;
+          renderStrip();
+        }
+      }
+    }),
+  ];
+
+  const state = EditorState.create({
+    doc: content,
+    extensions,
+  });
+
+  const view = new EditorView({
+    state,
+    parent: _paneHost || undefined,
+  });
+
+  return view;
+}
+
+async function handleSave(): Promise<void> {
+  if (!_activePath || !_saveHandler) return;
+  const tab = _tabs.get(_activePath);
+  if (!tab || tab.readOnly) return;
+  try {
+    await _saveHandler(_activePath, tab.view.state.doc.toString());
+    tab.dirty = false;
+    renderStrip();
+  } catch (err) {
+    console.error("[CodinalEditor] save failed:", err);
+  }
+}
+
+// --- Public API ---
+
+const api: CodinalEditorAPI = {
   hello: () => "ok",
+
+  mount(stripHost: HTMLElement, paneHost: HTMLElement): void {
+    _stripHost = stripHost;
+    _paneHost = paneHost;
+    _paneHost.classList.add("editor-pane");
+    _stripHost.classList.add("editor-strip");
+  },
+
+  openTab(path: string, content: string, opts?: { readOnly?: boolean }): void {
+    // If already open, just focus.
+    if (_tabs.has(path)) {
+      api.setActive(path);
+      return;
+    }
+    const bytes = new Blob([content]).size;
+    const forceReadOnly = opts?.readOnly || bytes > MAX_EDITABLE_BYTES;
+    const view = createView(path, content, forceReadOnly);
+    _tabs.set(path, { path, view, dirty: false, readOnly: forceReadOnly });
+    api.setActive(path);
+    renderStrip();
+    showActiveView();
+  },
+
+  closeTab(path: string): void {
+    const tab = _tabs.get(path);
+    if (!tab) return;
+    tab.view.destroy();
+    _tabs.delete(path);
+    if (_activePath === path) {
+      const next = _tabs.keys().next();
+      _activePath = next.done ? null : next.value;
+      showActiveView();
+    }
+    renderStrip();
+  },
+
+  setActive(path: string): void {
+    if (!_tabs.has(path)) return;
+    _activePath = path;
+    showActiveView();
+    renderStrip();
+    // Focus the editor so typing works immediately.
+    _tabs.get(path)?.view.focus();
+  },
+
+  getContent(path: string): string | null {
+    const tab = _tabs.get(path);
+    return tab ? tab.view.state.doc.toString() : null;
+  },
+
+  hasTab(path: string): boolean {
+    return _tabs.has(path);
+  },
+
+  onSave(handler: SaveHandler): void {
+    _saveHandler = handler;
+  },
+
+  setTheme(theme: "light" | "dark"): void {
+    // Theme changes require recreating views (CM6 theme is an extension).
+    // For Phase 49 we store the preference; a full theme-swap re-init
+    // is deferred to avoid losing undo history on toggle.
+    _theme = theme;
+  },
+
+  dispose(): void {
+    for (const [, tab] of _tabs) {
+      tab.view.destroy();
+    }
+    _tabs.clear();
+    _activePath = null;
+    if (_stripHost) _stripHost.replaceChildren();
+  },
 };
 
-window.CodinalEditor = api;
+// Expose the bridge globally (same pattern as xterm.js).
+(window as any).CodinalEditor = api;
 
 export default api;

@@ -698,8 +698,14 @@ select:focus-visible,
   height: 100%;
   overflow: hidden;
   grid-template-rows:
-    58px repeat(4, auto) minmax(0, 1fr) auto auto;
+    58px repeat(4, auto) 0fr minmax(0, 1fr) auto auto;
   background: var(--bg);
+}
+
+/* When the editor is visible, it claims a flexible slice above the chat. */
+.workspace:has(.editor-panel:not(.is-hidden)) {
+  grid-template-rows:
+    58px repeat(4, auto) minmax(180px, 38%) minmax(0, 1fr) auto auto;
 }
 
 .task-header { grid-row: 1; }
@@ -707,9 +713,22 @@ select:focus-visible,
 .plan-panel { grid-row: 3; }
 .plan-build-panel { grid-row: 4; }
 .goal-panel { grid-row: 5; }
-.conversation { grid-row: 6; }
-.terminal-panel { grid-row: 7; }
-.composer-wrap { grid-row: 8; }
+.editor-panel { grid-row: 6; }
+.conversation { grid-row: 7; }
+.terminal-panel { grid-row: 8; }
+.composer-wrap { grid-row: 9; }
+
+.editor-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.editor-panel.is-hidden {
+  display: none;
+}
 
 .task-header {
   display: flex;
