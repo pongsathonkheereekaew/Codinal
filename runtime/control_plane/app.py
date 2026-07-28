@@ -39,6 +39,7 @@ from runtime.policy import PermissionRequest
 from runtime.sandbox import InvalidCommandError, SandboxUnavailableError
 from runtime.path_scope import scopes_overlap
 from runtime.preview import detect_devserver_urls
+from runtime.artifacts import check_stirling_health
 from runtime.sessions.context import make_project_context_item
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
@@ -891,6 +892,22 @@ def create_control_plane_app(
             raise HTTPException(
                 status_code=400,
                 detail=result.get("error", "invalid Stirling URL"),
+            )
+        return result
+
+    @app.post("/v1/settings/stirling/health")
+    async def check_configured_stirling_health() -> dict[str, Any]:
+        stirling_url = services.settings.view().get("stirling_url")
+        if not isinstance(stirling_url, str) or not stirling_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Local Stirling endpoint is not configured",
+            )
+        result = await asyncio.to_thread(check_stirling_health, stirling_url)
+        if not result["ok"]:
+            raise HTTPException(
+                status_code=503,
+                detail="Local Stirling endpoint is unavailable",
             )
         return result
 

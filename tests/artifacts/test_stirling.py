@@ -5,10 +5,40 @@ import time
 
 import httpx
 
-from runtime.artifacts import StirlingConverter
+from runtime.artifacts import StirlingConverter, check_stirling_health
 
 
 PDF = b"%PDF-1.7\npreview\n"
+
+
+def test_health_uses_only_the_loopback_status_endpoint(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert request.method == "GET"
+        assert request.url.path == "/api/v1/info/status"
+        return httpx.Response(200, json={"status": "UP", "version": "1.2.3"})
+
+    result = check_stirling_health(
+        "http://localhost:8080", transport=httpx.MockTransport(handler)
+    )
+
+    assert result == {"ok": True, "version": "1.2.3"}
+    assert len(calls) == 1
+
+
+def test_health_rejects_invalid_endpoints_without_contacting_stirling():
+    calls = []
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls.append(True)
+        return httpx.Response(200, json={"status": "UP"})
+
+    assert check_stirling_health(
+        "https://example.com", transport=httpx.MockTransport(handler)
+    ) == {"ok": False, "version": None}
+    assert calls == []
 
 
 def test_conversion_is_loopback_only_and_returns_cached_private_pdf(tmp_path):
