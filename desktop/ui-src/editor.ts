@@ -21,6 +21,7 @@ import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { linter, lintGutter, Diagnostic } from "@codemirror/lint";
+import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { completionExtension, clearCompletion } from "./completion";
 import { inlineEditExtension, applyReplacement, dismissEditBar, setEditHandler } from "./inline-edit";
 
@@ -182,9 +183,12 @@ function createView(path: string, content: string, readOnly: boolean): EditorVie
     indentOnInput(),
     bracketMatching(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    search(),
     keymap.of([
       ...defaultKeymap,
       ...historyKeymap,
+      ...searchKeymap,
+      { key: "Mod-h", run: openSearchPanel },
       indentWithTab,
       {
         key: "Mod-s",

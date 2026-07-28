@@ -126,6 +126,16 @@ def test_desktop_ui_loads_editor_bundle():
     assert "window.CodinalEditor" in script
 
 
+def test_editor_has_native_find_replace_keybindings():
+    """Phase 53: every CodeMirror tab exposes Cmd/Ctrl-F and Cmd/Ctrl-H."""
+    editor = (ROOT / "desktop" / "ui-src" / "editor.ts").read_text(encoding="utf-8")
+
+    assert 'from "@codemirror/search"' in editor
+    assert "search()," in editor
+    assert "...searchKeymap," in editor
+    assert 'key: "Mod-h", run: openSearchPanel' in editor
+
+
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
