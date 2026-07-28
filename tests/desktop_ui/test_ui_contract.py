@@ -151,6 +151,14 @@ def test_lsp_diagnostics_are_scoped_to_the_active_workspace():
     assert 'msg.workspaceRoot !== state.workspace' in script
 
 
+def test_editor_exposes_exact_lsp_range_navigation():
+    editor = (ROOT / "desktop" / "ui-src" / "editor.ts").read_text(encoding="utf-8")
+
+    assert "revealRange(path" in editor
+    assert "EditorSelection.range(from, to)" in editor
+    assert "EditorView.scrollIntoView" in editor
+
+
 def test_command_palette_has_separate_quick_open_and_safe_commands():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
