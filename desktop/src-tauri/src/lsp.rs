@@ -83,6 +83,28 @@ impl LspKey {
             .map(|url| url.into())
             .map_err(|()| io::Error::new(io::ErrorKind::InvalidInput, "invalid workspace root"))
     }
+
+    fn document_uri(&self, relative_path: &str) -> io::Result<String> {
+        let relative = Path::new(relative_path);
+        if relative.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "document path must be relative",
+            ));
+        }
+        let document = Path::new(&self.workspace_root)
+            .join(relative)
+            .canonicalize()?;
+        if !document.starts_with(&self.workspace_root) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "document path escapes workspace",
+            ));
+        }
+        Url::from_file_path(document)
+            .map(|url| url.into())
+            .map_err(|()| io::Error::new(io::ErrorKind::InvalidInput, "invalid document path"))
+    }
 }
 
 /// Registry of active language servers, keyed by workspace and language.
@@ -258,6 +280,75 @@ impl LspRegistry {
     ) -> io::Result<()> {
         let key = LspKey::new(language, workspace_root)?;
         self.notify_key(&key, method, params)
+    }
+
+    pub fn document_open(
+        &self,
+        language: &str,
+        workspace_root: &str,
+        path: &str,
+        text: String,
+        version: u64,
+    ) -> io::Result<()> {
+        let key = LspKey::new(language, workspace_root)?;
+        let uri = key.document_uri(path)?;
+        self.notify_key(
+            &key,
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {"uri": uri, "languageId": language, "version": version, "text": text}
+            }),
+        )
+    }
+
+    pub fn document_change(
+        &self,
+        language: &str,
+        workspace_root: &str,
+        path: &str,
+        text: String,
+        version: u64,
+    ) -> io::Result<()> {
+        let key = LspKey::new(language, workspace_root)?;
+        let uri = key.document_uri(path)?;
+        self.notify_key(
+            &key,
+            "textDocument/didChange",
+            serde_json::json!({
+                "textDocument": {"uri": uri, "version": version},
+                "contentChanges": [{"text": text}],
+            }),
+        )
+    }
+
+    pub fn document_save(
+        &self,
+        language: &str,
+        workspace_root: &str,
+        path: &str,
+    ) -> io::Result<()> {
+        let key = LspKey::new(language, workspace_root)?;
+        let uri = key.document_uri(path)?;
+        self.notify_key(
+            &key,
+            "textDocument/didSave",
+            serde_json::json!({"textDocument": {"uri": uri}}),
+        )
+    }
+
+    pub fn document_close(
+        &self,
+        language: &str,
+        workspace_root: &str,
+        path: &str,
+    ) -> io::Result<()> {
+        let key = LspKey::new(language, workspace_root)?;
+        let uri = key.document_uri(path)?;
+        self.notify_key(
+            &key,
+            "textDocument/didClose",
+            serde_json::json!({"textDocument": {"uri": uri}}),
+        )
     }
 
     fn notify_key(&self, key: &LspKey, method: &str, params: serde_json::Value) -> io::Result<()> {

@@ -41,6 +41,8 @@ interface OpenTab {
 type SaveHandler = (path: string, content: string) => Promise<void>;
 type GotoDefHandler = (path: string, line: number, col: number) => void;
 type EmptyHandler = () => void;
+type DocumentHandler = (path: string, content: string) => void;
+type DocumentCloseHandler = (path: string) => void;
 
 interface CodinalEditorAPI {
   hello(): string;
@@ -53,6 +55,9 @@ interface CodinalEditorAPI {
   onSave(handler: SaveHandler): void;
   /** Fired when the last tab closes, so the host can hide the panel. */
   onEmpty(handler: EmptyHandler): void;
+  onDocumentOpen(handler: DocumentHandler): void;
+  onDocumentChange(handler: DocumentHandler): void;
+  onDocumentClose(handler: DocumentCloseHandler): void;
   setTheme(theme: "light" | "dark"): void;
   dispose(): void;
   /** Phase 50: push LSP diagnostics for a file (from lsp-notification events). */
@@ -78,6 +83,9 @@ let _tabs: Map<string, OpenTab> = new Map();
 let _activePath: string | null = null;
 let _saveHandler: SaveHandler | null = null;
 let _emptyHandler: EmptyHandler | null = null;
+let _documentOpenHandler: DocumentHandler | null = null;
+let _documentChangeHandler: DocumentHandler | null = null;
+let _documentCloseHandler: DocumentCloseHandler | null = null;
 let _gotoDefHandler: GotoDefHandler | null = null;
 let _completionFetcher: ((doc: string, pos: number) => Promise<string | null>) | null = null;
 let _theme: "light" | "dark" = "light";
@@ -239,6 +247,7 @@ function createView(path: string, content: string, readOnly: boolean): EditorVie
           tab.dirty = true;
           renderStrip();
         }
+        _documentChangeHandler?.(path, update.state.doc.toString());
       }
     }),
   ];
@@ -293,6 +302,7 @@ const api: CodinalEditorAPI = {
     const forceReadOnly = opts?.readOnly || bytes > MAX_EDITABLE_BYTES;
     const view = createView(path, content, forceReadOnly);
     _tabs.set(path, { path, view, dirty: false, readOnly: forceReadOnly, diagnostics: [], diagVersion: 0 });
+    _documentOpenHandler?.(path, content);
     api.setActive(path);
     renderStrip();
     showActiveView();
@@ -301,6 +311,7 @@ const api: CodinalEditorAPI = {
   closeTab(path: string): void {
     const tab = _tabs.get(path);
     if (!tab) return;
+    _documentCloseHandler?.(path);
     tab.view.destroy();
     _tabs.delete(path);
     if (_activePath === path) {
@@ -338,6 +349,18 @@ const api: CodinalEditorAPI = {
 
   onEmpty(handler: EmptyHandler): void {
     _emptyHandler = handler;
+  },
+
+  onDocumentOpen(handler: DocumentHandler): void {
+    _documentOpenHandler = handler;
+  },
+
+  onDocumentChange(handler: DocumentHandler): void {
+    _documentChangeHandler = handler;
+  },
+
+  onDocumentClose(handler: DocumentCloseHandler): void {
+    _documentCloseHandler = handler;
   },
 
   setTheme(theme: "light" | "dark"): void {

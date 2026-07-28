@@ -149,6 +149,12 @@ def test_lsp_diagnostics_are_scoped_to_the_active_workspace():
     script = (UI / "startup.js").read_text(encoding="utf-8")
 
     assert 'msg.workspaceRoot !== state.workspace' in script
+    assert 'invoke("lsp_document_open"' in script
+    assert 'invoke("lsp_document_change"' in script
+    assert 'invoke("lsp_document_save"' in script
+    assert 'invoke("lsp_document_close"' in script
+    assert 'invoke("lsp_stop"' in script
+    assert "lspServers" in script
 
 
 def test_command_palette_has_separate_quick_open_and_safe_commands():
