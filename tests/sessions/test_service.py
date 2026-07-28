@@ -1270,6 +1270,37 @@ def test_tree_lists_one_bounded_level_without_following_symlinks(tmp_path):
     }
 
 
+def test_workspace_files_are_path_only_bounded_and_do_not_follow_symlinks(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.py").write_text("print('ok')")
+    (workspace / "README.md").write_text("read me")
+    (workspace / ".git").mkdir()
+    (workspace / ".git" / "config").write_text("secret")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    (workspace / "linked").symlink_to(outside, target_is_directory=True)
+    store = MemorySessionStore(
+        SessionRecord(session_id="s1", workspace=str(workspace), model="test-model", mode="interactive")
+    )
+    service = SessionService(store, scratch_base=tmp_path / "scratch")
+
+    indexed = service.workspace_files("s1", limit=20)
+
+    assert indexed == {
+        "ok": True,
+        "root": str(workspace.resolve()),
+        "paths": ["README.md", "src/app.py"],
+        "truncated": False,
+    }
+    assert service.workspace_files("s1", limit=0) == {
+        "ok": False,
+        "error": "invalid file index limit",
+    }
+
+
 def test_primary_tree_root_rejects_retargeted_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     outside = tmp_path / "outside"

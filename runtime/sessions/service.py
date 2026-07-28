@@ -86,6 +86,7 @@ _TREE_IGNORE_NAMES = {
 }
 _TREE_IGNORE_CASEFOLD = {name.casefold() for name in _TREE_IGNORE_NAMES}
 _MAX_TREE_SCAN = 5_000
+_MAX_WORKSPACE_FILE_SCAN = 10_000
 
 
 class SessionStore(Protocol):
@@ -1302,6 +1303,86 @@ class SessionService:
             mode=mode,
             limit=limit,
         )
+
+    def workspace_files(
+        self,
+        session_id: str,
+        *,
+        limit: int = 1_000,
+    ) -> dict[str, Any]:
+        """Return a bounded, path-only index for Quick Open.
+
+        This intentionally does not reuse the lazy tree or content search: the
+        picker needs complete filenames without reading file contents.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 2_000:
+            return {"ok": False, "error": "invalid file index limit"}
+        roots = self._project_roots(session_id)
+        if not roots:
+            return {"ok": False, "error": "project roots unavailable"}
+        root = Path(str(roots[0]["path"])).expanduser().absolute()
+        expected = (int(roots[0]["_device"]), int(roots[0]["_inode"]))
+        paths: list[str] = []
+        scanned = 0
+        try:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+            root_fd = os.open(root, flags)
+            open_fds = {root_fd}
+            try:
+                root_stat = os.fstat(root_fd)
+                if (int(root_stat.st_dev), int(root_stat.st_ino)) != expected:
+                    raise OSError("root identity changed")
+                pending = [(root_fd, ())]
+                while pending and scanned <= _MAX_WORKSPACE_FILE_SCAN and len(paths) < limit:
+                    directory_fd, prefix = pending.pop()
+                    for name in os.listdir(directory_fd):
+                        if name.casefold() in _TREE_IGNORE_CASEFOLD:
+                            continue
+                        metadata = os.stat(
+                            name,
+                            dir_fd=directory_fd,
+                            follow_symlinks=False,
+                        )
+                        if stat.S_ISDIR(metadata.st_mode):
+                            try:
+                                child_fd = os.open(name, flags, dir_fd=directory_fd)
+                            except OSError:
+                                continue
+                            open_fds.add(child_fd)
+                            pending.append((child_fd, (*prefix, name)))
+                            continue
+                        if not stat.S_ISREG(metadata.st_mode):
+                            continue
+                        scanned += 1
+                        if scanned > _MAX_WORKSPACE_FILE_SCAN:
+                            break
+                        try:
+                            file_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory_fd)
+                        except OSError:
+                            continue
+                        try:
+                            if stat.S_ISREG(os.fstat(file_fd).st_mode):
+                                paths.append("/".join((*prefix, name)))
+                        finally:
+                            os.close(file_fd)
+                    if directory_fd != root_fd:
+                        os.close(directory_fd)
+                        open_fds.discard(directory_fd)
+            finally:
+                for descriptor in open_fds:
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+        except (OSError, ValueError):
+            return {"ok": False, "error": "workspace is unavailable"}
+        paths.sort(key=str.casefold)
+        return {
+            "ok": True,
+            "root": str(root),
+            "paths": paths,
+            "truncated": scanned > _MAX_WORKSPACE_FILE_SCAN or len(paths) >= limit,
+        }
 
     def project_index_status(self, session_id: str) -> dict[str, Any]:
         if (
