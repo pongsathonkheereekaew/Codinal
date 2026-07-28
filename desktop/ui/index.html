@@ -269,7 +269,10 @@
               accept="image/png,image/jpeg,image/gif,image/webp,application/pdf" />
             <textarea id="prompt" rows="1"
               placeholder="Ask Codinal to build, debug, or explain…"
-              aria-label="Message Codinal"></textarea>
+              aria-label="Message Codinal" aria-controls="mention-picker"
+              aria-expanded="false"></textarea>
+            <div id="mention-picker" class="mention-picker is-hidden"
+              role="listbox" aria-label="Project context suggestions"></div>
             <div id="routing-resolution" class="routing-resolution"
               aria-live="polite"></div>
             <div class="composer-toolbar">

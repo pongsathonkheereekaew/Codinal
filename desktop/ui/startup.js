@@ -102,6 +102,8 @@ const state = {
   artifactPreviewGeneration: 0,
   editorReady: false,
   palette: { mode: null, items: [], selected: 0, returnFocus: null, filesForSession: null },
+  mention: null,
+  mentionGeneration: 0,
 };
 
 const el = Object.fromEntries(
@@ -156,6 +158,7 @@ const el = Object.fromEntries(
     "goal-dialog", "goal-objective", "goal-requirements",
     "command-palette", "command-palette-close", "command-palette-input",
     "command-palette-status", "command-palette-results",
+    "mention-picker",
     "goal-continuation", "goal-token-budget", "goal-time-budget",
     "create-goal", "goal-evidence-dialog", "goal-evidence-requirement",
     "goal-evidence-kind", "goal-evidence-summary",
@@ -1983,6 +1986,92 @@ async function openPalette(mode) {
   if (!el["command-palette"].open) el["command-palette"].showModal();
   renderPalette();
   el["command-palette-input"].focus();
+}
+
+function closeMentionPicker() {
+  state.mentionGeneration += 1;
+  state.mention = null;
+  el["mention-picker"].replaceChildren();
+  el["mention-picker"].classList.add("is-hidden");
+  el.prompt.setAttribute("aria-expanded", "false");
+  el.prompt.removeAttribute("aria-activedescendant");
+}
+
+async function updateMentionPicker() {
+  const generation = ++state.mentionGeneration;
+  const sessionId = state.sessionId;
+  const beforeCaret = el.prompt.value.slice(0, el.prompt.selectionStart);
+  const match = /(?:^|\s)@([^\s@]*)$/.exec(beforeCaret);
+  if (!match || !sessionId || state.busy) return closeMentionPicker();
+  try {
+    if (state.palette.filesForSession !== sessionId) {
+      const result = await api(`/v1/sessions/${encodeURIComponent(sessionId)}/workspace/files?limit=1000`);
+      if (generation !== state.mentionGeneration || sessionId !== state.sessionId) return;
+      state.palette.files = result.paths || [];
+      state.palette.filesForSession = sessionId;
+    }
+    const query = match[1].toLocaleLowerCase();
+    const files = state.palette.files.filter((path) => path.toLocaleLowerCase().includes(query));
+    const folders = [...new Set(files.flatMap((path) => {
+      const parts = path.split("/");
+      return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"));
+    }))];
+    const root = state.roots.find((candidate) => candidate.primary && candidate.available !== false) || state.roots.find((candidate) => candidate.available !== false);
+    if (!root) return closeMentionPicker();
+    const items = [
+      ...files.slice(0, 20).map((path) => ({ path, kind: "file" })),
+      ...folders.slice(0, 20).map((path) => ({ path, kind: "folder" })),
+    ];
+    if (!items.length) return closeMentionPicker();
+    if (generation !== state.mentionGeneration || sessionId !== state.sessionId) return;
+    state.mention = { start: beforeCaret.lastIndexOf("@"), end: beforeCaret.length, root, items, selected: 0, sessionId };
+    renderMentionPicker();
+  } catch {
+    closeMentionPicker();
+  }
+}
+
+function renderMentionPicker() {
+  const mention = state.mention;
+  if (!mention) return;
+  el["mention-picker"].replaceChildren();
+  mention.items.forEach((item, index) => {
+    const option = node("button", `mention-option${index === mention.selected ? " is-selected" : ""}`, `${item.kind === "folder" ? "Folder" : "File"} · ${item.path}`);
+    option.type = "button";
+    option.role = "option";
+    option.id = `mention-option-${index}`;
+    option.setAttribute("aria-selected", String(index === mention.selected));
+    option.addEventListener("mousedown", (event) => event.preventDefault());
+    option.addEventListener("click", () => selectMention(index));
+    el["mention-picker"].append(option);
+  });
+  el["mention-picker"].classList.remove("is-hidden");
+  el.prompt.setAttribute("aria-expanded", "true");
+  el.prompt.setAttribute("aria-activedescendant", `mention-option-${mention.selected}`);
+}
+
+async function selectMention(index = state.mention?.selected) {
+  const mention = state.mention;
+  const item = mention?.items[index];
+  if (!mention || !item) return;
+  const previous = el.prompt.value;
+  const inserted = `${previous.slice(0, mention.start)}@${item.path}${previous.slice(mention.end)}`;
+  el.prompt.value = inserted;
+  const caret = mention.start + item.path.length + 1;
+  el.prompt.setSelectionRange(caret, caret);
+  closeMentionPicker();
+  resizePrompt();
+  try {
+    await addProjectContext(mention.root, item.path, item.kind);
+    if (!state.contextItems.some((context) => context.kind === item.kind && context.root === mention.root.path && context.path === item.path)) {
+      throw new Error("Project context could not be captured");
+    }
+  } catch (error) {
+    if (state.sessionId === mention.sessionId && el.prompt.value === inserted) {
+      el.prompt.value = previous;
+    }
+    toast(error.message, "error");
+  }
 }
 
 function switchWorkspace(workspace) {
@@ -5102,7 +5191,13 @@ function wireEvents() {
       updateComposer();
     }
   });
-  el.prompt.addEventListener("input", resizePrompt);
+  el.prompt.addEventListener("input", () => {
+    resizePrompt();
+    updateMentionPicker();
+  });
+  el.prompt.addEventListener("blur", () => {
+    setTimeout(closeMentionPicker, 120);
+  });
   el["attach-files"].addEventListener("click", () => {
     el["attachment-input"].click();
   });
@@ -5126,6 +5221,12 @@ function wireEvents() {
     queueAttachments(event.target.files);
   });
   el.prompt.addEventListener("keydown", (event) => {
+    if (state.mention) {
+      if (event.key === "ArrowDown") { event.preventDefault(); state.mention.selected = Math.min(state.mention.selected + 1, state.mention.items.length - 1); renderMentionPicker(); return; }
+      if (event.key === "ArrowUp") { event.preventDefault(); state.mention.selected = Math.max(state.mention.selected - 1, 0); renderMentionPicker(); return; }
+      if (event.key === "Enter") { event.preventDefault(); selectMention(); return; }
+      if (event.key === "Escape") { event.preventDefault(); closeMentionPicker(); return; }
+    }
     if (event.key === "Enter" && event.metaKey) {
       event.preventDefault();
       sendTurn();

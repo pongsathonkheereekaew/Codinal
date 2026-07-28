@@ -2698,6 +2698,10 @@ body.is-dragging .drop-hint {
 .command-palette-option { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; }
 .command-palette-option:hover, .command-palette-option.is-selected { background: var(--surface-subtle); }
 
+.mention-picker { position: absolute; z-index: 8; bottom: calc(100% + 6px); left: 12px; width: min(460px, calc(100% - 24px)); max-height: 250px; overflow: auto; padding: 5px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow); }
+.mention-option { display: block; width: 100%; padding: 7px 9px; border: 0; border-radius: 5px; background: transparent; color: inherit; text-align: left; }
+.mention-option:hover, .mention-option.is-selected { background: var(--surface-subtle); }
+
 .toast {
   padding: 10px 12px;
   border: 1px solid var(--line-strong);

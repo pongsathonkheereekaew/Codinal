@@ -174,6 +174,27 @@ def test_artifact_preview_uses_typed_local_renderers():
     assert "state.sessionId !== sessionId" in script
 
 
+def test_composer_mentions_create_bounded_project_context_not_attachments():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert 'id="mention-picker"' in html
+    assert 'aria-controls="mention-picker"' in html
+    assert 'aria-expanded="false"' in html
+    assert "updateMentionPicker" in script
+    assert "selectMention" in script
+    assert "await addProjectContext(mention.root, item.path, item.kind)" in script
+    assert "mentionGeneration" in script
+    assert "Project context could not be captured" in script
+    assert 'beforeCaret.lastIndexOf("@")' in script
+    assert 'aria-activedescendant' in script
+    mention_handler = script[
+        script.index("async function selectMention"):
+        script.index("async function selectMention") + 800
+    ]
+    assert "state.attachments" not in mention_handler
+
+
 def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
