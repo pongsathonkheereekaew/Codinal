@@ -170,6 +170,17 @@ def test_lsp_symbol_pickers_use_scoped_native_requests_and_shortcuts():
     assert "lspServers" in script
 
 
+def test_settings_offer_local_stirling_configuration_and_health_check():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert 'id="stirling-url"' in html
+    assert 'id="save-stirling-url"' in html
+    assert 'id="test-stirling-url"' in html
+    assert 'api("/v1/settings/stirling"' in script
+    assert 'api("/v1/settings/stirling/health"' in script
+
+
 def test_editor_exposes_exact_lsp_range_navigation():
     editor = (ROOT / "desktop" / "ui-src" / "editor.ts").read_text(encoding="utf-8")
 

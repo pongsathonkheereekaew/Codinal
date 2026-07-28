@@ -34,6 +34,7 @@ class FakeSettings:
         return {
             "model": "openai:gpt-test",
             "routing_profile": self.routing_profile,
+            "stirling_url": self.stirling_url,
         }
 
     def set_routing_profile(self, profile):
@@ -708,6 +709,28 @@ def test_settings_accept_stirling_url_only_through_validated_route():
     }
     assert invalid.status_code == 400
     assert malformed.status_code == 400
+
+
+def test_stirling_health_uses_the_saved_local_endpoint(monkeypatch):
+    monkeypatch.setattr(
+        "runtime.control_plane.app.check_stirling_health",
+        lambda url: {"ok": True, "version": "1.2.3"}
+        if url == "http://localhost:8080"
+        else {"ok": False, "version": None},
+    )
+    client, _sessions, _turns = make_client()
+
+    with client:
+        unconfigured = client.post("/v1/settings/stirling/health", headers=AUTH)
+        client.patch(
+            "/v1/settings/stirling",
+            headers=AUTH,
+            json={"url": "http://localhost:8080"},
+        )
+        healthy = client.post("/v1/settings/stirling/health", headers=AUTH)
+
+    assert unconfigured.status_code == 400
+    assert healthy.json() == {"ok": True, "version": "1.2.3"}
 
 
 def test_turn_routing_returns_exact_resolution_and_uses_selected_model():

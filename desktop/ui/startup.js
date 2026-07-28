@@ -117,6 +117,7 @@ const el = Object.fromEntries(
     "startup", "startup-status", "app", "sidebar", "new-task",
     "session-search", "refresh-sessions", "session-list", "theme-toggle",
     "open-settings", "toggle-sidebar", "task-title", "workspace-path",
+    "stirling-url", "save-stirling-url", "test-stirling-url", "stirling-status",
     "runtime-status", "review-button", "change-count", "conversation",
     "empty-state", "message-list", "prompt", "attach-files",
     "attachment-input", "attachment-list", "choose-workspace",
@@ -315,6 +316,46 @@ async function loadSettings() {
       + `Routing: ${routing.profile || "manual"}.`
     )
     : "The runtime will use its configured default model.";
+  el["stirling-url"].value = state.settings.stirling_url || "";
+  el["stirling-status"].textContent = state.settings.stirling_url
+    ? "Endpoint saved. Test the connection before previewing Office files."
+    : "Not configured.";
+}
+
+async function saveStirlingUrl() {
+  const button = el["save-stirling-url"];
+  button.disabled = true;
+  try {
+    const result = await api("/v1/settings/stirling", {
+      method: "PATCH",
+      body: JSON.stringify({ url: el["stirling-url"].value }),
+    });
+    state.settings = { ...(state.settings || {}), stirling_url: result.stirling_url };
+    el["stirling-url"].value = result.stirling_url || "";
+    el["stirling-status"].textContent = result.stirling_url
+      ? "Endpoint saved. Test the connection before previewing Office files."
+      : "Office previews through Stirling are disabled.";
+  } catch (error) {
+    el["stirling-status"].textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function testStirlingUrl() {
+  const button = el["test-stirling-url"];
+  button.disabled = true;
+  el["stirling-status"].textContent = "Testing local Stirling endpoint…";
+  try {
+    const result = await api("/v1/settings/stirling/health", { method: "POST" });
+    el["stirling-status"].textContent = result.version
+      ? `Connected to Stirling PDF ${result.version}.`
+      : "Connected to Stirling PDF.";
+  } catch (error) {
+    el["stirling-status"].textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadDiagnostics() {
@@ -5351,6 +5392,12 @@ function wireEvents() {
   });
   el["theme-toggle"].addEventListener("click", toggleTheme);
   el["open-settings"].addEventListener("click", openSettings);
+  el["save-stirling-url"].addEventListener("click", () => {
+    saveStirlingUrl().catch((error) => toast(error.message, "error"));
+  });
+  el["test-stirling-url"].addEventListener("click", () => {
+    testStirlingUrl().catch((error) => toast(error.message, "error"));
+  });
   el["mcp-transport"].addEventListener("change", toggleMcpConnectorFields);
   el["connect-mcp-server"].addEventListener("click", () => {
     connectMcpServer().catch((error) => toast(error.message, "error"));

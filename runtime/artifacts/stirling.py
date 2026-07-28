@@ -24,12 +24,41 @@ _MAX_BYTES: Final = 25 * 1024 * 1024
 _CACHE_TTL_SECONDS: Final = 24 * 60 * 60
 _CACHE_MAX_BYTES: Final = 100 * 1024 * 1024
 _TIMEOUT_SECONDS: Final = 60.0
+_HEALTH_TIMEOUT_SECONDS: Final = 5.0
 
 
 @dataclass(frozen=True)
 class StirlingPreview:
     status: str
     pdf_path: Path | None = None
+
+
+def check_stirling_health(
+    stirling_url: str | None,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> dict[str, bool | str | None]:
+    """Check the documented local Stirling status endpoint without relaying errors."""
+    base_url = _validated_base_url(stirling_url)
+    if base_url is None:
+        return {"ok": False, "version": None}
+    try:
+        with httpx.Client(
+            base_url=base_url,
+            timeout=_HEALTH_TIMEOUT_SECONDS,
+            transport=transport,
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = client.get("/api/v1/info/status")
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return {"ok": False, "version": None}
+    if not isinstance(payload, dict) or payload.get("status") != "UP":
+        return {"ok": False, "version": None}
+    version = payload.get("version")
+    return {"ok": True, "version": version if isinstance(version, str) else None}
 
 
 class StirlingConverter:

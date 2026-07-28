@@ -392,6 +392,24 @@
         <section>
           <div class="settings-section-title">
             <div>
+              <h3>Local Office previews</h3>
+              <p>Use a local Stirling PDF service to preview Office files. It is never started automatically.</p>
+            </div>
+          </div>
+          <label>
+            Stirling URL
+            <input id="stirling-url" type="url" inputmode="url"
+              placeholder="http://localhost:8080" autocomplete="off" />
+          </label>
+          <div class="update-actions">
+            <button id="save-stirling-url" type="button">Save endpoint</button>
+            <button id="test-stirling-url" type="button">Test connection</button>
+          </div>
+          <p id="stirling-status" class="settings-copy" aria-live="polite">Not configured.</p>
+        </section>
+        <section>
+          <div class="settings-section-title">
+            <div>
               <h3>MCP servers</h3>
               <p>Connect per-task MCP servers and review attached tools.</p>
             </div>
