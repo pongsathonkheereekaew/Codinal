@@ -149,6 +149,19 @@ def test_lsp_diagnostics_are_scoped_to_the_active_workspace():
     script = (UI / "startup.js").read_text(encoding="utf-8")
 
     assert 'msg.workspaceRoot !== state.workspace' in script
+
+
+def test_lsp_symbol_pickers_use_scoped_native_requests_and_shortcuts():
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert 'invoke("lsp_document_symbols"' in script
+    assert 'invoke("lsp_workspace_symbols"' in script
+    assert 'openSymbolPalette("document-symbols")' in script
+    assert 'openSymbolPalette("workspace-symbols")' in script
+    assert "symbolGeneration" in script
+    assert "symbolRequestGeneration" in script
+    assert "codinalPath" in script
+    assert "revealRange" in script
     assert 'invoke("lsp_document_open"' in script
     assert 'invoke("lsp_document_change"' in script
     assert 'invoke("lsp_document_save"' in script

@@ -105,6 +105,14 @@ impl LspKey {
             .map(|url| url.into())
             .map_err(|()| io::Error::new(io::ErrorKind::InvalidInput, "invalid document path"))
     }
+
+    fn relative_path_from_uri(&self, uri: &str) -> Option<String> {
+        let path = Url::parse(uri).ok()?.to_file_path().ok()?;
+        path.strip_prefix(&self.workspace_root)
+            .ok()?
+            .to_str()
+            .map(|value| value.replace('\\', "/"))
+    }
 }
 
 /// Registry of active language servers, keyed by workspace and language.
@@ -349,6 +357,59 @@ impl LspRegistry {
             "textDocument/didClose",
             serde_json::json!({"textDocument": {"uri": uri}}),
         )
+    }
+
+    pub fn document_symbols(
+        &self,
+        language: &str,
+        workspace_root: &str,
+        path: &str,
+    ) -> io::Result<serde_json::Value> {
+        let key = LspKey::new(language, workspace_root)?;
+        let uri = key.document_uri(path)?;
+        let mut result = self.request_key(
+            &key,
+            "textDocument/documentSymbol",
+            serde_json::json!({"textDocument": {"uri": uri}}),
+            10,
+        )?;
+        if let Some(symbols) = result.as_array_mut() {
+            for symbol in symbols {
+                let uri = symbol
+                    .pointer("/location/uri")
+                    .and_then(serde_json::Value::as_str);
+                if let Some(path) = uri.and_then(|uri| key.relative_path_from_uri(uri)) {
+                    symbol["codinalPath"] = serde_json::Value::String(path);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn workspace_symbols(
+        &self,
+        language: &str,
+        workspace_root: &str,
+        query: &str,
+    ) -> io::Result<serde_json::Value> {
+        let key = LspKey::new(language, workspace_root)?;
+        let mut result = self.request_key(
+            &key,
+            "workspace/symbol",
+            serde_json::json!({"query": query}),
+            10,
+        )?;
+        if let Some(symbols) = result.as_array_mut() {
+            for symbol in symbols {
+                let uri = symbol
+                    .pointer("/location/uri")
+                    .and_then(serde_json::Value::as_str);
+                if let Some(path) = uri.and_then(|uri| key.relative_path_from_uri(uri)) {
+                    symbol["codinalPath"] = serde_json::Value::String(path);
+                }
+            }
+        }
+        Ok(result)
     }
 
     fn notify_key(&self, key: &LspKey, method: &str, params: serde_json::Value) -> io::Result<()> {
