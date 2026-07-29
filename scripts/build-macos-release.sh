@@ -188,7 +188,7 @@ if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
   elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
     xcrun notarytool submit "$NOTARY_ARCHIVE" \
       --apple-id "$APPLE_ID" \
-      --password "@env:APPLE_PASSWORD" \
+      --password "$APPLE_PASSWORD" \
       --team-id "$APPLE_TEAM_ID" \
       --wait
   else
