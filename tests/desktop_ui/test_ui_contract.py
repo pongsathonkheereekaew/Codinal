@@ -126,6 +126,85 @@ def test_desktop_ui_loads_editor_bundle():
     assert "window.CodinalEditor" in script
 
 
+def test_streaming_deltas_are_frame_batched_without_rerendering_history():
+    """Streaming must update only the live assistant message at display cadence."""
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert "scheduleLiveAssistantRender" in script
+    assert "requestAnimationFrame" in script
+    assert ".message.is-streaming .message-content" in script
+
+
+def test_streaming_frame_batcher_updates_only_the_live_message(tmp_path):
+    """Execute the real scheduler source against a tiny DOM-like harness."""
+    import subprocess
+
+    runner = tmp_path / "streaming-batcher.mjs"
+    runner.write_text(
+        """
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const source = fs.readFileSync("desktop/ui/startup.js", "utf8");
+const start = source.indexOf("function scheduleLiveAssistantRender()");
+const end = source.indexOf("\\n\\nfunction findThreadMatches", start);
+assert.ok(start >= 0 && end > start, "streaming scheduler source missing");
+const scheduler = source.slice(start, end);
+const frames = [];
+let historyRenders = 0;
+let liveUpdates = 0;
+let highlightedScrolls = 0;
+const content = {
+  _value: "",
+  set textContent(value) { this._value = value; liveUpdates += 1; },
+};
+const highlighted = { scrollIntoView() { highlightedScrolls += 1; } };
+const messageList = {
+  live: content,
+  highlighted: null,
+  querySelector(selector) {
+    if (selector === ".message.is-streaming .message-content") return this.live;
+    if (selector === ".message.is-search-match") return this.highlighted;
+    return null;
+  },
+};
+const context = {
+  state: { liveAssistant: "a", liveAssistantFrame: null },
+  window: { requestAnimationFrame(callback) { frames.push(callback); return frames.length; } },
+  el: { "message-list": messageList, conversation: { scrollTop: 0, scrollHeight: 99 } },
+  renderConversation() { historyRenders += 1; },
+};
+vm.runInNewContext(`${scheduler}; globalThis.schedule = scheduleLiveAssistantRender;`, context);
+context.schedule();
+context.state.liveAssistant += "b";
+context.schedule();
+context.state.liveAssistant += "c";
+context.schedule();
+assert.equal(frames.length, 1, "multiple deltas share one frame");
+frames.shift()();
+assert.equal(content._value, "abc");
+assert.equal(liveUpdates, 1, "only the live node changes");
+assert.equal(historyRenders, 0, "history is not rebuilt");
+assert.equal(context.el.conversation.scrollTop, 99);
+
+messageList.highlighted = highlighted;
+context.el.conversation.scrollTop = 7;
+context.schedule();
+frames.shift()();
+assert.equal(highlightedScrolls, 1, "active search match keeps its position");
+assert.equal(context.el.conversation.scrollTop, 7, "search does not force bottom scroll");
+
+context.state.liveAssistant = null;
+context.schedule();
+frames.shift()();
+assert.equal(historyRenders, 1, "final or switched stream flushes through normal render");
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["node", str(runner)], check=True, cwd=ROOT)
+
+
 def test_editor_has_native_find_replace_keybindings():
     """Phase 53: every CodeMirror tab exposes Cmd/Ctrl-F and Cmd/Ctrl-H."""
     editor = (ROOT / "desktop" / "ui-src" / "editor.ts").read_text(encoding="utf-8")

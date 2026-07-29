@@ -45,6 +45,7 @@ const state = {
   messages: [],
   socket: null,
   liveAssistant: null,
+  liveAssistantFrame: null,
   activities: new Map(),
   settings: null,
   diff: "",
@@ -2572,7 +2573,7 @@ function handleEvent(event) {
       break;
     case "assistant_delta":
       state.liveAssistant = (state.liveAssistant || "") + (event.text || "");
-      renderConversation();
+      scheduleLiveAssistantRender();
       break;
     case "assistant_message":
       state.liveAssistant = event.text || null;
@@ -3338,6 +3339,34 @@ function renderConversation() {
   }
 }
 
+function scheduleLiveAssistantRender() {
+  if (state.liveAssistantFrame !== null) return;
+  const schedule = window.requestAnimationFrame
+    ? window.requestAnimationFrame.bind(window)
+    : (callback) => window.setTimeout(callback, 16);
+  state.liveAssistantFrame = schedule(() => {
+    state.liveAssistantFrame = null;
+    const liveContent = el["message-list"].querySelector(
+      ".message.is-streaming .message-content"
+    );
+    if (!state.liveAssistant || !liveContent) {
+      renderConversation();
+      return;
+    }
+    // Keep streaming cheap: markdown is parsed once when the persisted message
+    // arrives, not for every token over the socket.
+    liveContent.textContent = state.liveAssistant;
+    const highlighted = el["message-list"].querySelector(
+      ".message.is-search-match"
+    );
+    if (highlighted) {
+      highlighted.scrollIntoView({ block: "center" });
+    } else {
+      el.conversation.scrollTop = el.conversation.scrollHeight;
+    }
+  });
+}
+
 function findThreadMatches(query = el["thread-search"].value) {
   syncThreadSearchMatches(query, true);
   renderConversation();
@@ -3420,6 +3449,7 @@ function renderMessage(
   routing = null
 ) {
   const article = node("article", `message ${role}`);
+  article.classList.toggle("is-streaming", streaming);
   if (Number.isInteger(messageIndex)) {
     article.dataset.messageIndex = String(messageIndex);
     article.classList.toggle(
