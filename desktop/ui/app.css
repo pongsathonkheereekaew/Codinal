@@ -2971,6 +2971,33 @@ body.is-dragging .drop-hint {
   .status-chip {
     display: none;
   }
+
+  .composer-wrap {
+    padding-inline: 12px;
+  }
+
+  .composer {
+    padding-inline: 12px;
+  }
+
+  .composer-options {
+    gap: 2px;
+  }
+
+  .tool-button,
+  .composer select {
+    max-width: 84px;
+    padding-inline: 5px;
+    white-space: nowrap;
+  }
+
+  #model-select {
+    max-width: 112px;
+  }
+
+  .shortcut-hint {
+    display: none;
+  }
 }
 
 @media (max-width: 680px) {

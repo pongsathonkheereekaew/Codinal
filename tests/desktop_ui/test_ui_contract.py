@@ -241,6 +241,14 @@ def test_header_and_composer_use_compact_mac_primitives():
     assert ".composer select {\n  appearance: none;" in css
 
 
+def test_composer_preserves_all_controls_at_the_minimum_macos_window_width():
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    assert "@media (max-width: 900px)" in css
+    assert ".composer-options {\n    gap: 2px;" in css
+    assert "#model-select {\n    max-width: 112px;" in css
+    assert ".shortcut-hint {\n    display: none;" in css
+
+
 def test_every_visible_titlebar_zone_supports_native_window_zoom():
     script = (UI / "startup.js").read_text(encoding="utf-8")
     assert "function zoomFromTitlebar(event)" in script
