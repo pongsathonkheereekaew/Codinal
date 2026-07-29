@@ -1,9 +1,43 @@
 from pathlib import Path
+import struct
+import subprocess
+import sys
+import tempfile
+import zlib
 
 
 ROOT = Path(__file__).resolve().parents[2]
 UI = ROOT / "desktop" / "ui"
 TAURI_CONFIG = ROOT / "desktop" / "src-tauri" / "tauri.conf.json"
+
+
+def _png_top_left_alpha(path: Path) -> int:
+    """Read the top-left alpha byte from our non-interlaced RGBA PNGs."""
+    data = path.read_bytes()
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    offset = 8
+    idat = []
+    while offset < len(data):
+        size = struct.unpack(">I", data[offset : offset + 4])[0]
+        kind = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + size]
+        if kind == b"IHDR":
+            _width, _height, bit_depth, color_type, compression, filter_, interlace = (
+                struct.unpack(">IIBBBBB", payload)
+            )
+            assert (bit_depth, color_type, compression, filter_, interlace) == (
+                8,
+                6,
+                0,
+                0,
+                0,
+            )
+        elif kind == b"IDAT":
+            idat.append(payload)
+        offset += size + 12
+    row = zlib.decompress(b"".join(idat))
+    assert row[0] in {0, 1, 2, 3, 4}
+    return row[4]
 
 
 def test_desktop_ui_has_native_three_pane_product_structure():
@@ -213,6 +247,32 @@ def test_every_visible_titlebar_zone_supports_native_window_zoom():
     assert 'el["task-header"].addEventListener("dblclick", zoomFromTitlebar);' in script
     assert 'el.sidebar.addEventListener("dblclick"' in script
     assert 'event.target.closest(".traffic-spacer, .brand-row")' in script
+
+
+def test_app_icon_uses_a_dock_safe_margin_around_the_monochrome_tile():
+    icon = (ROOT / "desktop" / "src-tauri" / "icons" / "icon.svg").read_text(
+        encoding="utf-8"
+    )
+    assert '<rect x="64" y="64" width="896" height="896"' in icon
+    assert 'fill="#111111"' in icon
+    png = ROOT / "desktop" / "src-tauri" / "icons" / "icon.png"
+    assert _png_top_left_alpha(png) == 0
+    if sys.platform != "darwin":
+        return
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "icon.iconset"
+        subprocess.run(
+            [
+                "iconutil",
+                "-c",
+                "iconset",
+                str(ROOT / "desktop" / "src-tauri" / "icons" / "icon.icns"),
+                "-o",
+                str(output),
+            ],
+            check=True,
+        )
+        assert _png_top_left_alpha(output / "icon_512x512@2x.png") == 0
 
 
 def test_settings_use_a_full_page_mac_layout_not_a_small_modal():
