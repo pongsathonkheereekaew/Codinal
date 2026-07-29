@@ -275,7 +275,12 @@ class SessionService:
             else workspace
         )
         if not selected_workspace:
-            return None
+            # A conversation may start before the user selects a project. Keep
+            # it isolated inside Codinal's own scratch root rather than
+            # granting the agent access to an arbitrary directory.
+            scratch_workspace = self._scratch_base / session_id
+            scratch_workspace.mkdir(parents=True, exist_ok=True)
+            selected_workspace = scratch_workspace
         if record is not None and self._primary_root(record) is None:
             return None
         resolved_workspace = Path(selected_workspace).expanduser().resolve()

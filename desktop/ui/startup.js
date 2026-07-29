@@ -4086,7 +4086,7 @@ async function resolveInteraction(card, interaction, response) {
 async function sendTurn() {
   const input = el.prompt.value.trim();
   if ((!input && !state.attachments.length)
-    || !state.workspace || !state.sessionId || state.busy
+    || !state.sessionId || state.busy
     || state.attachmentsPending || state.contextPending) return;
   const attachments = state.attachments;
   const contexts = state.contextItems;
@@ -4131,7 +4131,7 @@ async function sendTurn() {
       method: "POST",
       body: JSON.stringify({
         input: requestInput,
-        workspace: state.workspace,
+        ...(state.workspace ? { workspace: state.workspace } : {}),
         agent: el["agent-mode"].value,
         mode: el["agent-mode"].value === "plan"
           ? "plan"
@@ -4431,8 +4431,7 @@ async function restartTerminalView() {
 
 function updateComposer() {
   const hasInput = Boolean(el.prompt.value.trim() || state.attachments.length);
-  el["send-turn"].disabled = !state.online || !state.workspace
-    || !state.sessionId || !hasInput || state.busy
+  el["send-turn"].disabled = !state.online || !state.sessionId || !hasInput || state.busy
     || state.attachmentsPending > 0 || state.contextPending
     || state.routingPending;
   el["attach-files"].disabled = state.busy
@@ -6016,7 +6015,11 @@ async function boot() {
     el.app.classList.remove("is-hidden");
     const first = state.sessions.find((session) => !session.archived);
     if (first) await selectSession(first);
-    else updateWorkspaceLabel();
+    else {
+      state.sessionId = `session-${crypto.randomUUID()}`;
+      updateWorkspaceLabel();
+      connectSocket();
+    }
     void settingsLoad;
   } catch (error) {
     el["startup-status"].textContent = `Runtime unavailable: ${error.message}`;

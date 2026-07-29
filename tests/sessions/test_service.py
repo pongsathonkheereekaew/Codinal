@@ -178,7 +178,7 @@ def test_persisted_engine_does_not_consult_live_default_model(tmp_path):
     assert requests[0].model == "persisted:model"
 
 
-def test_new_engine_requires_existing_workspace_and_touches_it(tmp_path):
+def test_new_engine_uses_isolated_scratch_workspace_without_a_project(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     built = []
@@ -190,11 +190,11 @@ def test_new_engine_requires_existing_workspace_and_touches_it(tmp_path):
         engine_factory=lambda request: built.append(request) or engine,
     )
 
-    assert service.get_engine("new") is None
-    assert service.get_engine("new", workspace=workspace) is engine
+    assert service.get_engine("new") is engine
     assert built[0].record is None
-    assert built[0].workspace == workspace.resolve()
-    assert store.touched_workspaces == [str(workspace.resolve())]
+    assert built[0].workspace == (tmp_path / "scratch" / "new").resolve()
+    assert built[0].workspace.is_dir()
+    assert store.touched_workspaces == [str(built[0].workspace)]
 
 
 def test_new_engine_accepts_selected_model_without_overriding_restore(tmp_path):
