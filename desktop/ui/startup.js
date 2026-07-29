@@ -191,13 +191,13 @@ function node(tag, className, text) {
 }
 
 function shortPath(path) {
-  if (!path) return "Choose a workspace to begin";
+  if (!path) return "No project selected";
   const parts = path.split("/").filter(Boolean);
   return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : path;
 }
 
 function basename(path) {
-  return path?.split("/").filter(Boolean).at(-1) || "Workspace";
+  return path?.split("/").filter(Boolean).at(-1) || "Add project";
 }
 
 function formatAge(value) {

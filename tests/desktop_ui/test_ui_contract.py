@@ -233,6 +233,16 @@ def test_empty_workspace_hides_secondary_sidebar_and_routing_chrome():
     assert 'class="routing-resolution is-hidden"' in markup
 
 
+def test_no_project_empty_state_invites_a_conversation_without_a_workspace():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert "Start a conversation now, or add a project" in html
+    assert "No project selected" in html
+    assert 'return "No project selected";' in script
+    assert '|| "Add project"' in script
+
+
 def test_terminal_bundle_loader_retries_and_preserves_xterm_load_order(tmp_path):
     """Load xterm before its addon and allow a transient failure to retry."""
     import subprocess

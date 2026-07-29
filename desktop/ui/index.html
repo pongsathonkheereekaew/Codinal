@@ -103,7 +103,7 @@
             aria-label="Toggle sidebar" title="Toggle sidebar">☰</button>
           <div class="task-identity" data-tauri-drag-region>
             <strong id="task-title">New task</strong>
-            <span id="workspace-path">Choose a workspace to begin</span>
+            <span id="workspace-path">No project selected</span>
           </div>
           <div class="header-actions">
             <button id="return-to-parent" class="secondary-button is-hidden"
@@ -199,7 +199,7 @@
           <div id="empty-state" class="empty-state">
             <div class="empty-mark" aria-hidden="true">C›</div>
             <h1>What would you like to build?</h1>
-            <p>Codinal can inspect, edit, run, and review code inside an isolated workspace.</p>
+            <p>Start a conversation now, or add a project when you need code context.</p>
             <div class="suggestions">
               <button type="button" data-prompt="Inspect this codebase and explain its architecture">
                 <span>⌕</span> Understand this codebase
@@ -285,7 +285,7 @@
                 <button id="choose-workspace" class="tool-button" type="button"
                   title="Choose workspace">
                   <span aria-hidden="true">⌁</span>
-                  <span id="workspace-label">Workspace</span>
+                  <span id="workspace-label">Add project</span>
                 </button>
                 <select id="agent-mode" aria-label="Agent mode">
                   <option value="code">Code</option>
