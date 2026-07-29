@@ -253,7 +253,7 @@ def test_app_icon_uses_a_dock_safe_margin_around_the_monochrome_tile():
     icon = (ROOT / "desktop" / "src-tauri" / "icons" / "icon.svg").read_text(
         encoding="utf-8"
     )
-    assert '<rect x="64" y="64" width="896" height="896"' in icon
+    assert '<rect x="144" y="144" width="736" height="736"' in icon
     assert 'fill="#111111"' in icon
     png = ROOT / "desktop" / "src-tauri" / "icons" / "icon.png"
     assert _png_top_left_alpha(png) == 0
