@@ -5306,6 +5306,10 @@ async function toggleWindowZoom() {
 }
 
 async function openSettings() {
+  if (el["settings-dialog"].open) {
+    el["settings-search"].focus();
+    return;
+  }
   el["settings-dialog"].showModal();
   el["settings-search"].value = "";
   filterSettings();
@@ -5939,6 +5943,10 @@ function wireEvents() {
     });
   }
   document.addEventListener("keydown", (event) => {
+    if (event.metaKey && !event.shiftKey && event.key === ",") {
+      event.preventDefault();
+      openSettings();
+    }
     if (event.metaKey && !event.shiftKey && event.key.toLowerCase() === "p") {
       event.preventDefault();
       openPalette("files");

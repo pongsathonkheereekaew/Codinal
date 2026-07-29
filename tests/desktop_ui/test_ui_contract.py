@@ -210,6 +210,7 @@ def test_header_and_composer_use_compact_mac_primitives():
 def test_settings_use_a_full_page_mac_layout_not_a_small_modal():
     css = (UI / "app.css").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
+    markup = (UI / "index.html").read_text(encoding="utf-8")
     assert ".settings-dialog {\n  width: 100vw;" in css
     assert "height: 100vh;" in css
     assert "grid-template-columns: clamp(238px, 18.75vw, 320px) minmax(0, 1fr);" in css
@@ -217,6 +218,9 @@ def test_settings_use_a_full_page_mac_layout_not_a_small_modal():
     assert 'activateSettingsNav(link.getAttribute("href").slice(1));' in script
     assert "function filterSettings()" in script
     assert 'link.querySelector("span").textContent.trim()' in script
+    assert 'href="#settings-office"' in markup
+    assert 'event.key === ","' in script
+    assert 'if (el["settings-dialog"].open)' in script
 
 
 def test_empty_workspace_hides_secondary_sidebar_and_routing_chrome():
