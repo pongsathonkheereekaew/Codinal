@@ -298,6 +298,48 @@ def test_streaming_deltas_are_frame_batched_without_rerendering_history():
     assert ".message.is-streaming .message-content" in script
 
 
+def test_persisted_conversation_messages_reuse_rendered_dom():
+    """Long histories should not reparse Markdown for unrelated rerenders."""
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert "messageRenderCache: new Map()" in script
+    assert "function renderPersistedMessage(message, index)" in script
+    assert "cached.message === message" in script
+    assert "fragment.append(renderPersistedMessage(message, index));" in script
+    assert "function pruneMessageRenderCache(visible)" in script
+
+
+def test_message_render_cache_prunes_removed_history(tmp_path):
+    """Execute the real pruning helper to prevent stale DOM retention."""
+    import subprocess
+
+    runner = tmp_path / "message-cache-prune.mjs"
+    runner.write_text(
+        """
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const source = fs.readFileSync("desktop/ui/startup.js", "utf8");
+const start = source.indexOf("function pruneMessageRenderCache(visible)");
+const end = source.indexOf("\\n\\nfunction renderConversation", start);
+assert.ok(start >= 0 && end > start, "message cache prune source missing");
+const prune = source.slice(start, end);
+const context = { state: { messageRenderCache: new Map([[0, {}], [3, {}], [9, {}]]) } };
+vm.runInNewContext(`${prune}; globalThis.prune = pruneMessageRenderCache;`, context);
+context.prune([{ index: 0 }, { index: 3 }]);
+assert.deepEqual([...context.state.messageRenderCache.keys()], [0, 3]);
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        ["node", str(runner)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_streaming_frame_batcher_updates_only_the_live_message(tmp_path):
     """Execute the real scheduler source against a tiny DOM-like harness."""
     import subprocess

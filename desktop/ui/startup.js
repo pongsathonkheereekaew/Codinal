@@ -43,6 +43,7 @@ const state = {
   parentSessionId: null,
   workspace: null,
   messages: [],
+  messageRenderCache: new Map(),
   socket: null,
   liveAssistant: null,
   liveAssistantFrame: null,
@@ -2071,6 +2072,7 @@ async function selectSession(session) {
   );
   state.workspace = session.workspace;
   state.messages = [];
+  state.messageRenderCache.clear();
   state.checkpoints = [];
   state.workers = [];
   state.workerGeneration += 1;
@@ -3340,6 +3342,13 @@ async function removeContextRoot(root) {
   }
 }
 
+function pruneMessageRenderCache(visible) {
+  const visibleIndexes = new Set(visible.map(({ index }) => index));
+  for (const index of state.messageRenderCache.keys()) {
+    if (!visibleIndexes.has(index)) state.messageRenderCache.delete(index);
+  }
+}
+
 function renderConversation() {
   if (el["thread-search"].value) {
     syncThreadSearchMatches();
@@ -3353,22 +3362,14 @@ function renderConversation() {
         message.role === "user" || message.role === "assistant"
       )
     );
+  pruneMessageRenderCache(visible);
   el["empty-state"].classList.toggle(
     "is-hidden",
     Boolean(visible.length || state.liveAssistant || state.activities.size)
   );
   const fragment = document.createDocumentFragment();
   for (const { message, index } of visible) {
-    fragment.append(
-      renderMessage(
-        message.role,
-        contentText(message.content),
-        false,
-        index,
-        isSafeForkBoundary(index),
-        message.source?.routing || null
-      )
-    );
+    fragment.append(renderPersistedMessage(message, index));
   }
   if (state.liveAssistant) {
     fragment.append(renderMessage("assistant", state.liveAssistant, true));
@@ -3385,6 +3386,38 @@ function renderConversation() {
   } else {
     el.conversation.scrollTop = el.conversation.scrollHeight;
   }
+}
+
+function renderPersistedMessage(message, index) {
+  const forkable = isSafeForkBoundary(index);
+  const routing = message.source?.routing || null;
+  const cached = state.messageRenderCache.get(index);
+  let article;
+  if (
+    cached
+    && cached.message === message
+    && cached.forkable === forkable
+    && cached.routing === routing
+  ) {
+    article = cached.article;
+  } else {
+    article = renderMessage(
+      message.role,
+      contentText(message.content),
+      false,
+      index,
+      forkable,
+      routing
+    );
+    state.messageRenderCache.set(index, {
+      message, forkable, routing, article,
+    });
+  }
+  article.classList.toggle(
+    "is-search-match",
+    index === state.highlightedMessageIndex
+  );
+  return article;
 }
 
 function scheduleLiveAssistantRender() {
