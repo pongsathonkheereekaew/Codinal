@@ -144,6 +144,21 @@ def test_desktop_ui_defers_terminal_bundle_until_terminal_is_needed():
     assert 'cursor: "#6d4aff"' not in script
 
 
+def test_terminal_stays_out_of_the_initial_conversation_layout():
+    """A blank terminal should not push the Codex-style composer upward."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    assert 'id="terminal-panel" class="terminal-panel is-hidden"' in html
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert "function showTerminalView()" in script
+    assert "function hideTerminalView()" in script
+    assert 'classList.remove("is-hidden")' in script
+    assert 'classList.add("is-hidden")' in script
+    assert 'el.prompt.focus();' in script
+    assert 'classList.contains("is-hidden")' in script
+    assert "terminalViewGeneration" in script
+    assert "if (state.terminal)" in script
+
+
 def test_terminal_bundle_loader_retries_and_preserves_xterm_load_order(tmp_path):
     """Load xterm before its addon and allow a transient failure to retry."""
     import subprocess

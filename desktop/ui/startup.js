@@ -98,6 +98,7 @@ const state = {
   terminal: null, // { term, fitAddon, sessionId, resizeObserver, unlisten* }
   terminalLoad: null,
   terminalOpening: null,
+  terminalViewGeneration: 0,
   mcpServers: [],
   mcpLoadGeneration: 0,
   artifacts: [],
@@ -2252,7 +2253,7 @@ async function openPalette(mode) {
       { label: "Open settings", run: openSettings },
       { label: "Toggle sidebar", run: () => el.app.classList.toggle("sidebar-collapsed") },
       { label: "Open diff", run: () => loadDiff(true) },
-      { label: "Open terminal", run: () => { el["terminal-panel"].scrollIntoView({ block: "nearest" }); el["terminal-restart"].focus(); } },
+      { label: "Open terminal", run: () => showTerminalView().catch((error) => toast(String(error), "error")) },
     ];
   }
   if (!el["command-palette"].open) el["command-palette"].showModal();
@@ -4183,6 +4184,42 @@ function clearTerminalOutput() {
   updateTerminalStatus("Ready");
 }
 
+async function showTerminalView() {
+  state.terminalViewGeneration += 1;
+  el["terminal-panel"].classList.remove("is-hidden");
+  if (state.terminal) {
+    state.terminal.term.focus();
+    return;
+  }
+  const opening = state.terminalOpening;
+  if (opening) {
+    try { await opening; } catch { /* retry below when the earlier open failed */ }
+    if (state.terminal) {
+      state.terminal.term.focus();
+      return;
+    }
+  }
+  await openTerminalView();
+  el["terminal-restart"].focus();
+}
+
+async function hideTerminalView() {
+  const generation = ++state.terminalViewGeneration;
+  el["terminal-panel"].classList.add("is-hidden");
+  await closeTerminalView();
+  const opening = state.terminalOpening;
+  if (opening) {
+    try { await opening; } catch { /* closing should remain best-effort */ }
+    if (
+      state.terminalViewGeneration !== generation
+      || !el["terminal-panel"].classList.contains("is-hidden")
+    ) return;
+    await closeTerminalView();
+  }
+  if (state.terminalViewGeneration !== generation) return;
+  el.prompt.focus();
+}
+
 function setTerminalBusy(running) {
   // Kept as a no-op shim for legacy callers (session switch resets). The new
   // terminal has no "busy" state — it's always interactive.
@@ -4220,6 +4257,7 @@ async function openTerminalViewInner() {
     host.textContent = error.message;
     return;
   }
+  if (el["terminal-panel"].classList.contains("is-hidden")) return;
   const TermCtor = window.Terminal;
   const FitCtor = window.FitAddon?.FitAddon;
   if (!TermCtor || !FitCtor) {
@@ -5713,13 +5751,20 @@ function wireEvents() {
   el["terminal-restart"].addEventListener("click", () => {
     restartTerminalView().catch((error) => toast(String(error), "error"));
   });
-  el["terminal-clear"].addEventListener("click", clearTerminalOutput);
+  el["terminal-clear"].addEventListener("click", () => {
+    hideTerminalView().catch((error) => toast(String(error), "error"));
+  });
   // Lazy-mount the terminal the first time the panel becomes visible.
   const terminalPanel = el["terminal-panel"];
   if (typeof IntersectionObserver !== "undefined" && terminalPanel) {
     const termObserver = new IntersectionObserver((entries) => {
       for (const entry of entries) {
-        if (entry.isIntersecting && !state.terminal && state.workspace) {
+        if (
+          entry.isIntersecting
+          && !terminalPanel.classList.contains("is-hidden")
+          && !state.terminal
+          && state.workspace
+        ) {
           openTerminalView().catch((error) => toast(String(error), "error"));
         }
       }
