@@ -205,6 +205,78 @@ assert.equal(historyRenders, 1, "final or switched stream flushes through normal
     subprocess.run(["node", str(runner)], check=True, cwd=ROOT)
 
 
+def test_boot_does_not_block_first_paint_on_noncritical_settings():
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    settings_start = script.index("const settingsLoad = loadSettings().catch")
+    sessions_ready = script.index("await loadSessions();", settings_start)
+    first_paint = script.index('el.app.classList.remove("is-hidden");', sessions_ready)
+    assert settings_start < sessions_ready < first_paint
+
+
+def test_session_model_wins_over_late_global_settings(tmp_path):
+    import subprocess
+
+    runner = tmp_path / "active-model.mjs"
+    runner.write_text(
+        """
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const source = fs.readFileSync("desktop/ui/startup.js", "utf8");
+const resolverStart = source.indexOf("function resolveActiveModel");
+const settingsEnd = source.indexOf("\\n\\nasync function saveStirlingUrl", resolverStart);
+const selectStart = source.indexOf("function selectModel");
+const selectEnd = source.indexOf("\\n\\nasync function newTask", selectStart);
+assert.ok(resolverStart >= 0 && settingsEnd > resolverStart, "settings source missing");
+assert.ok(selectStart >= 0 && selectEnd > selectStart, "model selection source missing");
+
+function selectElement() {
+  return {
+    options: [], value: "", replaceChildren() { this.options = []; },
+    append(option) { this.options.push(option); },
+  };
+}
+function buildContext(sessionReady) {
+  const modelSelect = selectElement();
+  const routingProfile = selectElement();
+  return {
+    state: {
+      settings: null, sessionId: "active", routingResolution: null,
+      sessions: sessionReady ? [{ session_id: "active", model: "session-model" }] : [],
+    },
+    el: {
+      "model-select": modelSelect, "routing-profile": routingProfile,
+      "model-catalog": { replaceChildren() {}, append() {} },
+      "model-summary": {}, "stirling-url": {}, "stirling-status": {},
+    },
+    node(_tag, _className, text) { return { textContent: text, value: "", selected: false }; },
+    renderRoutingResolution() {},
+    async api() {
+      return { model: "global-model", models: ["global-model", "session-model"],
+        routing: { profiles: [], models: [] }, stirling_url: "" };
+    },
+  };
+}
+async function run(sessionReady) {
+  const context = buildContext(sessionReady);
+  vm.runInNewContext(`${source.slice(resolverStart, settingsEnd)}\\n${source.slice(selectStart, selectEnd)}\\nglobalThis.load = loadSettings; globalThis.select = selectModel;`, context);
+  await context.load();
+  if (!sessionReady) {
+    context.state.sessions = [{ session_id: "active", model: "session-model" }];
+    context.select("session-model");
+  }
+  return context.el["model-select"].value;
+}
+assert.equal(await run(true), "session-model", "late settings preserve an open session model");
+assert.equal(await run(false), "session-model", "later session selection restores its model");
+""",
+        encoding="utf-8",
+    )
+    subprocess.run(["node", str(runner)], check=True, cwd=ROOT)
+
+
 def test_editor_has_native_find_replace_keybindings():
     """Phase 53: every CodeMirror tab exposes Cmd/Ctrl-F and Cmd/Ctrl-H."""
     editor = (ROOT / "desktop" / "ui-src" / "editor.ts").read_text(encoding="utf-8")

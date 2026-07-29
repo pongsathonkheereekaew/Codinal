@@ -252,6 +252,10 @@ async function connect(attemptsRemaining = 30) {
   }
 }
 
+function resolveActiveModel(defaultModel, sessionModel) {
+  return sessionModel || defaultModel || null;
+}
+
 async function loadSettings() {
   state.settings = await api("/v1/settings");
   const routing = state.settings.routing || {};
@@ -261,6 +265,13 @@ async function loadSettings() {
   const models = Array.isArray(state.settings.models)
     ? state.settings.models
     : [state.settings.model].filter(Boolean);
+  const activeSession = state.sessions.find(
+    (session) => session.session_id === state.sessionId
+  );
+  const selectedModel = resolveActiveModel(
+    state.settings.model,
+    activeSession?.model
+  );
   el["model-select"].replaceChildren();
   for (const model of models) {
     const metadata = catalog.get(model);
@@ -269,13 +280,14 @@ async function loadSettings() {
       : model;
     const option = node("option", "", label);
     option.value = model;
-    option.selected = model === state.settings.model;
+    option.selected = model === selectedModel;
     el["model-select"].append(option);
   }
   if (!models.length) {
     const option = node("option", "", "Default model");
     el["model-select"].append(option);
   }
+  if (selectedModel) selectModel(selectedModel);
   el["routing-profile"].replaceChildren();
   for (const profile of routing.profiles || []) {
     const option = node("option", "", profile.label || profile.id);
@@ -5742,7 +5754,12 @@ async function boot() {
   wireEvents();
   try {
     await connect();
-    await Promise.all([loadSettings(), loadSessions()]);
+    // Settings populate secondary controls; the first usable workspace should
+    // not wait on them after the runtime and task list are ready.
+    const settingsLoad = loadSettings().catch((error) => {
+      toast(`Settings unavailable: ${error.message}`, "error");
+    });
+    await loadSessions();
     setTerminalBusy(false);
     el.startup.classList.add("is-hidden");
     el.app.classList.remove("is-hidden");
@@ -5758,6 +5775,7 @@ async function boot() {
         if (ok === "ok") toast("Editor surface ready");
       } catch { /* bridge present but errored — non-fatal for the spike */ }
     }
+    void settingsLoad;
   } catch (error) {
     el["startup-status"].textContent = `Runtime unavailable: ${error.message}`;
   }
