@@ -178,6 +178,30 @@ def test_model_picker_customization_is_idempotent_and_persists(tmp_path):
     assert reborn.add_model("   ") == {"ok": False, "error": "empty model"}
 
 
+def test_discovered_local_models_are_added_in_one_persisted_batch(tmp_path):
+    path = tmp_path / "prefs.json"
+    service = SettingsService(
+        JsonPreferenceStore(path),
+        default_model="openai:gpt-default",
+    )
+
+    result = service.add_models(
+        ["ollama:qwen3:8b", "ollama:llama3.2", "ollama:qwen3:8b"]
+    )
+
+    assert result["ok"] is True
+    assert result["models"] == [
+        "openai:gpt-default",
+        "ollama:qwen3:8b",
+        "ollama:llama3.2",
+    ]
+    reborn = SettingsService(
+        JsonPreferenceStore(path),
+        default_model="openai:gpt-default",
+    )
+    assert reborn.view()["models"] == result["models"]
+
+
 def test_routing_profile_is_validated_and_persists(tmp_path):
     path = tmp_path / "prefs.json"
     service = SettingsService(

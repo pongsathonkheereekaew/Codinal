@@ -40,6 +40,7 @@ from runtime.sandbox import InvalidCommandError, SandboxUnavailableError
 from runtime.path_scope import scopes_overlap
 from runtime.preview import detect_devserver_urls
 from runtime.artifacts import check_stirling_health
+from runtime.providers.ollama import discover_ollama_models
 from runtime.sessions.context import make_project_context_item
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
@@ -909,6 +910,20 @@ def create_control_plane_app(
                 status_code=503,
                 detail="Local Stirling endpoint is unavailable",
             )
+        return result
+
+    @app.post("/v1/settings/ollama/refresh")
+    async def refresh_ollama_models() -> dict[str, Any]:
+        """Discover models only from the fixed local Ollama service."""
+        result = await asyncio.to_thread(discover_ollama_models)
+        models = result["models"]
+        if result["available"] and models:
+            persisted = services.settings.add_models(models)
+            if not persisted.get("ok"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=persisted.get("error", "invalid Ollama models"),
+                )
         return result
 
     @app.get("/v1/sessions")

@@ -431,6 +431,14 @@
           <h3>Models</h3>
           <p id="model-summary" class="settings-copy">Loading model configuration…</p>
           <div id="model-catalog" class="model-catalog"></div>
+          <div class="settings-section-subtitle">
+            <h4>Local Ollama</h4>
+            <p>Discover installed local models. Codinal checks only 127.0.0.1 and never needs an API key.</p>
+          </div>
+          <div class="update-actions">
+            <button id="refresh-ollama-models" type="button">Refresh local models</button>
+          </div>
+          <p id="ollama-status" class="settings-copy" aria-live="polite">Not checked.</p>
         </section>
         <section id="settings-office">
           <div class="settings-section-title">

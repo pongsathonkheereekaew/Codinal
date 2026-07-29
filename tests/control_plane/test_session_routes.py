@@ -49,6 +49,9 @@ class FakeSettings:
         self.stirling_url = url
         return {"ok": True, "stirling_url": url}
 
+    def add_models(self, models):
+        return {"ok": True, "models": list(models)}
+
 
 class FakeRouting:
     def __init__(self):
@@ -681,6 +684,26 @@ def test_settings_expose_and_persist_transparent_routing_profile():
     assert initial.json()["routing"]["profile"] == "manual"
     assert updated.json()["routing"]["profile"] == "balanced"
     assert invalid.status_code == 400
+
+
+def test_settings_refreshes_discovered_loopback_ollama_models(monkeypatch):
+    client, _sessions, _turns = make_client()
+    monkeypatch.setattr(
+        "runtime.control_plane.app.discover_ollama_models",
+        lambda: {
+            "available": True,
+            "models": ["ollama:qwen3:8b", "ollama:llama3.2"],
+        },
+    )
+
+    with client:
+        response = client.post("/v1/settings/ollama/refresh", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "available": True,
+        "models": ["ollama:qwen3:8b", "ollama:llama3.2"],
+    }
 
 
 def test_settings_accept_stirling_url_only_through_validated_route():

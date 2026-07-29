@@ -529,6 +529,7 @@ function buildContext(sessionReady) {
       "model-select": modelSelect, "routing-profile": routingProfile,
       "model-catalog": { replaceChildren() {}, append() {} },
       "model-summary": {}, "stirling-url": {}, "stirling-status": {},
+      "ollama-status": {},
     },
     node(_tag, _className, text) { return { textContent: text, value: "", selected: false }; },
     renderRoutingResolution() {},
@@ -619,6 +620,16 @@ def test_settings_offer_local_stirling_configuration_and_health_check():
     assert 'id="test-stirling-url"' in html
     assert 'api("/v1/settings/stirling"' in script
     assert 'api("/v1/settings/stirling/health"' in script
+
+
+def test_settings_offer_loopback_ollama_model_discovery():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert 'id="refresh-ollama-models"' in html
+    assert 'id="ollama-status"' in html
+    assert "function refreshOllamaModels()" in script
+    assert 'api("/v1/settings/ollama/refresh"' in script
 
 
 def test_editor_exposes_exact_lsp_range_navigation():

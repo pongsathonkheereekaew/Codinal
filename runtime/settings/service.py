@@ -327,6 +327,35 @@ class SettingsService:
         self._persist()
         return {"ok": True, **self.view()}
 
+    def add_models(self, models: Iterable[str]) -> dict[str, Any]:
+        """Persist a batch of discovered models in one atomic preference write."""
+        normalized = list(
+            dict.fromkeys(
+                model.strip()
+                for model in models
+                if isinstance(model, str) and model.strip()
+            )
+        )
+        if any(
+            len(model.encode("utf-8")) > 256
+            or any(ord(character) < 32 for character in model)
+            for model in normalized
+        ):
+            return {"ok": False, "error": "invalid model"}
+        hidden = [
+            item
+            for item in self._string_list("hidden_models")
+            if item not in normalized
+        ]
+        self._set_list("hidden_models", hidden, remove_empty=True)
+        custom = self._string_list("models")
+        for model in normalized:
+            if model not in self._curated_models and model not in custom:
+                custom.append(model)
+        self._preferences["models"] = custom
+        self._persist()
+        return {"ok": True, **self.view()}
+
     def remove_model(self, model: str) -> dict[str, Any]:
         normalized = (model or "").strip()
         self._preferences["models"] = [

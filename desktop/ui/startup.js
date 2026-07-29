@@ -145,7 +145,7 @@ const el = Object.fromEntries(
     "github-create-pr", "github-pr-status",
     "commit-message", "git-stage", "git-commit", "git-log",
     "model-summary", "model-catalog", "update-status", "check-update",
-    "install-update",
+    "install-update", "refresh-ollama-models", "ollama-status",
     "diagnostics-status", "audit-chain-status", "audit-log",
     "copy-support-bundle",
     "provider-list", "toast-region",
@@ -375,6 +375,26 @@ async function testStirlingUrl() {
       : "Connected to Stirling PDF.";
   } catch (error) {
     el["stirling-status"].textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function refreshOllamaModels() {
+  const button = el["refresh-ollama-models"];
+  button.disabled = true;
+  el["ollama-status"].textContent = "Checking local Ollama…";
+  try {
+    const result = await api("/v1/settings/ollama/refresh", { method: "POST" });
+    await loadSettings();
+    el["ollama-status"].textContent = result.available
+      ? result.models.length
+        ? `${result.models.length} local model${result.models.length === 1 ? "" : "s"} ready in the picker.`
+        : "Ollama is running, but it has no downloaded models."
+      : "Ollama is not running at 127.0.0.1:11434.";
+  } catch (error) {
+    el["ollama-status"].textContent = "Could not refresh local models.";
+    toast(error.message, "error");
   } finally {
     button.disabled = false;
   }
@@ -5682,6 +5702,9 @@ function wireEvents() {
   });
   el["test-stirling-url"].addEventListener("click", () => {
     testStirlingUrl().catch((error) => toast(error.message, "error"));
+  });
+  el["refresh-ollama-models"].addEventListener("click", () => {
+    refreshOllamaModels().catch((error) => toast(error.message, "error"));
   });
   el["mcp-transport"].addEventListener("change", toggleMcpConnectorFields);
   el["connect-mcp-server"].addEventListener("click", () => {
