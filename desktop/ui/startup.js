@@ -3450,6 +3450,9 @@ function renderConversationContext(messageCount) {
   el["conversation-context"].classList.toggle(
     "has-activity", Boolean(active)
   );
+  el["conversation-context"].classList.toggle(
+    "is-empty", !messageCount && !active
+  );
   el["empty-state"].classList.toggle(
     "is-empty-workspace", !messageCount && !active
   );

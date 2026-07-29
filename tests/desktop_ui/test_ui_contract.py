@@ -246,6 +246,19 @@ def test_utility_rail_has_separate_environment_and_subagents_views():
     assert ".utility-view.is-hidden" in css
 
 
+def test_empty_task_uses_codex_style_quiet_chrome():
+    """Do not duplicate a task heading above the first-turn canvas."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    css = (UI / "app.css").read_text(encoding="utf-8")
+
+    assert 'id="subagents-button"' in html
+    assert 'aria-label="Open subagents"' in html
+    assert 'title="Open subagents"' in html
+    assert '"is-empty", !messageCount && !active' in script
+    assert ".conversation-context.is-empty { display: none; }" in css
+
+
 def test_task_workspace_keeps_conversation_context_visible_before_messages():
     """An empty task still reads as a workspace rather than a landing page."""
     html = (UI / "index.html").read_text(encoding="utf-8")

@@ -797,6 +797,19 @@ select:focus-visible,
   gap: 6px;
 }
 
+.utility-toggle {
+  border: 0.5px solid var(--line);
+  background: var(--surface);
+  font-size: 16px;
+}
+
+.utility-toggle:hover,
+.utility-toggle[aria-expanded="true"] {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
 .thread-search-controls {
   display: flex;
   align-items: center;
@@ -1240,6 +1253,7 @@ select:focus-visible,
 .conversation-context strong { font-size: 13px; }
 .conversation-context > span { color: var(--muted); font-size: 12px; }
 .conversation-context.has-activity > span { color: var(--success); }
+.conversation-context.is-empty { display: none; }
 
 .empty-state {
   display: grid;
@@ -1251,7 +1265,7 @@ select:focus-visible,
 }
 
 .empty-state.is-empty-workspace {
-  min-height: calc(100% - 50px);
+  min-height: 100%;
   align-content: center;
 }
 
@@ -2532,6 +2546,10 @@ body.is-dragging .drop-hint {
   margin: 54px auto 22px;
   padding: 0;
   border: 0;
+}
+
+.settings-page-header #settings-product-label {
+  display: none;
 }
 
 .settings-shell section {
