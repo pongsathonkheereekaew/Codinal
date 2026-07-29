@@ -182,6 +182,25 @@ def test_environment_panel_is_a_floating_utility_card():
     assert ".review-open .review-panel" in css
     assert "visibility: visible;" in css
     assert 'aria-label="Environment and changes"' in markup
+    assert 'class="environment-overview"' in markup
+    assert 'id="environment-details"' in markup
+
+
+def test_sidebar_uses_quiet_codex_navigation_primitives():
+    """Task navigation must not visually dominate the workspace."""
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    new_task = css.split(".new-task {", 1)[1].split("}\n\n.new-task:hover", 1)[0]
+    assert "background: transparent;" in new_task
+    assert ".new-task:hover {\n  background: var(--surface-hover);" in css
+
+
+def test_header_and_composer_use_compact_mac_primitives():
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    assert ".task-header {" in css
+    assert "min-height: 52px;" in css
+    assert ".composer {" in css
+    assert "border-radius: 16px;" in css
+    assert ".composer select {\n  appearance: none;" in css
 
 
 def test_terminal_bundle_loader_retries_and_preserves_xterm_load_order(tmp_path):

@@ -130,6 +130,7 @@ const el = Object.fromEntries(
     "workspace-label", "agent-mode", "routing-profile", "model-select",
     "routing-resolution", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
+    "environment-open-review", "environment-details",
     "terminal-panel", "terminal-status",
     "terminal-restart", "terminal-clear", "terminal-host",
     "preview-panel", "preview-url", "preview-open", "preview-annotate",
@@ -4805,6 +4806,7 @@ function updateApplyButton() {
 }
 
 function openReview() {
+  el["environment-details"].open = true;
   el.app.classList.add("review-open");
   el["review-panel"].setAttribute("aria-hidden", "false");
 }
@@ -5824,6 +5826,10 @@ function wireEvents() {
   el["review-button"].addEventListener("click", () => loadDiff(true));
   el["refresh-diff"].addEventListener("click", () => loadDiff(false));
   el["close-review"].addEventListener("click", closeReview);
+  el["environment-open-review"].addEventListener("click", () => {
+    el["environment-details"].open = true;
+    el["environment-details"].scrollIntoView({ block: "nearest" });
+  });
   el["apply-changes"].addEventListener("click", applyChanges);
   el["git-stage"].addEventListener("click", () => {
     stageAll().catch((error) => toast(error.message, "error"));
