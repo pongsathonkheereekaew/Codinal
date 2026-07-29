@@ -42,6 +42,7 @@ from runtime.preview import detect_devserver_urls
 from runtime.artifacts import check_stirling_health
 from runtime.providers.ollama import discover_ollama_models
 from runtime.sessions.context import make_project_context_item
+from runtime.security import SecurityScanError
 from runtime.storage import ExportTooLargeError
 from runtime.turns import (
     CodeCheckpointError,
@@ -2577,6 +2578,46 @@ def create_control_plane_app(
                 status_code=409,
                 detail="Git status unavailable",
             ) from None
+
+    @app.get("/v1/security/status")
+    async def security_status() -> dict[str, object]:
+        security = getattr(services, "security", None)
+        if security is None:
+            return {"available": False, "reason": "Security scanning is unavailable."}
+        return await asyncio.to_thread(security.status)
+
+    @app.post("/v1/sessions/{session_id}/security/scan")
+    async def security_scan(session_id: str) -> dict[str, object]:
+        """Run an explicitly requested, bounded working-tree security scan."""
+        _validate_public_session_id(session_id)
+        security = getattr(services, "security", None)
+        if security is None:
+            raise HTTPException(status_code=503, detail="security scanning unavailable")
+        if services.git is None or services.git.load(session_id) is None:
+            raise HTTPException(status_code=404, detail="Git session not found")
+        record = services.git.load(session_id)
+        try:
+            result = await services.turns.mutate_when_idle(
+                session_id,
+                lambda: security.scan(session_id, record.source_root),
+            )
+        except SessionBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        except SecurityScanError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        _audit_action(
+            services,
+            "security",
+            "scan",
+            subject=session_id,
+            payload={
+                "ok": bool(result.get("ok")),
+                "finding_count": int(result.get("finding_count", 0)),
+                "coverage": result.get("coverage", {}).get("status", "unknown"),
+                "max_cost_usd": result.get("max_cost_usd", 0),
+            },
+        )
+        return result
 
     @app.get("/v1/sessions/{session_id}/git/diff")
     async def git_diff(

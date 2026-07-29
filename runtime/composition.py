@@ -29,6 +29,7 @@ from .sessions.service import (
     SessionStore,
 )
 from .settings import JsonPreferenceStore, SettingsService
+from .security import CodexSecurityScanner
 from .turns import TurnCoordinator
 from .workers import WorkerCoordinator, WorkerStore
 from .builds import PlanBuildCoordinator, PlanBuildStore
@@ -77,6 +78,7 @@ class RuntimeServices:
     preview: Any = None
     managed_policy: Any = None
     extensions: Any = None
+    security: CodexSecurityScanner | None = None
 
 
 def compose_runtime(
@@ -108,6 +110,7 @@ def compose_runtime(
     preview: Any = None,
     managed_policy: Any = None,
     extensions: Any = None,
+    security: CodexSecurityScanner | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
     base = Path(data_dir).expanduser().resolve()
@@ -282,4 +285,5 @@ def compose_runtime(
         preview=preview,
         managed_policy=managed_policy,
         extensions=extensions,
+        security=security or CodexSecurityScanner(base),
     )

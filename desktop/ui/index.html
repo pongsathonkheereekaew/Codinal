@@ -338,6 +338,22 @@
             Commit or push <span>›</span>
           </button>
         </section>
+        <section class="environment-security" aria-labelledby="security-scan-title">
+          <div class="environment-security-heading">
+            <div>
+              <span class="eyebrow">Security</span>
+              <h3 id="security-scan-title">Codex Security</h3>
+            </div>
+            <button id="run-security-scan" class="secondary-button" type="button" disabled>
+              Run scan
+            </button>
+          </div>
+          <p id="security-scan-status" class="environment-security-status" aria-live="polite">
+            Loading scanner status…
+          </p>
+          <ol id="security-scan-findings" class="environment-security-findings"
+            aria-label="Security findings"></ol>
+        </section>
         <details id="environment-details" class="environment-details">
           <summary>Review details</summary>
         <section class="git-graph-wrap" aria-label="Branch graph">

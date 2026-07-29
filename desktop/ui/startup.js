@@ -50,6 +50,9 @@ const state = {
   activities: new Map(),
   settings: null,
   diff: "",
+  security: null,
+  securityScan: null,
+  securityLoading: false,
   selectedFiles: new Set(),
   selectedHunks: new Set(),
   previewUrl: "",
@@ -137,6 +140,7 @@ const el = Object.fromEntries(
     "utility-subagents-tab", "utility-environment", "utility-subagents",
     "conversation-context", "conversation-summary",
     "environment-open-review", "environment-details",
+    "run-security-scan", "security-scan-status", "security-scan-findings",
     "terminal-panel", "terminal-status",
     "terminal-restart", "terminal-clear", "terminal-host",
     "preview-panel", "preview-url", "preview-open", "preview-annotate",
@@ -2222,6 +2226,8 @@ async function selectSession(session) {
   );
   state.workspace = session.workspace;
   state.messages = [];
+  state.securityScan = null;
+  state.securityLoading = false;
   state.messageRenderCache.clear();
   state.checkpoints = [];
   state.workers = [];
@@ -2253,6 +2259,7 @@ async function selectSession(session) {
   setTerminalBusy(false);
   renderSessions();
   renderConversation();
+  renderSecurityScan();
   renderCheckpoints();
   renderContextRoots();
   renderProjectTree();
@@ -2648,6 +2655,8 @@ function switchWorkspace(workspace) {
   state.liveAssistant = null;
   state.activities.clear();
   state.diff = "";
+  state.securityScan = null;
+  state.securityLoading = false;
   state.selectedFiles.clear();
   state.selectedHunks.clear();
   state.checkpoints = [];
@@ -2670,6 +2679,7 @@ function switchWorkspace(workspace) {
   renderSessions();
   renderConversation();
   renderDiff();
+  renderSecurityScan();
   renderCheckpoints();
   renderContextRoots();
   renderProjectTree();
@@ -4760,8 +4770,78 @@ async function loadDiff(showPanel = true) {
     loadGitLog(sessionId),
     loadGitStatus(sessionId),
     loadPullRequest(),
+    loadSecurityStatus(),
   ]);
   if (showPanel && state.sessionId === sessionId) openReview();
+}
+
+async function loadSecurityStatus() {
+  try {
+    state.security = await api("/v1/security/status");
+  } catch (error) {
+    state.security = { available: false, reason: error.message };
+  }
+  renderSecurityScan();
+}
+
+function renderSecurityScan() {
+  const ready = Boolean(state.security?.available && state.sessionId);
+  el["run-security-scan"].disabled = !ready || state.securityLoading || state.busy;
+  const findings = state.securityScan?.findings || [];
+  el["security-scan-findings"].replaceChildren();
+  if (state.securityLoading) {
+    el["security-scan-status"].textContent = "Scanning the current working tree…";
+    return;
+  }
+  if (!state.security?.available) {
+    el["security-scan-status"].textContent = state.security?.reason
+      || "Security scanner unavailable.";
+    return;
+  }
+  if (!state.sessionId) {
+    el["security-scan-status"].textContent = "Open a Git workspace to run a scan.";
+    return;
+  }
+  if (!state.securityScan) {
+    el["security-scan-status"].textContent = `Ready. ${state.security.reason || ""} Scans working-tree changes only, cap model cost at $${state.security.max_cost_usd}, and discard raw reports after summarizing.`;
+    return;
+  }
+  const coverage = state.securityScan.coverage?.status || "unknown";
+  el["security-scan-status"].textContent = `${state.securityScan.finding_count || 0} finding(s) · coverage: ${coverage} · budget: $${state.securityScan.max_cost_usd}`;
+  for (const finding of findings) {
+    const item = node("li", "");
+    item.append(
+      node("strong", "", `${finding.severity || "unknown"}: ${finding.title || "Finding"}`),
+      node("small", "", [finding.path, finding.line ? `line ${finding.line}` : ""].filter(Boolean).join(" · "))
+    );
+    el["security-scan-findings"].append(item);
+  }
+}
+
+async function runSecurityScan() {
+  if (!state.sessionId || state.busy || state.securityLoading || !state.security?.available) return;
+  if (!window.confirm(
+    `Run Codex Security on this workspace's working tree? The scan may send code to Codex Security, is limited to $${state.security.max_cost_usd}, and writes results outside the repository.`
+  )) return;
+  const sessionId = state.sessionId;
+  state.securityLoading = true;
+  renderSecurityScan();
+  try {
+    const result = await api(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/security/scan`,
+      { method: "POST" }
+    );
+    if (state.sessionId !== sessionId) return;
+    state.securityScan = result;
+    toast(result.ok ? "Security scan completed" : "Security scan completed with errors", result.ok ? "success" : "error");
+  } catch (error) {
+    if (state.sessionId === sessionId) toast(error.message, "error");
+  } finally {
+    if (state.sessionId === sessionId) {
+      state.securityLoading = false;
+      renderSecurityScan();
+    }
+  }
 }
 
 async function loadCheckpoints(sessionId = state.sessionId) {
@@ -6165,6 +6245,9 @@ function wireEvents() {
   el["utility-environment-tab"].addEventListener("keydown", moveUtilityTab);
   el["utility-subagents-tab"].addEventListener("keydown", moveUtilityTab);
   el["refresh-diff"].addEventListener("click", () => loadDiff(false));
+  el["run-security-scan"].addEventListener("click", () => {
+    runSecurityScan().catch((error) => toast(error.message, "error"));
+  });
   el["close-review"].addEventListener("click", closeReview);
   el["environment-open-review"].addEventListener("click", () => {
     el["environment-details"].open = true;

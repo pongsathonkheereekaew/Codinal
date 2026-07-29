@@ -1114,3 +1114,17 @@ def test_desktop_csp_does_not_allow_inline_script_or_styles():
 
     assert '"withGlobalTauri": true' in config
     assert "'unsafe-inline'" not in config
+
+
+def test_security_scan_is_explicit_and_shows_only_bounded_summary():
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    assert 'id="run-security-scan"' in html
+    assert 'id="security-scan-findings"' in html
+    assert "loadSecurityStatus" in script
+    assert "runSecurityScan" in script
+    assert '"/v1/security/status"' in script
+    assert "/security/scan" in script
+    assert "may send code to Codex Security" in script
+    assert "max_cost_usd" in script

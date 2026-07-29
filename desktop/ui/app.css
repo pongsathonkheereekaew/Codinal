@@ -2176,6 +2176,25 @@ body.is-dragging .drop-hint {
 .environment-action { justify-content: space-between; cursor: default; }
 .environment-action:hover { background: var(--surface-hover); }
 
+.environment-security {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.environment-security-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.environment-security h3 { margin: 2px 0 0; font-size: 14px; }
+.environment-security-status { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
+.environment-security-findings { display: grid; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
+.environment-security-findings li { padding: 7px 8px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--surface-subtle); font-size: 12px; }
+.environment-security-findings small { display: block; margin-top: 2px; color: var(--muted); }
+
 .environment-details { border-top: 1px solid var(--line); }
 .environment-details > summary {
   padding: 11px 16px;
