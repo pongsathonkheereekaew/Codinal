@@ -104,6 +104,7 @@ const state = {
   mcpServers: [],
   mcpLoadGeneration: 0,
   artifacts: [],
+  extensions: [],
   artifactLoadGeneration: 0,
   artifactPreviewGeneration: 0,
   editorReady: false,
@@ -157,6 +158,7 @@ const el = Object.fromEntries(
     "mcp-server-list", "mcp-server-name", "mcp-transport", "mcp-url",
     "mcp-command", "mcp-args", "mcp-cwd", "mcp-include-tools",
     "mcp-exclude-tools", "connect-mcp-server",
+    "extension-list", "extension-manifest", "register-extension", "shortcut-list",
     "artifact-list", "artifact-empty", "artifact-preview",
     "artifact-preview-path",
     "session-dialog", "session-title-input", "rename-session",
@@ -802,6 +804,100 @@ async function loadArtifacts(sessionId = state.sessionId) {
       renderArtifacts();
       throw error;
     }
+  }
+}
+
+async function loadExtensions() {
+  try {
+    state.extensions = await api("/v1/extensions");
+  } catch (error) {
+    state.extensions = [];
+    toast(`Extensions unavailable: ${error.message}`, "error");
+  }
+  renderExtensions();
+}
+
+function renderExtensions() {
+  const host = el["extension-list"];
+  host.replaceChildren();
+  if (!state.extensions.length) {
+    host.append(node("p", "settings-copy", "No local extensions registered."));
+    return;
+  }
+  for (const extension of state.extensions) {
+    const row = node("article", "extension-row");
+    const identity = node("div", "extension-identity");
+    identity.append(
+      node("strong", "", extension.name),
+      node("small", "", `${extension.publisher} · ${extension.version} · ${extension.kind}`),
+      node("small", "extension-permissions", extension.requested_permissions?.length
+        ? `Permissions: ${extension.requested_permissions.join(", ")}`
+        : "No requested permissions")
+    );
+    const enabled = node("input", "");
+    enabled.type = "checkbox";
+    enabled.checked = Boolean(extension.enabled);
+    enabled.setAttribute("role", "switch");
+    enabled.setAttribute("aria-label", `Enable ${extension.id}`);
+    enabled.addEventListener("change", async () => {
+      enabled.disabled = true;
+      try {
+        await api(`/v1/extensions/${encodeURIComponent(extension.id)}`, {
+          method: "PATCH", body: JSON.stringify({ enabled: enabled.checked }),
+        });
+        await loadExtensions();
+      } catch (error) {
+        enabled.checked = !enabled.checked;
+        toast(error.message, "error");
+      } finally {
+        enabled.disabled = false;
+      }
+    });
+    const verify = node("button", "", "Verify");
+    verify.type = "button";
+    verify.addEventListener("click", async () => {
+      verify.disabled = true;
+      try {
+        const result = await api(`/v1/extensions/${encodeURIComponent(extension.id)}/verify`);
+        toast(result.verified ? `${extension.name} provenance verified` : `${extension.name} manifest changed`, result.verified ? "success" : "error");
+      } catch (error) {
+        toast(error.message, "error");
+      } finally {
+        verify.disabled = false;
+      }
+    });
+    const remove = node("button", "remove-extension", "Remove");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      if (!window.confirm(`Remove ${extension.id}?`)) return;
+      remove.disabled = true;
+      try {
+        await api(`/v1/extensions/${encodeURIComponent(extension.id)}`, { method: "DELETE" });
+        await loadExtensions();
+      } catch (error) {
+        toast(error.message, "error");
+        remove.disabled = false;
+      }
+    });
+    const actions = node("div", "extension-actions");
+    actions.append(enabled, verify, remove);
+    row.append(identity, actions);
+    host.append(row);
+  }
+}
+
+function renderShortcutReference() {
+  const shortcuts = [
+    ["New task", "⌘ N"], ["Open settings", "⌘ ,"],
+    ["Quick Open", "⌘ P"], ["Command Palette", "⌘ ⇧ P"],
+    ["Document symbols", "⌘ ⇧ O"], ["Workspace symbols", "⌘ T"],
+    ["Review changes", "⌘ ⇧ D"], ["Send message", "⌘ ↵"],
+  ];
+  el["shortcut-list"].replaceChildren();
+  for (const [label, keys] of shortcuts) {
+    const row = node("div", "shortcut-row");
+    row.append(node("span", "", label), node("kbd", "", keys));
+    el["shortcut-list"].append(row);
   }
 }
 
@@ -5430,9 +5526,11 @@ async function openSettings() {
       renderProviders(),
       loadMcpServers(),
       loadArtifacts(),
+      loadExtensions(),
       loadDiagnostics(),
       loadAuditLog(),
     ]);
+    renderShortcutReference();
   } catch (error) {
     toast(error.message, "error");
   }
@@ -5777,6 +5875,28 @@ function wireEvents() {
   el["settings-back"].addEventListener("click", closeSettings);
   el["close-settings"].addEventListener("click", closeSettings);
   el["settings-search"].addEventListener("input", filterSettings);
+  el["register-extension"].addEventListener("click", async () => {
+    let manifest;
+    try {
+      manifest = JSON.parse(el["extension-manifest"].value);
+    } catch {
+      toast("Extension manifest must be valid JSON", "error");
+      return;
+    }
+    el["register-extension"].disabled = true;
+    try {
+      await api("/v1/extensions", {
+        method: "POST", body: JSON.stringify({ manifest }),
+      });
+      el["extension-manifest"].value = "";
+      await loadExtensions();
+      toast("Extension registered");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      el["register-extension"].disabled = false;
+    }
+  });
   el["settings-dialog"].querySelector("form").addEventListener("submit", (event) => {
     event.preventDefault();
   });

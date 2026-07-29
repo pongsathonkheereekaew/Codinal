@@ -317,6 +317,27 @@ def test_settings_general_uses_functional_codex_style_rows():
     assert ".settings-card > .settings-row + .settings-row" in css
 
 
+def test_settings_exposes_only_real_ecosystem_controls():
+    """Extensions and shortcuts are real; planned product surfaces are inert."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+
+    for element in (
+        "settings-extensions",
+        "extension-list",
+        "extension-manifest",
+        "register-extension",
+        "settings-shortcuts",
+        "shortcut-list",
+        "settings-planned",
+    ):
+        assert f'id="{element}"' in html
+    assert "async function loadExtensions" in script
+    assert 'api("/v1/extensions")' in script
+    assert "function renderShortcutReference" in script
+    assert 'data-planned="true"' in html
+
+
 def test_composer_preserves_all_controls_at_the_minimum_macos_window_width():
     css = (UI / "app.css").read_text(encoding="utf-8")
     assert "@media (max-width: 900px)" in css

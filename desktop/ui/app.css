@@ -2820,6 +2820,104 @@ body.is-dragging .drop-hint {
   margin-top: 13px;
 }
 
+.extension-list,
+.shortcut-list,
+.planned-capability-list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.extension-row,
+.shortcut-row,
+.planned-capability-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 12px;
+  border: 0.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+
+.extension-identity {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.extension-identity strong { font-size: 13px; }
+.extension-identity small { color: var(--muted); font-size: 11px; }
+.extension-permissions { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.extension-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.extension-actions button {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0.5px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.remove-extension { color: var(--danger); }
+
+.extension-actions input[role="switch"] {
+  appearance: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.extension-actions input[role="switch"]::before {
+  content: "";
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: 2px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 140ms ease;
+}
+
+.extension-actions input[role="switch"]:checked { background: var(--accent); }
+.extension-actions input[role="switch"]:checked::before { transform: translateX(12px); }
+
+.extension-manifest-label {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.extension-manifest-label textarea {
+  min-height: 92px;
+  resize: vertical;
+  padding: 9px;
+  border: 0.5px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: 11px/1.45 var(--mono);
+}
+
+.shortcut-row { min-height: 38px; font-size: 13px; }
+.shortcut-row kbd { padding: 3px 7px; border: 0.5px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font: 11px var(--mono); }
+
+.planned-capability-list { padding: 0; list-style: none; }
+.planned-capability-list li { align-items: flex-start; flex-direction: column; }
+.planned-capability-list strong { font-size: 13px; }
+.planned-capability-list span { color: var(--muted); font-size: 12px; line-height: 1.4; }
+
 .model-catalog {
   display: grid;
   gap: 6px;

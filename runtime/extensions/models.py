@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from typing import Any
 
 
 _VALID_KINDS = frozenset({"skill", "plugin", "hook", "mcp", "agent"})
+_MANIFEST_KEYS = frozenset({
+    "kind", "name", "version", "publisher", "requested_permissions",
+})
+MAX_MANIFEST_BYTES = 8 * 1024
 
 
 @dataclass(frozen=True)
@@ -45,6 +50,9 @@ def validate_manifest(manifest: Any) -> dict[str, Any]:
     """Validate the shape of an extension manifest dict. Raises ValueError."""
     if not isinstance(manifest, dict):
         raise ValueError("manifest must be a JSON object")
+    unknown = set(manifest) - _MANIFEST_KEYS
+    if unknown:
+        raise ValueError("manifest contains unsupported fields")
     kind = manifest.get("kind")
     name = manifest.get("name")
     version = manifest.get("version")
@@ -64,4 +72,7 @@ def validate_manifest(manifest: Any) -> dict[str, Any]:
         raise ValueError("requested_permissions must be a list of strings")
     if len(perms) > 64:
         raise ValueError("too many requested_permissions (max 64)")
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"))
+    if len(canonical.encode("utf-8")) > MAX_MANIFEST_BYTES:
+        raise ValueError("manifest is too large")
     return manifest

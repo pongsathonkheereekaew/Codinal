@@ -97,4 +97,13 @@ def test_invalid_manifest_rejected(tmp_path):
     reg.close()
 
 
+def test_manifest_rejects_unknown_or_oversized_payloads(tmp_path):
+    reg = ExtensionRegistry(tmp_path)
+    with pytest.raises(ValueError, match="unsupported"):
+        reg.register(_manifest(unused="x"))
+    with pytest.raises(ValueError, match="too large"):
+        reg.register(_manifest(requested_permissions=["x" * 128] * 64))
+    reg.close()
+
+
 import sqlite3  # noqa: E402 (needed for tamper test)

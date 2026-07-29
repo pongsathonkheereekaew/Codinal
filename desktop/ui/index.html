@@ -424,14 +424,19 @@
           </label>
           <p class="settings-nav-heading">Personal</p>
           <a class="is-current" href="#settings-general">⚙ <span>General</span></a>
-          <a href="#settings-models">◇ <span>Models</span></a>
+          <a href="#settings-models">◇ <span>Models &amp; gateway</span></a>
           <a href="#settings-providers">◌ <span>Providers</span></a>
-          <a href="#settings-integrations">⌘ <span>Integrations</span></a>
+          <a href="#settings-integrations">⌘ <span>Connections</span></a>
           <p class="settings-nav-heading">Workspace</p>
           <a href="#settings-office">▤ <span>Office previews</span></a>
           <a href="#settings-artifacts">▣ <span>Artifacts</span></a>
           <a href="#settings-updates">↻ <span>Updates</span></a>
           <a href="#settings-diagnostics">⊙ <span>Diagnostics</span></a>
+          <p class="settings-nav-heading">Developer</p>
+          <a href="#settings-extensions">✦ <span>Extensions</span></a>
+          <a href="#settings-shortcuts">⌘ <span>Keyboard shortcuts</span></a>
+          <p class="settings-nav-heading">Planned</p>
+          <a href="#settings-planned">○ <span>Future capabilities</span></a>
         </aside>
         <main class="settings-content">
           <header class="settings-page-header">
@@ -557,6 +562,46 @@
             </label>
             <button id="connect-mcp-server" type="button">Connect</button>
           </div>
+        </section>
+        <section id="settings-extensions">
+          <div class="settings-section-title">
+            <div>
+              <h3>Extensions</h3>
+              <p>Register a local manifest, inspect requested permissions, then enable or disable it.</p>
+            </div>
+          </div>
+          <div id="extension-list" class="extension-list" aria-live="polite"></div>
+          <label class="extension-manifest-label">
+            Local extension manifest (JSON)
+            <textarea id="extension-manifest" rows="5" spellcheck="false" maxlength="8192"
+              placeholder='{"kind":"plugin","name":"example","version":"1.0.0","publisher":"local","requested_permissions":[]}'></textarea>
+          </label>
+          <div class="update-actions">
+            <button id="register-extension" type="button">Register manifest</button>
+          </div>
+        </section>
+        <section id="settings-shortcuts">
+          <div class="settings-section-title">
+            <div>
+              <h3>Keyboard shortcuts</h3>
+              <p>Shortcuts currently available in Codinal. Custom remapping is planned.</p>
+            </div>
+          </div>
+          <div id="shortcut-list" class="shortcut-list" aria-label="Keyboard shortcuts"></div>
+        </section>
+        <section id="settings-planned" data-planned="true">
+          <div class="settings-section-title">
+            <div>
+              <h3>Future capabilities</h3>
+              <p>These surfaces are intentionally unavailable until their privacy, approval, and audit contracts are implemented.</p>
+            </div>
+          </div>
+          <ul class="planned-capability-list">
+            <li><strong>Browser &amp; dev-server evidence</strong><span>Requires screenshot, console, network, approval, and audit controls.</span></li>
+            <li><strong>Computer use</strong><span>Requires scoped macOS permission and action approval.</span></li>
+            <li><strong>Voice</strong><span>Requires audio consent, retention, and transcript policy.</span></li>
+            <li><strong>Account &amp; usage</strong><span>Requires identity, entitlement, billing, and privacy services.</span></li>
+          </ul>
         </section>
         <section id="settings-artifacts">
           <div class="settings-section-title">

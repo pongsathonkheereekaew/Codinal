@@ -769,10 +769,11 @@ def create_control_plane_app(
         ext = getattr(services, "extensions", None)
         if ext is None:
             raise HTTPException(status_code=503, detail="extensions unavailable")
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            raise HTTPException(status_code=400, detail="invalid extension manifest") from None
+        body = await _read_bounded_object(
+            request, limit=12 * 1024, detail="invalid extension manifest"
+        )
+        if set(body) != {"manifest"}:
+            raise HTTPException(status_code=400, detail="invalid extension manifest")
         manifest = body.get("manifest") if isinstance(body, dict) else None
         if not isinstance(manifest, dict):
             raise HTTPException(status_code=400, detail="manifest is required")
