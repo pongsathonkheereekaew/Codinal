@@ -23,6 +23,13 @@ class _FinishedProcess:
         return self.returncode
 
 
+def _environment(tmp_path: Path) -> dict[str, str]:
+    executable = tmp_path / "codex-security"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    return {"CODINAL_CODEX_SECURITY_BIN": str(executable)}
+
+
 def _process_factory(command, **kwargs):
     output = Path(command[command.index("--output-dir") + 1])
     (output / "findings.json").write_text(
@@ -45,7 +52,7 @@ def test_scan_is_bounded_and_keeps_results_outside_workspace(tmp_path: Path) -> 
     workspace.mkdir()
     (workspace / ".git").mkdir()
     scanner = CodexSecurityScanner(
-        tmp_path / "data", process_factory=_process_factory, which=lambda name: "/bin/npx"
+        tmp_path / "data", process_factory=_process_factory, environment=_environment(tmp_path)
     )
 
     result = scanner.scan("session-1", workspace)
@@ -62,7 +69,7 @@ def test_scan_is_bounded_and_keeps_results_outside_workspace(tmp_path: Path) -> 
 
 def test_scan_rejects_non_git_workspace(tmp_path: Path) -> None:
     scanner = CodexSecurityScanner(
-        tmp_path / "data", process_factory=_process_factory, which=lambda name: "/bin/npx"
+        tmp_path / "data", process_factory=_process_factory, environment=_environment(tmp_path)
     )
 
     with pytest.raises(SecurityScanError, match="Git workspace"):
@@ -77,11 +84,39 @@ def test_status_never_executes_or_installs_cli(tmp_path: Path) -> None:
         return _FinishedProcess()
 
     scanner = CodexSecurityScanner(
-        tmp_path / "data", process_factory=factory, which=lambda name: "/bin/npx"
+        tmp_path / "data", process_factory=factory, environment=_environment(tmp_path)
     )
 
     assert scanner.status()["available"] is True
     assert calls == []
+
+
+def test_status_rejects_untrusted_relative_executable(tmp_path: Path) -> None:
+    scanner = CodexSecurityScanner(
+        tmp_path / "data", environment={"CODINAL_CODEX_SECURITY_BIN": "./codex-security"}
+    )
+
+    status = scanner.status()
+
+    assert status["available"] is False
+    assert "absolute path" in status["reason"]
+
+
+def test_status_rejects_executable_below_writable_parent(tmp_path: Path) -> None:
+    unsafe = tmp_path / "unsafe"
+    unsafe.mkdir()
+    unsafe.chmod(0o777)
+    executable = unsafe / "codex-security"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    executable.chmod(0o700)
+    scanner = CodexSecurityScanner(
+        tmp_path / "data", environment={"CODINAL_CODEX_SECURITY_BIN": str(executable)}
+    )
+
+    status = scanner.status()
+
+    assert status["available"] is False
+    assert "parent directories" in status["reason"]
 
 
 def test_scan_terminates_when_output_crosses_quota(tmp_path: Path, monkeypatch) -> None:
@@ -98,7 +133,7 @@ def test_scan_terminates_when_output_crosses_quota(tmp_path: Path, monkeypatch) 
         return process
 
     scanner = CodexSecurityScanner(
-        tmp_path / "data", process_factory=quota_factory, which=lambda name: "/bin/npx"
+        tmp_path / "data", process_factory=quota_factory, environment=_environment(tmp_path)
     )
 
     with pytest.raises(SecurityScanError, match="exceeded"):
@@ -140,7 +175,7 @@ def test_scan_kills_stubborn_process_before_removing_output(tmp_path: Path, monk
         return process
 
     scanner = CodexSecurityScanner(
-        tmp_path / "data", process_factory=quota_factory, which=lambda name: "/bin/npx"
+        tmp_path / "data", process_factory=quota_factory, environment=_environment(tmp_path)
     )
 
     with pytest.raises(SecurityScanError, match="exceeded"):

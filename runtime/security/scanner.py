@@ -11,11 +11,13 @@ import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import time
 import uuid
+import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from runtime.storage.migrations import secure_directory
 
@@ -23,6 +25,7 @@ MAX_COST_USD = 5
 SCAN_TIMEOUT_SECONDS = 15 * 60
 MAX_RESULT_BYTES = 2 * 1024 * 1024
 MAX_OUTPUT_BYTES = 20 * 1024 * 1024
+SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 
 
 class SecurityScanError(RuntimeError):
@@ -38,42 +41,44 @@ class CodexSecurityScanner:
         data_dir: str | Path,
         *,
         process_factory: ProcessFactory = subprocess.Popen,
-        which: Callable[[str], str | None] = shutil.which,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         self.base = Path(data_dir).expanduser().resolve() / "security-scans"
         secure_directory(self.base)
         self._process_factory = process_factory
-        self._which = which
+        self._environment = environment if environment is not None else os.environ
 
     def status(self) -> dict[str, object]:
-        npx = self._which("npx")
-        if not npx:
+        executable, reason = self._configured_executable()
+        if executable is None:
             return {
                 "available": False,
-                "reason": "npx is not installed; install Node.js 22+ and Codex Security first.",
+                "reason": reason,
                 "max_cost_usd": MAX_COST_USD,
             }
         return {
             "available": True,
-            "reason": "CLI is checked only after you confirm a scan. Codinal never installs it.",
+            "executable": str(executable),
+            "reason": "Configured executable runs only after you confirm a scan. Codinal never installs it.",
             "max_cost_usd": MAX_COST_USD,
         }
 
     def scan(self, session_id: str, workspace: str | Path) -> dict[str, object]:
-        if not self._which("npx"):
-            raise SecurityScanError("npx is not installed; install Node.js 22+ and Codex Security first.")
+        if not SESSION_ID_RE.fullmatch(session_id):
+            raise SecurityScanError("Invalid security scan session.")
         root = Path(workspace).expanduser().resolve()
         if not root.is_dir() or not (root / ".git").exists():
             raise SecurityScanError("Codex Security requires a Git workspace.")
         output = self.base / session_id / f"scan-{int(time.time())}-{uuid.uuid4().hex[:8]}"
         secure_directory(output.parent)
         secure_directory(output)
-        npx = self._which("npx")
-        assert npx is not None  # status() established the invariant.
+        # Validate immediately before execution, after all filesystem setup.
+        executable, reason = self._configured_executable()
+        if executable is None:
+            shutil.rmtree(output, ignore_errors=True)
+            raise SecurityScanError(reason)
         command = [
-            npx,
-            "--no-install",
-            "codex-security",
+            str(executable),
             "scan",
             str(root),
             "--working-tree",
@@ -136,6 +141,28 @@ class CodexSecurityScanner:
             "coverage": _coverage(coverage),
         }
 
+    def _configured_executable(self) -> tuple[Path | None, str]:
+        raw = self._environment.get("CODINAL_CODEX_SECURITY_BIN", "").strip()
+        if not raw:
+            return None, (
+                "Configure CODINAL_CODEX_SECURITY_BIN to the absolute Codex Security executable installed from @openai/codex-security."
+            )
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            return None, "CODINAL_CODEX_SECURITY_BIN must be an absolute path."
+        try:
+            executable = candidate.resolve(strict=True)
+            mode = stat.S_IMODE(executable.stat().st_mode)
+        except OSError:
+            return None, "Configured Codex Security executable is unavailable."
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            return None, "Configured Codex Security executable is not executable."
+        if not _is_trusted_executable_path(executable, mode):
+            return None, (
+                "Configured Codex Security path and its parent directories must be owned by you or root and not group- or world-writable."
+            )
+        return executable, ""
+
 
 def _read_json(path: Path, *, default: object) -> object:
     try:
@@ -184,6 +211,23 @@ def _tree_size(root: Path) -> int:
     except OSError:
         return MAX_OUTPUT_BYTES + 1
     return total
+
+
+def _is_trusted_executable_path(executable: Path, file_mode: int) -> bool:
+    """Reject replacement through a writable parent before execution."""
+    allowed_owners = {os.getuid(), 0}
+    current = executable
+    while True:
+        try:
+            metadata = current.stat()
+        except OSError:
+            return False
+        mode = file_mode if current == executable else stat.S_IMODE(metadata.st_mode)
+        if metadata.st_uid not in allowed_owners or mode & 0o022:
+            return False
+        if current.parent == current:
+            return True
+        current = current.parent
 
 
 def _stop_process(process: Any) -> None:

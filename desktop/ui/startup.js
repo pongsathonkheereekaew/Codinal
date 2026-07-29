@@ -4821,7 +4821,7 @@ function renderSecurityScan() {
 async function runSecurityScan() {
   if (!state.sessionId || state.busy || state.securityLoading || !state.security?.available) return;
   if (!window.confirm(
-    `Run Codex Security on this workspace's working tree? The scan may send code to Codex Security, is limited to $${state.security.max_cost_usd}, and writes results outside the repository.`
+    `Run Codex Security (${state.security.executable}) on this workspace's working tree? The scan may send code to Codex Security, is limited to $${state.security.max_cost_usd}, and writes results outside the repository.`
   )) return;
   const sessionId = state.sessionId;
   state.securityLoading = true;
