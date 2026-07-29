@@ -127,6 +127,93 @@ def test_desktop_ui_defers_editor_bundle_until_a_file_is_opened():
     assert "window.CodinalEditor" in script
 
 
+def test_desktop_ui_defers_terminal_bundle_until_terminal_is_needed():
+    """Keep xterm off the initial startup critical path too."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    assert '<script src="./vendor/xterm.js"></script>' not in html
+    assert '<script src="./vendor/xterm-addon-fit.js"></script>' not in html
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert 'function loadTerminalBundle()' in script
+    assert 'loadScript("./vendor/xterm.js")' in script
+    assert 'await loadTerminalBundle();' in script
+    assert "terminalOpening" in script
+    assert "openTerminalViewInner" in script
+    assert "const opening = state.terminalOpening" in script
+    assert 'await invoke("pty_kill", { sessionId }).catch(() => {});' in script
+    assert 'cursor: "#a78bfa"' not in script
+    assert 'cursor: "#6d4aff"' not in script
+
+
+def test_terminal_bundle_loader_retries_and_preserves_xterm_load_order(tmp_path):
+    """Load xterm before its addon and allow a transient failure to retry."""
+    import subprocess
+
+    runner = tmp_path / "terminal-loader.mjs"
+    runner.write_text(
+        """
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const source = fs.readFileSync("desktop/ui/startup.js", "utf8");
+const start = source.indexOf("function loadScript(src)");
+const end = source.indexOf("\\n\\nfunction updateTerminalStatus", start);
+assert.ok(start >= 0 && end > start, "terminal bundle loader source missing");
+const loader = source.slice(start, end);
+const requested = [];
+const pending = [];
+const context = {
+  state: { terminalLoad: null },
+  window: {},
+  document: {
+    createElement() { return {}; },
+    head: {
+      append(node) {
+        requested.push(node.src);
+        pending.push(node);
+      },
+    },
+  },
+};
+vm.runInNewContext(`${loader}; globalThis.load = loadTerminalBundle;`, context);
+const missingBridge = context.load();
+pending.shift().onload();
+await Promise.resolve();
+pending.shift().onload();
+await assert.rejects(missingBridge, /Terminal module did not initialize/);
+assert.equal(context.state.terminalLoad, null, "a missing terminal bridge must retry");
+const failed = context.load();
+pending.shift().onerror();
+await assert.rejects(failed, /Could not load/);
+assert.equal(context.state.terminalLoad, null, "a failed terminal load must retry");
+const first = context.load();
+const second = context.load();
+assert.equal(first, second, "concurrent callers must share the loader promise");
+context.window.Terminal = function Terminal() {};
+pending.shift().onload();
+await Promise.resolve();
+context.window.FitAddon = { FitAddon: function FitAddon() {} };
+pending.shift().onload();
+await Promise.all([first, second]);
+assert.deepEqual(requested, [
+  "./vendor/xterm.js",
+  "./vendor/xterm-addon-fit.js",
+  "./vendor/xterm.js",
+  "./vendor/xterm.js",
+  "./vendor/xterm-addon-fit.js",
+]);
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        ["node", str(runner)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_editor_bundle_loader_loads_once_and_exposes_the_bridge(tmp_path):
     """Exercise the real lazy loader so concurrent file opens share one request."""
     import subprocess

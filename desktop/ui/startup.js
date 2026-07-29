@@ -96,6 +96,8 @@ const state = {
   routingPending: false,
   terminalRunning: false,
   terminal: null, // { term, fitAddon, sessionId, resizeObserver, unlisten* }
+  terminalLoad: null,
+  terminalOpening: null,
   mcpServers: [],
   mcpLoadGeneration: 0,
   artifacts: [],
@@ -4142,6 +4144,34 @@ async function stopTurn() {
 // Resize is observed via ResizeObserver and forwarded via `pty_resize`.
 // Teardown on workspace/session switch kills the PTY and disposes the term.
 
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`Could not load ${src}`));
+    document.head.append(script);
+  });
+}
+
+function loadTerminalBundle() {
+  if (window.Terminal && window.FitAddon?.FitAddon) return Promise.resolve();
+  if (state.terminalLoad) return state.terminalLoad;
+  state.terminalLoad = loadScript("./vendor/xterm.js")
+    .then(() => loadScript("./vendor/xterm-addon-fit.js"))
+    .then(() => {
+      if (!window.Terminal || !window.FitAddon?.FitAddon) {
+        throw new Error("Terminal module did not initialize");
+      }
+    })
+    .catch((error) => {
+      state.terminalLoad = null;
+      throw error;
+    });
+  return state.terminalLoad;
+}
+
 function updateTerminalStatus(status) {
   el["terminal-status"].textContent = status;
 }
@@ -4170,10 +4200,25 @@ function decodeBase64ToBytes(b64) {
 /** Mount xterm.js + open a PTY session for the current workspace. */
 async function openTerminalView() {
   if (!invoke || !state.workspace) return;
+  if (state.terminalOpening) return state.terminalOpening;
+  state.terminalOpening = openTerminalViewInner().finally(() => {
+    state.terminalOpening = null;
+  });
+  return state.terminalOpening;
+}
+
+async function openTerminalViewInner() {
   const host = el["terminal-host"];
   // If a term is already mounted, dispose it first.
   if (state.terminal?.term) {
     await closeTerminalView();
+  }
+  try {
+    await loadTerminalBundle();
+  } catch (error) {
+    updateTerminalStatus("Terminal unavailable");
+    host.textContent = error.message;
+    return;
   }
   const TermCtor = window.Terminal;
   const FitCtor = window.FitAddon?.FitAddon;
@@ -4187,8 +4232,8 @@ async function openTerminalView() {
     fontFamily: "var(--mono, ui-monospace, Menlo, monospace)",
     fontSize: 12,
     theme: document.documentElement.dataset.theme === "dark"
-      ? { background: "#121212", foreground: "#e0e0e0", cursor: "#a78bfa" }
-      : { background: "#ffffff", foreground: "#212529", cursor: "#6d4aff" },
+      ? { background: "#171717", foreground: "#f5f5f5", cursor: "#f5f5f5" }
+      : { background: "#ffffff", foreground: "#171717", cursor: "#171717" },
     allowProposedApi: true,
   });
   const fitAddon = new FitCtor();
@@ -4252,9 +4297,17 @@ async function openTerminalView() {
       cols,
       rows,
     });
+    // The view may have been closed while the PTY was starting (for example,
+    // Restart or a task switch). Tear down that orphaned session instead of
+    // reviving a disposed terminal.
+    if (state.terminal?.sessionId !== sessionId) {
+      await invoke("pty_kill", { sessionId }).catch(() => {});
+      return;
+    }
     updateTerminalStatus("Live");
     term.focus();
   } catch (error) {
+    if (state.terminal?.sessionId !== sessionId) return;
     updateTerminalStatus("Failed");
     term.write(`\x1b[31mFailed to open terminal: ${String(error)}\x1b[0m\r\n`);
   }
@@ -4277,6 +4330,13 @@ async function closeTerminalView() {
 
 async function restartTerminalView() {
   await closeTerminalView();
+  // If Restart interrupted an in-flight PTY open, let that operation settle
+  // before creating the replacement. Otherwise openTerminalView would return
+  // the old promise and leave no mounted terminal after it finishes.
+  const opening = state.terminalOpening;
+  if (opening) {
+    try { await opening; } catch { /* the replacement below may still open */ }
+  }
   await openTerminalView();
 }
 
