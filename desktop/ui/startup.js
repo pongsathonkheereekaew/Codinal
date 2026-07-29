@@ -5324,6 +5324,11 @@ async function toggleWindowZoom() {
   }
 }
 
+function zoomFromTitlebar(event) {
+  if (event.target.closest("button, input, select, textarea, a")) return;
+  toggleWindowZoom();
+}
+
 async function openSettings() {
   if (el["settings-dialog"].open) {
     el["settings-search"].focus();
@@ -5783,9 +5788,10 @@ function wireEvents() {
   el["toggle-sidebar"].addEventListener("click", () => {
     el.app.classList.toggle("sidebar-collapsed");
   });
-  el["task-header"].addEventListener("dblclick", (event) => {
-    if (event.target.closest("button, input, select, textarea, a")) return;
-    toggleWindowZoom();
+  el["task-header"].addEventListener("dblclick", zoomFromTitlebar);
+  el.sidebar.addEventListener("dblclick", (event) => {
+    if (!event.target.closest(".traffic-spacer, .brand-row")) return;
+    zoomFromTitlebar(event);
   });
   el["command-palette-close"].addEventListener("click", closePalette);
   el["command-palette-input"].addEventListener("input", () => {

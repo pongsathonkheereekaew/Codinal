@@ -207,6 +207,14 @@ def test_header_and_composer_use_compact_mac_primitives():
     assert ".composer select {\n  appearance: none;" in css
 
 
+def test_every_visible_titlebar_zone_supports_native_window_zoom():
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert "function zoomFromTitlebar(event)" in script
+    assert 'el["task-header"].addEventListener("dblclick", zoomFromTitlebar);' in script
+    assert 'el.sidebar.addEventListener("dblclick"' in script
+    assert 'event.target.closest(".traffic-spacer, .brand-row")' in script
+
+
 def test_settings_use_a_full_page_mac_layout_not_a_small_modal():
     css = (UI / "app.css").read_text(encoding="utf-8")
     script = (UI / "startup.js").read_text(encoding="utf-8")
