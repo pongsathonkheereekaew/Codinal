@@ -1222,6 +1222,25 @@ select:focus-visible,
   scroll-behavior: smooth;
 }
 
+.conversation-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 50px;
+  padding: 10px clamp(20px, 4vw, 56px);
+  border-bottom: 0.5px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+}
+
+.conversation-context > div {
+  display: grid;
+  gap: 2px;
+}
+
+.conversation-context strong { font-size: 13px; }
+.conversation-context > span { color: var(--muted); font-size: 12px; }
+.conversation-context.has-activity > span { color: var(--success); }
+
 .empty-state {
   display: grid;
   min-height: 100%;
@@ -1229,6 +1248,11 @@ select:focus-visible,
   justify-items: center;
   padding: 40px;
   text-align: center;
+}
+
+.empty-state.is-empty-workspace {
+  min-height: calc(100% - 50px);
+  align-content: center;
 }
 
 .empty-mark {
@@ -2030,6 +2054,44 @@ body.is-dragging .drop-hint {
   align-items: flex-start;
   justify-content: space-between;
   padding: 18px 16px 12px;
+}
+
+.utility-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 12px 10px;
+  padding: 3px;
+  border: 0.5px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-subtle);
+}
+
+.utility-tabs button {
+  min-height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.utility-tabs button[aria-selected="true"] {
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  color: var(--text);
+}
+
+.utility-view.is-hidden { display: none; }
+
+.utility-view > .worker-panel { border-top: 0; }
+
+.subagents-empty {
+  margin: 0;
+  padding: 0 16px 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .review-header h2,
@@ -3006,6 +3068,22 @@ body.is-dragging .drop-hint {
   .shortcut-hint {
     display: none;
   }
+}
+
+@media (max-width: 1320px) {
+  .app-shell.review-open .composer,
+  .app-shell.review-open .empty-state,
+  .app-shell.review-open .suggestions {
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .app-shell.review-open .composer-wrap { padding-inline: 16px; }
+  .app-shell.review-open .thread-search-controls,
+  .app-shell.review-open .status-chip { display: none; }
+  .app-shell.review-open .header-actions { gap: 3px; }
+  .app-shell.review-open .secondary-button { padding-inline: 7px; }
 }
 
 @media (max-width: 680px) {

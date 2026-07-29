@@ -226,6 +226,48 @@ def test_environment_panel_is_a_codex_style_right_utility_rail():
     assert ">Subagents<" in markup
 
 
+def test_utility_rail_has_separate_environment_and_subagents_views():
+    """Context and delegation must be first-class peer views, not nested chrome."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    css = (UI / "app.css").read_text(encoding="utf-8")
+
+    assert 'id="utility-tabs"' in html
+    assert 'id="utility-environment-tab"' in html
+    assert 'id="utility-subagents-tab"' in html
+    assert 'id="utility-environment"' in html
+    assert 'id="utility-subagents"' in html
+    assert "function selectUtilityView" in script
+    assert "function moveUtilityTab" in script
+    assert "ArrowRight" in script and "ArrowLeft" in script
+    assert "Home" in script and "End" in script
+    assert '"subagents"' in script
+    assert ".utility-tabs" in css
+    assert ".utility-view.is-hidden" in css
+
+
+def test_task_workspace_keeps_conversation_context_visible_before_messages():
+    """An empty task still reads as a workspace rather than a landing page."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    css = (UI / "app.css").read_text(encoding="utf-8")
+
+    assert 'id="conversation-context"' in html
+    assert 'id="conversation-summary"' in html
+    assert "renderConversationContext" in script
+    assert ".conversation-context" in css
+    assert ".empty-state.is-empty-workspace" in css
+
+
+def test_workspace_picker_uses_a_native_dialog_not_an_apple_script_bridge():
+    source = (ROOT / "desktop/src-tauri/src/workspace.rs").read_text(encoding="utf-8")
+    manifest = (ROOT / "desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8")
+
+    assert "rfd::FileDialog" in source
+    assert "osascript" not in source
+    assert 'rfd = "=0.17.2"' in manifest
+
+
 def test_sidebar_uses_quiet_codex_navigation_primitives():
     """Task navigation must not visually dominate the workspace."""
     css = (UI / "app.css").read_text(encoding="utf-8")

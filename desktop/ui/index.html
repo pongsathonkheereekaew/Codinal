@@ -185,6 +185,13 @@
 
         <section id="conversation" class="conversation"
           aria-label="Conversation" aria-live="polite">
+          <header id="conversation-context" class="conversation-context">
+            <div>
+              <span class="eyebrow">Task workspace</span>
+              <strong>Conversation</strong>
+            </div>
+            <span id="conversation-summary">No messages yet</span>
+          </header>
           <div id="empty-state" class="empty-state">
             <div class="empty-mark" aria-hidden="true">C›</div>
             <h1>What would you like to build?</h1>
@@ -302,12 +309,21 @@
         aria-hidden="true">
         <header class="review-header">
           <div>
-            <span class="eyebrow">Environment</span>
-            <h2>Local workspace</h2>
+            <span id="utility-eyebrow" class="eyebrow">Environment</span>
+            <h2 id="utility-title">Local workspace</h2>
           </div>
           <button id="close-review" class="icon-button" type="button"
             aria-label="Close review">×</button>
         </header>
+        <div id="utility-tabs" class="utility-tabs" role="tablist"
+          aria-label="Task utility views">
+          <button id="utility-environment-tab" role="tab" type="button"
+            aria-controls="utility-environment" aria-selected="true">Environment</button>
+          <button id="utility-subagents-tab" role="tab" type="button"
+            aria-controls="utility-subagents" aria-selected="false" tabindex="-1">Subagents</button>
+        </div>
+        <section id="utility-environment" class="utility-view"
+          role="tabpanel" aria-labelledby="utility-environment-tab">
         <section class="environment-overview" aria-label="Workspace summary">
           <div class="environment-row">
             <span>Changes</span>
@@ -320,21 +336,6 @@
           <button id="environment-open-review" class="environment-action" type="button">
             Commit or push <span>›</span>
           </button>
-        </section>
-        <section id="worker-panel" class="worker-panel is-hidden"
-          aria-label="Subagents">
-          <header>
-            <div>
-              <span class="eyebrow">Subagents</span>
-              <strong>Subagents</strong>
-              <span id="worker-summary">No active subagents</span>
-            </div>
-            <button id="new-worker" class="secondary-button" type="button">
-              ＋ Delegate
-            </button>
-          </header>
-          <div id="worker-list" class="worker-list"
-            aria-live="polite"></div>
         </section>
         <details id="environment-details" class="environment-details">
           <summary>Review details</summary>
@@ -384,6 +385,26 @@
           <p>Applying uses a fast-forward or verified merge.</p>
         </div>
         </details>
+        </section>
+        <section id="utility-subagents" class="utility-view is-hidden"
+          role="tabpanel" aria-labelledby="utility-subagents-tab">
+        <section id="worker-panel" class="worker-panel is-hidden"
+          aria-label="Subagents">
+          <header>
+            <div>
+              <span class="eyebrow">Subagents</span>
+              <strong>Subagents</strong>
+              <span id="worker-summary">No active subagents</span>
+            </div>
+            <button id="new-worker" class="secondary-button" type="button">
+              ＋ Delegate
+            </button>
+          </header>
+          <div id="worker-list" class="worker-list"
+            aria-live="polite"></div>
+        </section>
+        <p class="subagents-empty">Delegate bounded work from this task. Active and completed subagents stay here.</p>
+        </section>
       </aside>
     </div>
 

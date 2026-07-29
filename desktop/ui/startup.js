@@ -85,6 +85,7 @@ const state = {
   contextPending: false,
   workers: [],
   workerGeneration: 0,
+  utilityView: "environment",
   plans: [],
   planBuilds: [],
   planBuildGeneration: 0,
@@ -130,6 +131,9 @@ const el = Object.fromEntries(
     "workspace-label", "agent-mode", "routing-profile", "model-select",
     "routing-resolution", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
+    "utility-eyebrow", "utility-title", "utility-environment-tab",
+    "utility-subagents-tab", "utility-environment", "utility-subagents",
+    "conversation-context", "conversation-summary",
     "environment-open-review", "environment-details",
     "terminal-panel", "terminal-status",
     "terminal-restart", "terminal-clear", "terminal-host",
@@ -3409,6 +3413,7 @@ function renderConversation() {
         message.role === "user" || message.role === "assistant"
       )
     );
+  renderConversationContext(visible.length);
   pruneMessageRenderCache(visible);
   el["empty-state"].classList.toggle(
     "is-hidden",
@@ -3433,6 +3438,21 @@ function renderConversation() {
   } else {
     el.conversation.scrollTop = el.conversation.scrollHeight;
   }
+}
+
+function renderConversationContext(messageCount) {
+  const active = state.liveAssistant || state.activities.size;
+  el["conversation-summary"].textContent = active
+    ? "Working"
+    : messageCount
+      ? `${messageCount} messages`
+      : "No messages yet";
+  el["conversation-context"].classList.toggle(
+    "has-activity", Boolean(active)
+  );
+  el["empty-state"].classList.toggle(
+    "is-empty-workspace", !messageCount && !active
+  );
 }
 
 function renderPersistedMessage(message, index) {
@@ -4850,7 +4870,36 @@ function updateApplyButton() {
   }
 }
 
-function openReview() {
+function selectUtilityView(view) {
+  const subagents = view === "subagents";
+  state.utilityView = subagents ? "subagents" : "environment";
+  el["utility-environment"].classList.toggle("is-hidden", subagents);
+  el["utility-subagents"].classList.toggle("is-hidden", !subagents);
+  el["utility-environment-tab"].setAttribute("aria-selected", String(!subagents));
+  el["utility-subagents-tab"].setAttribute("aria-selected", String(subagents));
+  el["utility-environment-tab"].tabIndex = subagents ? -1 : 0;
+  el["utility-subagents-tab"].tabIndex = subagents ? 0 : -1;
+  el["utility-eyebrow"].textContent = subagents ? "Delegation" : "Environment";
+  el["utility-title"].textContent = subagents ? "Subagents" : "Local workspace";
+}
+
+function moveUtilityTab(event) {
+  const tabs = [el["utility-environment-tab"], el["utility-subagents-tab"]];
+  const current = tabs.indexOf(event.currentTarget);
+  const next = event.key === "Home" ? 0
+    : event.key === "End" ? tabs.length - 1
+    : event.key === "ArrowLeft" ? (current + tabs.length - 1) % tabs.length
+    : event.key === "ArrowRight" ? (current + 1) % tabs.length
+    : -1;
+  if (next < 0) return;
+  event.preventDefault();
+  const view = next === 0 ? "environment" : "subagents";
+  selectUtilityView(view);
+  tabs[next].focus();
+}
+
+function openReview(view = state.utilityView) {
+  selectUtilityView(view);
   el["environment-details"].open = true;
   el.app.classList.add("review-open");
   el["review-panel"].setAttribute("aria-hidden", "false");
@@ -4863,7 +4912,7 @@ function closeReview() {
 }
 
 function openSubagents() {
-  openReview();
+  openReview("subagents");
   el["subagents-button"].setAttribute("aria-expanded", "true");
   el["worker-panel"].scrollIntoView({ block: "nearest" });
 }
@@ -5938,6 +5987,10 @@ function wireEvents() {
   el["stop-turn"].addEventListener("click", stopTurn);
   el["review-button"].addEventListener("click", () => loadDiff(true));
   el["subagents-button"].addEventListener("click", openSubagents);
+  el["utility-environment-tab"].addEventListener("click", () => selectUtilityView("environment"));
+  el["utility-subagents-tab"].addEventListener("click", () => selectUtilityView("subagents"));
+  el["utility-environment-tab"].addEventListener("keydown", moveUtilityTab);
+  el["utility-subagents-tab"].addEventListener("keydown", moveUtilityTab);
   el["refresh-diff"].addEventListener("click", () => loadDiff(false));
   el["close-review"].addEventListener("click", closeReview);
   el["environment-open-review"].addEventListener("click", () => {

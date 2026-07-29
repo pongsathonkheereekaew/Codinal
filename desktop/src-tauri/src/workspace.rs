@@ -1,7 +1,6 @@
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::process::Command;
 
 const MAX_PATH_BYTES: usize = 4096;
 
@@ -40,19 +39,11 @@ pub fn validate_workspace_output(output: &[u8]) -> io::Result<PathBuf> {
 
 #[cfg(target_os = "macos")]
 pub fn choose_workspace() -> io::Result<PathBuf> {
-    let output = Command::new("/usr/bin/osascript")
-        .args([
-            "-e",
-            "POSIX path of (choose folder with prompt \"Choose a Codinal workspace\")",
-        ])
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Interrupted,
-            "workspace selection cancelled",
-        ));
-    }
-    validate_workspace_output(&output.stdout)
+    let path = rfd::FileDialog::new()
+        .set_title("Choose a Codinal workspace")
+        .pick_folder()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Interrupted, "workspace selection cancelled"))?;
+    validate_workspace_output(path.to_string_lossy().as_bytes())
 }
 
 #[cfg(not(target_os = "macos"))]
