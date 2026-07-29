@@ -1128,3 +1128,15 @@ def test_security_scan_is_explicit_and_shows_only_bounded_summary():
     assert "/security/scan" in script
     assert "may send code to Codex Security" in script
     assert "max_cost_usd" in script
+
+
+def test_motion_system_uses_shared_tokens_and_respects_reduce_motion():
+    css = (UI / "app.css").read_text(encoding="utf-8")
+
+    assert "--motion-fast: 120ms" in css
+    assert "--motion-panel: 220ms" in css
+    assert "--ease-out: cubic-bezier(0.16, 1, 0.3, 1)" in css
+    assert "button:not(:disabled):active" in css
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    assert ".settings-dialog[open]" in css
+    assert ".review-panel" in css and "visibility 0s linear var(--motion-panel)" in css
