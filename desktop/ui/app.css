@@ -199,6 +199,7 @@ select:focus-visible,
 }
 
 .app-shell {
+  position: relative;
   display: grid;
   grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) 0;
   height: 100%;
@@ -210,14 +211,11 @@ select:focus-visible,
 }
 
 .app-shell.review-open {
-  grid-template-columns:
-    clamp(248px, 18.75vw, 360px)
-    minmax(420px, 1fr)
-    minmax(320px, 40%);
+  grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) 0;
 }
 
 .app-shell.sidebar-collapsed.review-open {
-  grid-template-columns: 0 minmax(420px, 1fr) minmax(320px, 40%);
+  grid-template-columns: 0 minmax(0, 1fr) 0;
 }
 
 .sidebar {
@@ -1987,18 +1985,29 @@ body.is-dragging .drop-hint {
 }
 
 .review-panel {
+  position: absolute;
+  z-index: 8;
+  top: 66px;
+  right: 20px;
+  width: min(344px, calc(100vw - 40px));
+  max-height: calc(100% - 86px);
   min-width: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--line);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 20px;
   background: var(--surface);
+  box-shadow: 0 14px 34px rgb(0 0 0 / 10%);
+  visibility: hidden;
+  pointer-events: none;
   opacity: 0;
   transform: translateX(18px);
   transition: opacity 160ms ease, transform 180ms ease;
 }
 
 .review-open .review-panel {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  display: block;
+  visibility: visible;
+  pointer-events: auto;
   opacity: 1;
   transform: translateX(0);
 }
@@ -2007,7 +2016,7 @@ body.is-dragging .drop-hint {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 20px 16px 12px;
+  padding: 18px 16px 12px;
 }
 
 .review-header h2,
@@ -2762,19 +2771,13 @@ body.is-dragging .drop-hint {
     grid-template-columns: 232px minmax(0, 1fr) 0;
   }
 
-  .app-shell.review-open {
-    grid-template-columns: 0 minmax(0, 1fr) minmax(300px, 46%);
-  }
-
   .status-chip {
     display: none;
   }
 }
 
 @media (max-width: 680px) {
-  .app-shell.review-open {
-    grid-template-columns: 0 0 minmax(0, 1fr);
-  }
+  .review-panel { right: 10px; top: 58px; width: calc(100vw - 20px); max-height: calc(100% - 68px); }
 
   .suggestions {
     grid-template-columns: 1fr;

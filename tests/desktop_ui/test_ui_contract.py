@@ -169,6 +169,21 @@ def test_wide_mac_layout_uses_a_codex_style_reading_column():
     assert ".app-shell.review-open .message-list" in css
 
 
+def test_environment_panel_is_a_floating_utility_card():
+    """The task utility panel overlays the workspace instead of shrinking chat."""
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    markup = (UI / "index.html").read_text(encoding="utf-8")
+    assert ".app-shell {\n  position: relative;" in css
+    assert "position: absolute;" in css
+    assert "width: min(344px, calc(100vw - 40px));" in css
+    assert "border-radius: 20px;" in css
+    assert "visibility: hidden;" in css
+    assert "pointer-events: none;" in css
+    assert ".review-open .review-panel" in css
+    assert "visibility: visible;" in css
+    assert 'aria-label="Environment and changes"' in markup
+
+
 def test_terminal_bundle_loader_retries_and_preserves_xterm_load_order(tmp_path):
     """Load xterm before its addon and allow a transient failure to retry."""
     import subprocess
