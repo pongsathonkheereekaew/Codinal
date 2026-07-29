@@ -7,5 +7,12 @@ constant change flows through automatically (no drift).
 """
 
 from .budgets import BUDGETS, Budget, assert_within_budget
+from .measurement import measure_samples, summarize_samples
 
-__all__ = ["BUDGETS", "Budget", "assert_within_budget"]
+__all__ = [
+    "BUDGETS",
+    "Budget",
+    "assert_within_budget",
+    "measure_samples",
+    "summarize_samples",
+]

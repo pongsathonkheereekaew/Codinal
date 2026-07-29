@@ -58,6 +58,19 @@ merge gate.
 3. Run `pytest tests/perf/ -m perf` to confirm the new limit holds.
 4. Update the baseline below if the change is intentional.
 
+## Local measurement
+
+Run the same service-composition path that the desktop sidecar uses:
+
+```bash
+./.venv/bin/python scripts/measure_runtime_startup.py --samples 5
+```
+
+The JSON output preserves every sample plus min, median, p95, and max. Each
+sample starts a fresh Python process and measures interpreter startup, runtime
+imports, and service composition. Packaged app launch and first model token
+remain separate metrics.
+
 ## Baselines (observed)
 
 Recorded on the dev machine (macOS, M-series) and the CI runner
