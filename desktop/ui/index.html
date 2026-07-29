@@ -386,20 +386,52 @@
     <dialog id="settings-dialog" class="settings-dialog" aria-modal="true"
       aria-labelledby="settings-dialog-title">
       <form method="dialog" class="settings-shell">
-        <header>
-          <div>
-            <span class="eyebrow">Configuration</span>
-            <h2 id="settings-dialog-title">Settings</h2>
+        <aside class="settings-nav" aria-label="Settings categories">
+          <button id="settings-back" class="settings-back" type="button"
+            aria-label="Back to app">
+            ← <span>Back to app</span>
+          </button>
+          <label class="settings-search">
+            <span aria-hidden="true">⌕</span>
+            <span class="sr-only">Search settings</span>
+            <input id="settings-search" type="search" placeholder="Search settings…" />
+          </label>
+          <p class="settings-nav-heading">Personal</p>
+          <a class="is-current" href="#settings-general">⚙ <span>General</span></a>
+          <a href="#settings-models">◇ <span>Models</span></a>
+          <a href="#settings-providers">◌ <span>Providers</span></a>
+          <a href="#settings-integrations">⌘ <span>Integrations</span></a>
+          <p class="settings-nav-heading">Workspace</p>
+          <a href="#settings-artifacts">▣ <span>Artifacts</span></a>
+          <a href="#settings-updates">↻ <span>Updates</span></a>
+          <a href="#settings-diagnostics">⊙ <span>Diagnostics</span></a>
+        </aside>
+        <main class="settings-content">
+          <header class="settings-page-header">
+            <div>
+              <span class="eyebrow">Codinal</span>
+              <h2 id="settings-dialog-title">General</h2>
+            </div>
+            <button id="close-settings" class="icon-button" type="button"
+              aria-label="Close settings">×</button>
+          </header>
+        <section id="settings-general">
+          <h3>General</h3>
+          <div class="settings-row">
+            <div>
+              <strong>Appearance</strong>
+              <p>Switch between the current light and dark appearance.</p>
+            </div>
+            <button id="settings-toggle-theme" class="secondary-button"
+              type="button">Toggle appearance</button>
           </div>
-          <button class="icon-button" value="cancel"
-            aria-label="Close settings">×</button>
-        </header>
-        <section>
+        </section>
+        <section id="settings-models">
           <h3>Models</h3>
           <p id="model-summary" class="settings-copy">Loading model configuration…</p>
           <div id="model-catalog" class="model-catalog"></div>
         </section>
-        <section>
+        <section id="settings-office">
           <div class="settings-section-title">
             <div>
               <h3>Local Office previews</h3>
@@ -417,7 +449,7 @@
           </div>
           <p id="stirling-status" class="settings-copy" aria-live="polite">Not configured.</p>
         </section>
-        <section>
+        <section id="settings-integrations">
           <div class="settings-section-title">
             <div>
               <h3>MCP servers</h3>
@@ -474,7 +506,7 @@
             <button id="connect-mcp-server" type="button">Connect</button>
           </div>
         </section>
-        <section>
+        <section id="settings-artifacts">
           <div class="settings-section-title">
             <div>
               <h3>Session artifacts</h3>
@@ -486,7 +518,7 @@
           <p id="artifact-preview-path" class="settings-copy"></p>
           <div id="artifact-preview" class="artifact-preview" aria-live="polite"></div>
         </section>
-        <section>
+        <section id="settings-updates">
           <div class="settings-section-title update-row">
             <div>
               <h3>Updates</h3>
@@ -501,7 +533,7 @@
             </div>
           </div>
         </section>
-        <section>
+        <section id="settings-providers">
           <div class="settings-section-title">
             <div>
               <h3>Provider credentials</h3>
@@ -510,7 +542,7 @@
           </div>
           <div id="provider-list" class="provider-list"></div>
         </section>
-        <section class="diagnostics-section">
+        <section id="settings-diagnostics" class="diagnostics-section">
           <div class="settings-section-title">
             <div>
               <h3 id="diagnostics-title">Diagnostics</h3>
@@ -527,6 +559,7 @@
           <ol id="audit-log" class="audit-log"
             aria-label="Recent audit events"></ol>
         </section>
+        </main>
       </form>
     </dialog>
 

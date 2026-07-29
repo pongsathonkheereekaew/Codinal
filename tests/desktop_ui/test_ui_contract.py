@@ -13,6 +13,10 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="conversation"' in html
     assert 'id="review-panel"' in html
     assert 'id="settings-dialog"' in html
+    assert 'class="settings-nav"' in html
+    assert 'class="settings-content"' in html
+    assert 'id="settings-toggle-theme"' in html
+    assert 'id="settings-search"' in html
     assert 'id="session-dialog"' in html
     assert 'id="context-roots"' in html
     assert 'id="project-tree"' in html
@@ -201,6 +205,17 @@ def test_header_and_composer_use_compact_mac_primitives():
     assert ".composer {" in css
     assert "border-radius: 16px;" in css
     assert ".composer select {\n  appearance: none;" in css
+
+
+def test_settings_use_a_full_page_mac_layout_not_a_small_modal():
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert ".settings-dialog {\n  width: 100vw;" in css
+    assert "height: 100vh;" in css
+    assert "grid-template-columns: clamp(238px, 18.75vw, 320px) minmax(0, 1fr);" in css
+    assert "@media (max-width: 760px)" in css
+    assert 'activateSettingsNav(link.getAttribute("href").slice(1));' in script
+    assert "function filterSettings()" in script
 
 
 def test_empty_workspace_hides_secondary_sidebar_and_routing_chrome():

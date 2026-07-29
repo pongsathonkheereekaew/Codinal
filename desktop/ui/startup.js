@@ -137,6 +137,9 @@ const el = Object.fromEntries(
     "preview-attach-console", "preview-frame", "annotation-overlay",
     "devserver-chips", "preview-evidence",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
+    "settings-dialog-title",
+    "settings-toggle-theme", "settings-back", "close-settings",
+    "settings-search",
     "checkpoint-select", "restore-scope", "restore-checkpoint",
     "git-branch", "git-graph", "git-push",
     "github-create-pr", "github-pr-status",
@@ -5304,6 +5307,9 @@ async function toggleWindowZoom() {
 
 async function openSettings() {
   el["settings-dialog"].showModal();
+  el["settings-search"].value = "";
+  filterSettings();
+  activateSettingsNav("settings-general");
   try {
     toggleMcpConnectorFields();
     await loadSettings();
@@ -5316,6 +5322,31 @@ async function openSettings() {
     ]);
   } catch (error) {
     toast(error.message, "error");
+  }
+}
+
+function closeSettings() {
+  el["settings-dialog"].close();
+}
+
+function activateSettingsNav(target) {
+  const section = document.getElementById(target);
+  if (!section) return;
+  for (const link of el["settings-dialog"].querySelectorAll(".settings-nav a")) {
+    const active = link.getAttribute("href") === `#${target}`;
+    link.classList.toggle("is-current", active);
+    if (active) el["settings-dialog-title"].textContent = link.textContent.trim();
+  }
+  section.scrollIntoView({ block: "start" });
+}
+
+function filterSettings() {
+  const query = el["settings-search"].value.trim().toLocaleLowerCase();
+  for (const section of el["settings-dialog"].querySelectorAll(".settings-content section")) {
+    section.classList.toggle(
+      "is-hidden",
+      Boolean(query) && !section.textContent.toLocaleLowerCase().includes(query)
+    );
   }
 }
 
@@ -5623,6 +5654,19 @@ function wireEvents() {
     returnToParentSession().catch((error) => toast(error.message, "error"));
   });
   el["theme-toggle"].addEventListener("click", toggleTheme);
+  el["settings-toggle-theme"].addEventListener("click", toggleTheme);
+  el["settings-back"].addEventListener("click", closeSettings);
+  el["close-settings"].addEventListener("click", closeSettings);
+  el["settings-search"].addEventListener("input", filterSettings);
+  el["settings-dialog"].querySelector("form").addEventListener("submit", (event) => {
+    event.preventDefault();
+  });
+  for (const link of el["settings-dialog"].querySelectorAll(".settings-nav a")) {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      activateSettingsNav(link.getAttribute("href").slice(1));
+    });
+  }
   el["open-settings"].addEventListener("click", openSettings);
   el["save-stirling-url"].addEventListener("click", () => {
     saveStirlingUrl().catch((error) => toast(error.message, "error"));
