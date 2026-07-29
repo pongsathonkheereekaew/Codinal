@@ -153,7 +153,7 @@ const el = Object.fromEntries(
     "artifact-preview-path",
     "session-dialog", "session-title-input", "rename-session",
     "pin-session", "archive-session", "delete-session",
-    "context-roots", "project-tree", "add-context-root",
+    "context-panel", "context-roots", "project-tree", "add-context-root",
     "project-search", "project-search-mode", "project-search-status",
     "project-search-results",
     "project-index-status", "project-index-build", "project-index-clear",
@@ -463,6 +463,7 @@ function renderRoutingResolution() {
     "has-degradation",
     Boolean(degradations.length)
   );
+  el["routing-resolution"].classList.toggle("is-hidden", !degradations.length);
   const chain = Array.isArray(resolution?.failover_chain) ? resolution.failover_chain : [];
   const chainText = chain.length > 1
     ? ` · fallback: ${chain.slice(1).join(" → ")}`
@@ -2484,6 +2485,8 @@ function switchWorkspace(workspace) {
   el["return-to-parent"].classList.add("is-hidden");
   state.sessionSelectionGeneration += 1;
   state.workspace = workspace;
+  state.routingResolution = null;
+  renderRoutingResolution();
   state.messages = [];
   state.highlightedMessageIndex = null;
   el["thread-search"].value = "";
@@ -2547,6 +2550,7 @@ async function pickWorkspace() {
 function updateWorkspaceLabel() {
   el["workspace-path"].textContent = shortPath(state.workspace);
   el["workspace-label"].textContent = basename(state.workspace);
+  el["context-panel"].classList.toggle("is-hidden", !state.workspace);
   updateComposer();
 }
 
@@ -5660,6 +5664,8 @@ function wireEvents() {
         cancelProjectSearch(state.sessionId);
         state.sessionId = null;
         state.workspace = null;
+        state.routingResolution = null;
+        renderRoutingResolution();
         state.messages = [];
         state.mcpServers = [];
         state.artifacts = [];

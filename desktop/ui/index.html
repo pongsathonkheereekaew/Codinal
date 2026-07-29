@@ -45,7 +45,7 @@
         <nav id="session-list" class="session-list"
           aria-label="Recent tasks"></nav>
 
-        <section class="context-panel" aria-label="Project context">
+        <section id="context-panel" class="context-panel is-hidden" aria-label="Project context">
           <div class="sidebar-heading">
             <span>Project</span>
             <button id="add-context-root" class="icon-button" type="button"
@@ -273,7 +273,7 @@
               aria-expanded="false"></textarea>
             <div id="mention-picker" class="mention-picker is-hidden"
               role="listbox" aria-label="Project context suggestions"></div>
-            <div id="routing-resolution" class="routing-resolution"
+            <div id="routing-resolution" class="routing-resolution is-hidden"
               aria-live="polite"></div>
             <div class="composer-toolbar">
               <div class="composer-options">

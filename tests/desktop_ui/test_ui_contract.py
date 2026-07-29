@@ -203,6 +203,14 @@ def test_header_and_composer_use_compact_mac_primitives():
     assert ".composer select {\n  appearance: none;" in css
 
 
+def test_empty_workspace_hides_secondary_sidebar_and_routing_chrome():
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    markup = (UI / "index.html").read_text(encoding="utf-8")
+    assert 'el["context-panel"].classList.toggle("is-hidden", !state.workspace);' in script
+    assert 'el["routing-resolution"].classList.toggle("is-hidden", !degradations.length);' in script
+    assert 'class="routing-resolution is-hidden"' in markup
+
+
 def test_terminal_bundle_loader_retries_and_preserves_xterm_load_order(tmp_path):
     """Load xterm before its addon and allow a transient failure to retry."""
     import subprocess

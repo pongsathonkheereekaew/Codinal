@@ -419,6 +419,10 @@ select:focus-visible,
   padding-top: 9px;
 }
 
+.context-panel.is-hidden + .sidebar-footer {
+  border-top: 1px solid var(--line);
+}
+
 .context-roots {
   display: flex;
   flex-wrap: wrap;
