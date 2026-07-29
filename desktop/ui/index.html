@@ -134,23 +134,12 @@
               Review
               <span id="change-count" class="count-badge is-hidden">0</span>
             </button>
+            <button id="subagents-button" class="secondary-button" type="button"
+              aria-controls="worker-panel" aria-expanded="false">
+              Subagents
+            </button>
           </div>
         </header>
-
-        <section id="worker-panel" class="worker-panel is-hidden"
-          aria-label="Background workers">
-          <header>
-            <div>
-              <strong>Parallel workers</strong>
-              <span id="worker-summary">No background work</span>
-            </div>
-            <button id="new-worker" class="secondary-button" type="button">
-              ＋ Delegate
-            </button>
-          </header>
-          <div id="worker-list" class="worker-list"
-            aria-live="polite"></div>
-        </section>
 
         <section id="plan-panel" class="plan-panel is-hidden"
           aria-label="Saved plans">
@@ -331,6 +320,21 @@
           <button id="environment-open-review" class="environment-action" type="button">
             Commit or push <span>›</span>
           </button>
+        </section>
+        <section id="worker-panel" class="worker-panel is-hidden"
+          aria-label="Subagents">
+          <header>
+            <div>
+              <span class="eyebrow">Subagents</span>
+              <strong>Subagents</strong>
+              <span id="worker-summary">No active subagents</span>
+            </div>
+            <button id="new-worker" class="secondary-button" type="button">
+              ＋ Delegate
+            </button>
+          </header>
+          <div id="worker-list" class="worker-list"
+            aria-live="polite"></div>
         </section>
         <details id="environment-details" class="environment-details">
           <summary>Review details</summary>

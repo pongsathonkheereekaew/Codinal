@@ -207,14 +207,14 @@ def test_wide_mac_layout_uses_a_codex_style_reading_column():
     assert ".app-shell.review-open .message-list" in css
 
 
-def test_environment_panel_is_a_floating_utility_card():
-    """The task utility panel overlays the workspace instead of shrinking chat."""
+def test_environment_panel_is_a_codex_style_right_utility_rail():
+    """The wide layout reserves a persistent rail for task context and subagents."""
     css = (UI / "app.css").read_text(encoding="utf-8")
     markup = (UI / "index.html").read_text(encoding="utf-8")
     assert ".app-shell {\n  position: relative;" in css
-    assert "position: absolute;" in css
-    assert "width: min(344px, calc(100vw - 40px));" in css
-    assert "border-radius: 20px;" in css
+    assert "grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) clamp(300px, 18.75vw, 360px);" in css
+    assert "grid-column: 3;" in css
+    assert "border-left: 0.5px solid var(--line);" in css
     assert "visibility: hidden;" in css
     assert "pointer-events: none;" in css
     assert ".review-open .review-panel" in css
@@ -222,6 +222,8 @@ def test_environment_panel_is_a_floating_utility_card():
     assert 'aria-label="Environment and changes"' in markup
     assert 'class="environment-overview"' in markup
     assert 'id="environment-details"' in markup
+    assert 'aria-label="Subagents"' in markup
+    assert ">Subagents<" in markup
 
 
 def test_sidebar_uses_quiet_codex_navigation_primitives():
@@ -926,11 +928,11 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert ".routing-resolution.has-degradation" in css
     assert ".message-routing" in css
     assert ".message-routing.has-degradation" in css
-    assert "58px repeat(4, auto) 0fr minmax(0, 1fr) auto auto" in css
-    assert ".terminal-panel { grid-row: 8; }" in css
+    assert "58px repeat(3, auto) 0fr minmax(0, 1fr) auto auto" in css
+    assert ".terminal-panel { grid-row: 7; }" in css
     assert "#terminal-stop," in css
     assert "grid-template-columns: minmax(0, 1fr) 130px auto auto auto;" in css
-    assert ".composer-wrap { grid-row: 9; }" in css
+    assert ".composer-wrap { grid-row: 8; }" in css
     workspace_css = css.split(".workspace {", 1)[1].split("}", 1)[0]
     assert "min-height: 0" in workspace_css
     assert "overflow: hidden" in workspace_css

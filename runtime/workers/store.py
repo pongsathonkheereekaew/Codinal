@@ -20,6 +20,7 @@ from .models import (
     WorkerRecord,
     WorkerState,
 )
+from .protocol import normalize_persisted_version
 
 _SCHEMA_VERSION = 2
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
@@ -356,7 +357,7 @@ def _from_row(row: sqlite3.Row) -> WorkerRecord:
         model=row["model"],
         state=WorkerState(row["state"]),
         worker_kind=row["worker_kind"],
-        protocol_version=row["protocol_version"],
+        protocol_version=normalize_persisted_version(row["protocol_version"]),
         capabilities=frozenset(_decode(row["capabilities"], list)),
         summary=row["summary"],
         error=row["error"],

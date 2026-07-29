@@ -124,7 +124,7 @@ const el = Object.fromEntries(
     "session-search", "refresh-sessions", "session-list", "theme-toggle",
     "open-settings", "toggle-sidebar", "task-header", "task-title", "workspace-path",
     "stirling-url", "save-stirling-url", "test-stirling-url", "stirling-status",
-    "runtime-status", "review-button", "change-count", "conversation",
+    "runtime-status", "review-button", "subagents-button", "change-count", "conversation",
     "empty-state", "message-list", "prompt", "attach-files",
     "attachment-input", "attachment-list", "choose-workspace",
     "workspace-label", "agent-mode", "routing-profile", "model-select",
@@ -1345,9 +1345,18 @@ function renderWorkers() {
     (worker) => !["succeeded", "adopted", "failed", "cancelled"]
       .includes(worker.state)
   ).length;
+  const done = state.workers.filter((worker) => ["succeeded", "adopted"]
+    .includes(worker.state)).length;
+  el["subagents-button"].textContent = active
+    ? `Subagents · ${active}`
+    : "Subagents";
+  el["subagents-button"].setAttribute(
+    "aria-label",
+    active ? `Subagents, ${active} active` : "Subagents"
+  );
   el["worker-summary"].textContent = state.workers.length
-    ? `${active} active · ${state.workers.length} total`
-    : "No background work";
+    ? `${active} active · ${done} done`
+    : "No active subagents";
   for (const worker of state.workers) {
     const card = node("article", "worker-card");
     const identity = node("div", "worker-identity");
@@ -4850,6 +4859,13 @@ function openReview() {
 function closeReview() {
   el.app.classList.remove("review-open");
   el["review-panel"].setAttribute("aria-hidden", "true");
+  el["subagents-button"].setAttribute("aria-expanded", "false");
+}
+
+function openSubagents() {
+  openReview();
+  el["subagents-button"].setAttribute("aria-expanded", "true");
+  el["worker-panel"].scrollIntoView({ block: "nearest" });
 }
 
 async function applyChanges() {
@@ -5921,6 +5937,7 @@ function wireEvents() {
   el["send-turn"].addEventListener("click", sendTurn);
   el["stop-turn"].addEventListener("click", stopTurn);
   el["review-button"].addEventListener("click", () => loadDiff(true));
+  el["subagents-button"].addEventListener("click", openSubagents);
   el["refresh-diff"].addEventListener("click", () => loadDiff(false));
   el["close-review"].addEventListener("click", closeReview);
   el["environment-open-review"].addEventListener("click", () => {

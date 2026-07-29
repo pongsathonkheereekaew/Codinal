@@ -1,11 +1,12 @@
-"""Versioned protocol contract shared by local and future remote workers."""
+"""Versioned, host-neutral contract shared by local and remote subagents."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Final
 
-PROTOCOL_VERSION: Final = "codinal.worker.v1"
+PROTOCOL_VERSION: Final = "harness.subagent.v1"
+LEGACY_PROTOCOL_VERSIONS: Final = frozenset({"codinal.worker.v1"})
 REQUIRED_CAPABILITIES: Final = frozenset(
     {
         "artifact.git-worktree",
@@ -19,6 +20,13 @@ REQUIRED_CAPABILITIES: Final = frozenset(
 
 class WorkerProtocolError(ValueError):
     pass
+
+
+def normalize_persisted_version(version: str) -> str:
+    """Upgrade stored v1 records without accepting legacy handshakes."""
+    if version in LEGACY_PROTOCOL_VERSIONS:
+        return PROTOCOL_VERSION
+    return version
 
 
 @dataclass(frozen=True)

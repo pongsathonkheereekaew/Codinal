@@ -6,7 +6,7 @@ description: Fan-out to small workers, parallel explore-then-report, multi-agent
 
 # Orchestrating workers
 
-Universal rules for splitting work across small workers. **Orchestrator ≠ worker.** Parent routes, bounds the task, and merges; workers return conclusions — not dumps.
+Universal rules for splitting work across small workers. **Orchestrator ≠ worker.** Parent routes, bounds the task, and merges; workers return conclusions — not dumps. In the shared language, a worker is a **subagent**; vendors may call the same thing a task, agent, child, or delegate.
 
 Do **not** invent a second orchestrator product. Use the host’s native worker API when present; otherwise sequential self-calls with the same brief contract.
 
@@ -31,6 +31,34 @@ Every dispatch includes:
 3. **Risk ceiling** — max risk class from `agent-guardrails` (`read` / `write_local` / `exec` / `external`). Worker ceiling ≤ parent-allowed consequential class; default workers to `read`.
 4. **Done criterion** — what proves finished (path list, measured check, “no matches”).
 5. **Return shape** — conclusions, paths, open questions — **no** full-file dumps.
+
+## Portable subagent envelope
+
+Use these neutral fields whenever a host, plugin, or MCP server can exchange
+subagent state. This is a semantic contract, not a claim that every host has a
+native subagent API.
+
+```json
+{
+  "protocol": "harness.subagent.v1",
+  "id": "host-generated-id",
+  "parent_id": "optional-parent-task-id",
+  "state": "queued|running|succeeded|failed|cancelled|adopted",
+  "goal": "one bounded outcome",
+  "ownership": ["paths the subagent may change"],
+  "dependencies": ["subagent ids that must finish first"],
+  "capabilities": ["task.execute", "task.status", "task.cancel"],
+  "result": {"summary": "conclusions only", "artifacts": []}
+}
+```
+
+- Hosts and plugins map their native fields to this envelope at their adapter
+  boundary; do not put vendor-specific names in the shared policy.
+- Unknown protocol versions, states, or missing required capabilities fail
+  closed. A host without subagents reports that capability as unsupported and
+  continues sequentially.
+- `ownership` and approvals remain enforced by `agent-guardrails`; the envelope
+  never grants write, exec, network, or credential access.
 
 ## Risk inheritance
 

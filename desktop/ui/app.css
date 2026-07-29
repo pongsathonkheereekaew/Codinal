@@ -211,11 +211,11 @@ select:focus-visible,
 }
 
 .app-shell.review-open {
-  grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) 0;
+  grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) clamp(300px, 18.75vw, 360px);
 }
 
 .app-shell.sidebar-collapsed.review-open {
-  grid-template-columns: 0 minmax(0, 1fr) 0;
+  grid-template-columns: 0 minmax(0, 1fr) clamp(300px, 18.75vw, 360px);
 }
 
 .sidebar {
@@ -707,25 +707,24 @@ select:focus-visible,
   height: 100%;
   overflow: hidden;
   grid-template-rows:
-    58px repeat(4, auto) 0fr minmax(0, 1fr) auto auto;
+    58px repeat(3, auto) 0fr minmax(0, 1fr) auto auto;
   background: var(--bg);
 }
 
 /* When the editor is visible, it claims a flexible slice above the chat. */
 .workspace:has(.editor-panel:not(.is-hidden)) {
   grid-template-rows:
-    58px repeat(4, auto) minmax(180px, 38%) minmax(0, 1fr) auto auto;
+    58px repeat(3, auto) minmax(180px, 38%) minmax(0, 1fr) auto auto;
 }
 
 .task-header { grid-row: 1; }
-.worker-panel { grid-row: 2; }
-.plan-panel { grid-row: 3; }
-.plan-build-panel { grid-row: 4; }
-.goal-panel { grid-row: 5; }
-.editor-panel { grid-row: 6; }
-.conversation { grid-row: 7; }
-.terminal-panel { grid-row: 8; }
-.composer-wrap { grid-row: 9; }
+.plan-panel { grid-row: 2; }
+.plan-build-panel { grid-row: 3; }
+.goal-panel { grid-row: 4; }
+.editor-panel { grid-row: 5; }
+.conversation { grid-row: 6; }
+.terminal-panel { grid-row: 7; }
+.composer-wrap { grid-row: 8; }
 
 .editor-panel {
   display: grid;
@@ -893,9 +892,10 @@ select:focus-visible,
 }
 
 .worker-panel {
+  padding: 14px 16px 12px;
+  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: var(--surface-subtle);
-  padding: 7px 16px 8px;
+  background: var(--surface);
 }
 
 .worker-panel > header {
@@ -906,9 +906,8 @@ select:focus-visible,
 }
 
 .worker-panel > header > div {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  gap: 2px;
 }
 
 .worker-panel > header strong {
@@ -921,9 +920,8 @@ select:focus-visible,
 }
 
 .worker-list {
-  display: flex;
+  display: grid;
   gap: 7px;
-  overflow-x: auto;
 }
 
 .worker-list:not(:empty) {
@@ -932,7 +930,7 @@ select:focus-visible,
 
 .worker-card {
   display: flex;
-  min-width: min(360px, 80vw);
+  min-width: 0;
   align-items: center;
   gap: 10px;
   padding: 7px 8px;
@@ -2001,18 +1999,17 @@ body.is-dragging .drop-hint {
 }
 
 .review-panel {
-  position: absolute;
-  z-index: 8;
-  top: 66px;
-  right: 20px;
-  width: min(344px, calc(100vw - 40px));
-  max-height: calc(100% - 86px);
+  position: relative;
+  grid-column: 3;
+  z-index: 2;
+  width: auto;
+  max-height: none;
   min-width: 0;
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 20px;
+  border-left: 0.5px solid var(--line);
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 14px 34px rgb(0 0 0 / 10%);
+  box-shadow: none;
   visibility: hidden;
   pointer-events: none;
   opacity: 0;
@@ -2966,6 +2963,17 @@ body.is-dragging .drop-hint {
 
   .app-shell:not(.sidebar-collapsed) {
     grid-template-columns: 232px minmax(0, 1fr) 0;
+  }
+
+  .review-panel {
+    position: absolute;
+    top: 66px;
+    right: 12px;
+    width: min(344px, calc(100vw - 24px));
+    max-height: calc(100% - 78px);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: 0 14px 34px rgb(0 0 0 / 10%);
   }
 
   .status-chip {

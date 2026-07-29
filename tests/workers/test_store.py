@@ -51,6 +51,23 @@ def test_worker_store_survives_restart_and_lists_parent_in_creation_order(
     )
 
 
+def test_worker_store_upgrades_legacy_protocol_records_on_load(tmp_path):
+    store = WorkerStore(tmp_path)
+    store.create(record())
+    store.close()
+
+    database = sqlite3.connect(tmp_path / "workers.db")
+    database.execute(
+        "UPDATE workers SET protocol_version = ? WHERE worker_id = ?",
+        ("codinal.worker.v1", "worker-a"),
+    )
+    database.commit()
+    database.close()
+
+    restarted = WorkerStore(tmp_path)
+    assert restarted.load("worker-a").protocol_version == "harness.subagent.v1"
+
+
 def test_worker_store_enforces_monotonic_compare_and_set_transitions(tmp_path):
     store = WorkerStore(tmp_path)
     store.create(record())

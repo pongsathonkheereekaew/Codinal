@@ -112,7 +112,7 @@ Long-lived prefs and locked decisions live in `~/.agents/memory/` (not episodic 
 ## Orchestration
 
 - **Orchestrator ≠ worker** — parent routes and merges; workers return conclusions, not dumps. Hermes / main session routes; desk agent implements.
-- Fan-out (parallel explore, independent sub-tasks, สั่งงานตัวเล็ก) → `orchestrating-workers`.
+- Fan-out (parallel explore, independent sub-tasks, สั่งงานตัวเล็ก) → `orchestrating-workers`. Shared term: **subagent**; host/plugin-specific labels map at their adapter boundary.
 - Consequential actions follow risk classes in `agent-guardrails` (`read` / `write_local` / `exec` / `external`). Unattended ≠ higher autonomy.
 - Tool-private worker APIs and fan-out plugins live in adapters — do not restate vendor plugin names here.
 
