@@ -1351,13 +1351,16 @@ function renderWorkers() {
   ).length;
   const done = state.workers.filter((worker) => ["succeeded", "adopted"]
     .includes(worker.state)).length;
-  el["subagents-button"].textContent = active
-    ? `Subagents · ${active}`
-    : "Subagents";
+  el["subagents-button"].setAttribute(
+    "data-active-count", active ? String(active) : ""
+  );
   el["subagents-button"].setAttribute(
     "aria-label",
-    active ? `Subagents, ${active} active` : "Subagents"
+    active ? `Open subagents, ${active} active` : "Open subagents"
   );
+  el["subagents-button"].title = active
+    ? `Open subagents (${active} active)`
+    : "Open subagents";
   el["worker-summary"].textContent = state.workers.length
     ? `${active} active · ${done} done`
     : "No active subagents";

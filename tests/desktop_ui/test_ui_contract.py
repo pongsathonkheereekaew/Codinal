@@ -255,6 +255,8 @@ def test_empty_task_uses_codex_style_quiet_chrome():
     assert 'id="subagents-button"' in html
     assert 'aria-label="Open subagents"' in html
     assert 'title="Open subagents"' in html
+    assert '"data-active-count", active' in script
+    assert 'el["subagents-button"].textContent' not in script
     assert '"is-empty", !messageCount && !active' in script
     assert ".conversation-context.is-empty { display: none; }" in css
     assert ".conversation:has(.empty-state:not(.is-hidden)) .conversation-context" in css
