@@ -18,6 +18,16 @@ Configure these GitHub Actions secrets:
 The updater private key must match the public key committed in
 `desktop/src-tauri/tauri.conf.json`. Never commit or log the private key.
 
+## Updater key rotation
+
+Use a bridge release signed by the current key whenever possible: that release
+embeds the new public key, then every following release uses the new private
+key. If the previous key passphrase is permanently unavailable, generate a new
+keypair, update the committed public key, and publish a new installer. Existing
+installs cannot trust the new updater key and must install that release once
+manually. Store the new private-key passphrase in a password manager and set
+the two GitHub Actions updater secrets before publishing.
+
 ## Release
 
 1. Set the same version in `desktop/src-tauri/Cargo.toml` and

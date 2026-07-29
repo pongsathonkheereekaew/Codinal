@@ -1,3 +1,4 @@
+import base64
 import json
 from pathlib import Path
 
@@ -63,6 +64,12 @@ def test_release_config_maps_runtime_to_expected_bundle_paths():
         "resources/python/": "python/",
         "resources/runtime/": "runtime/",
     }
+    app_config = json.loads(
+        (ROOT / "desktop" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
+    )
+    assert base64.b64decode(app_config["plugins"]["updater"]["pubkey"]).startswith(
+        b"untrusted comment: "
+    )
 
 
 def test_packaged_smoke_rechecks_signature_after_launch():
