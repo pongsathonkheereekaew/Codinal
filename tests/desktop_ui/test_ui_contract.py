@@ -216,6 +216,7 @@ def test_settings_use_a_full_page_mac_layout_not_a_small_modal():
     assert "@media (max-width: 760px)" in css
     assert 'activateSettingsNav(link.getAttribute("href").slice(1));' in script
     assert "function filterSettings()" in script
+    assert 'link.querySelector("span").textContent.trim()' in script
 
 
 def test_empty_workspace_hides_secondary_sidebar_and_routing_chrome():

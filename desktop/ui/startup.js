@@ -5335,9 +5335,15 @@ function activateSettingsNav(target) {
   for (const link of el["settings-dialog"].querySelectorAll(".settings-nav a")) {
     const active = link.getAttribute("href") === `#${target}`;
     link.classList.toggle("is-current", active);
-    if (active) el["settings-dialog-title"].textContent = link.textContent.trim();
+    if (active) {
+      el["settings-dialog-title"].textContent = link.querySelector("span").textContent.trim();
+    }
   }
-  section.scrollIntoView({ block: "start" });
+  if (target === "settings-general") {
+    el["settings-dialog"].querySelector(".settings-content").scrollTo({ top: 0 });
+  } else {
+    section.scrollIntoView({ block: "start" });
+  }
 }
 
 function filterSettings() {
