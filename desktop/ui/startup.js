@@ -102,6 +102,7 @@ const state = {
   artifactLoadGeneration: 0,
   artifactPreviewGeneration: 0,
   editorReady: false,
+  editorLoad: null,
   lspDocuments: new Map(),
   lspClosing: new Map(),
   lspServers: new Map(),
@@ -841,7 +842,27 @@ async function revealArtifact(path, mode) {
   el["artifact-preview-path"].textContent = path;
 }
 
-// --- Code editor (Phase 49: CodeMirror 6 via window.CodinalEditor bridge) ---
+// --- Code editor (Phase 49: load CodeMirror only when a file is opened) ---
+
+function loadEditorBundle() {
+  if (window.CodinalEditor?.mount) return Promise.resolve();
+  if (state.editorLoad) return state.editorLoad;
+  state.editorLoad = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "./dist/editor.js";
+    script.async = true;
+    script.onload = () => {
+      if (window.CodinalEditor?.mount) resolve();
+      else reject(new Error("Editor module did not initialize"));
+    };
+    script.onerror = () => reject(new Error("Could not load editor module"));
+    document.head.append(script);
+  }).catch((error) => {
+    state.editorLoad = null;
+    throw error;
+  });
+  return state.editorLoad;
+}
 
 function lspLanguageForPath(path) {
   const extension = path.split(".").pop()?.toLowerCase();
@@ -1091,10 +1112,20 @@ function initEditor() {
 }
 
 async function openEditorTab(path) {
-  if (!state.sessionId) {
+  const sessionId = state.sessionId;
+  if (!sessionId) {
     toast("Select a task first", "error");
     return;
   }
+  try {
+    await loadEditorBundle();
+  } catch (error) {
+    toast(`Editor unavailable: ${error.message}`, "error");
+    return;
+  }
+  // A task can change while CodeMirror is loading. Never open a path from the
+  // old task against the newly selected one.
+  if (state.sessionId !== sessionId) return;
   initEditor();
   el["editor-panel"].classList.remove("is-hidden");
   // If tab already open, just focus it.
@@ -1104,8 +1135,9 @@ async function openEditorTab(path) {
   }
   try {
     const result = await api(
-      `/v1/sessions/${encodeURIComponent(state.sessionId)}/artifacts/read?path=${encodeURIComponent(path)}`
+      `/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/read?path=${encodeURIComponent(path)}`
     );
+    if (state.sessionId !== sessionId) return;
     if (result.kind === "text" || result.content !== undefined) {
       window.CodinalEditor.openTab(path, result.content || "");
     } else {
@@ -5767,15 +5799,6 @@ async function boot() {
     const first = state.sessions.find((session) => !session.archived);
     if (first) await selectSession(first);
     else updateWorkspaceLabel();
-    // Phase 48 build-infra health check: confirm the bundled editor module
-    // loaded and exposed its bridge. Non-fatal if absent (e.g. unbundled dev
-    // context) — Phase 49 will hard-require it.
-    if (window.CodinalEditor?.hello) {
-      try {
-        const ok = window.CodinalEditor.hello();
-        if (ok === "ok") toast("Editor surface ready");
-      } catch { /* bridge present but errored — non-fatal for the spike */ }
-    }
     void settingsLoad;
   } catch (error) {
     el["startup-status"].textContent = `Runtime unavailable: ${error.message}`;

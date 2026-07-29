@@ -116,14 +116,75 @@ def test_desktop_ui_has_diagnostics_and_audit_surface():
     assert "secrets redacted" in script
 
 
-def test_desktop_ui_loads_editor_bundle():
-    """Phase 48: the bundled editor surface (dist/editor.js) is included so
-    the window.CodinalEditor bridge is available. The build step is run in
-    CI; this guard catches a missing <script src> or a silent regression."""
+def test_desktop_ui_defers_editor_bundle_until_a_file_is_opened():
+    """Keep the 1.2MB CodeMirror bundle off the initial startup critical path."""
     html = (UI / "index.html").read_text(encoding="utf-8")
-    assert './dist/editor.js' in html
+    assert '<script src="./dist/editor.js"></script>' not in html
     script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert 'function loadEditorBundle()' in script
+    assert 'script.src = "./dist/editor.js"' in script
+    assert "await loadEditorBundle();" in script
     assert "window.CodinalEditor" in script
+
+
+def test_editor_bundle_loader_loads_once_and_exposes_the_bridge(tmp_path):
+    """Exercise the real lazy loader so concurrent file opens share one request."""
+    import subprocess
+
+    runner = tmp_path / "editor-loader.mjs"
+    runner.write_text(
+        """
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import vm from "node:vm";
+
+const source = fs.readFileSync("desktop/ui/startup.js", "utf8");
+const start = source.indexOf("function loadEditorBundle()");
+const end = source.indexOf("\\n\\nfunction lspLanguageForPath", start);
+assert.ok(start >= 0 && end > start, "editor bundle loader source missing");
+const loader = source.slice(start, end);
+let appended = 0;
+let pendingNode = null;
+const context = {
+  state: { editorLoad: null },
+  window: {},
+  document: {
+    createElement() { return {}; },
+    head: {
+      append(node) {
+        appended += 1;
+        pendingNode = node;
+      },
+    },
+  },
+};
+vm.runInNewContext(`${loader}; globalThis.load = loadEditorBundle;`, context);
+const missingBridge = context.load();
+pendingNode.onload();
+await assert.rejects(missingBridge, /Editor module did not initialize/);
+assert.equal(context.state.editorLoad, null, "a missing bridge must permit retry");
+const failed = context.load();
+pendingNode.onerror();
+await assert.rejects(failed, /Could not load editor module/);
+assert.equal(context.state.editorLoad, null, "a failed load must permit retry");
+const first = context.load();
+const second = context.load();
+assert.equal(first, second, "concurrent opens must share the loader promise");
+context.window.CodinalEditor = { mount() {} };
+pendingNode.onload();
+await Promise.all([first, second]);
+assert.equal(appended, 3, "each failed load should permit one fresh retry");
+assert.equal(context.state.editorLoad, first);
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        ["node", str(runner)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_streaming_deltas_are_frame_batched_without_rerendering_history():
