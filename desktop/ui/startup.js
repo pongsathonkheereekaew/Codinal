@@ -5788,9 +5788,8 @@ function wireEvents() {
   el["toggle-sidebar"].addEventListener("click", () => {
     el.app.classList.toggle("sidebar-collapsed");
   });
-  el["task-header"].addEventListener("dblclick", zoomFromTitlebar);
-  el.sidebar.addEventListener("dblclick", (event) => {
-    if (!event.target.closest(".traffic-spacer, .brand-row")) return;
+  document.addEventListener("dblclick", (event) => {
+    if (!event.target.closest("[data-tauri-drag-region]")) return;
     zoomFromTitlebar(event);
   });
   el["command-palette-close"].addEventListener("click", closePalette);

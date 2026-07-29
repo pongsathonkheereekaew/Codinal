@@ -244,9 +244,9 @@ def test_header_and_composer_use_compact_mac_primitives():
 def test_every_visible_titlebar_zone_supports_native_window_zoom():
     script = (UI / "startup.js").read_text(encoding="utf-8")
     assert "function zoomFromTitlebar(event)" in script
-    assert 'el["task-header"].addEventListener("dblclick", zoomFromTitlebar);' in script
-    assert 'el.sidebar.addEventListener("dblclick"' in script
-    assert 'event.target.closest(".traffic-spacer, .brand-row")' in script
+    assert 'document.addEventListener("dblclick", (event) => {' in script
+    assert 'event.target.closest("[data-tauri-drag-region]")' in script
+    assert 'event.target.closest("button, input, select, textarea, a")' in script
 
 
 def test_app_icon_uses_a_dock_safe_margin_around_the_monochrome_tile():
