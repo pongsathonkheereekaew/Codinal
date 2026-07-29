@@ -206,7 +206,9 @@ def test_header_and_composer_use_compact_mac_primitives():
 def test_empty_workspace_hides_secondary_sidebar_and_routing_chrome():
     script = (UI / "startup.js").read_text(encoding="utf-8")
     markup = (UI / "index.html").read_text(encoding="utf-8")
-    assert 'el["context-panel"].classList.toggle("is-hidden", !state.workspace);' in script
+    assert "function updateContextPanelVisibility()" in script
+    assert "!state.workspace || !state.roots.length" in script
+    assert "updateContextPanelVisibility();" in script
     assert 'el["routing-resolution"].classList.toggle("is-hidden", !degradations.length);' in script
     assert 'class="routing-resolution is-hidden"' in markup
 

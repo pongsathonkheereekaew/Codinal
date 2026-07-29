@@ -2550,8 +2550,17 @@ async function pickWorkspace() {
 function updateWorkspaceLabel() {
   el["workspace-path"].textContent = shortPath(state.workspace);
   el["workspace-label"].textContent = basename(state.workspace);
-  el["context-panel"].classList.toggle("is-hidden", !state.workspace);
+  updateContextPanelVisibility();
   updateComposer();
+}
+
+function updateContextPanelVisibility() {
+  // Project controls are useful only after a turn has created an approved root.
+  // Keeping this quiet makes an empty workspace read like a focused Codex task.
+  el["context-panel"].classList.toggle(
+    "is-hidden",
+    !state.workspace || !state.roots.length
+  );
 }
 
 function invalidateAttachments() {
@@ -2749,6 +2758,7 @@ async function loadRootsAndTree() {
 }
 
 function renderContextRoots() {
+  updateContextPanelVisibility();
   el["add-context-root"].disabled = (
     state.busy || state.rootMutationPending || !state.roots.length
   );
