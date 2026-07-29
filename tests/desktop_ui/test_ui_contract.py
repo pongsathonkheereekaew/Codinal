@@ -257,6 +257,7 @@ def test_empty_task_uses_codex_style_quiet_chrome():
     assert 'title="Open subagents"' in html
     assert '"is-empty", !messageCount && !active' in script
     assert ".conversation-context.is-empty { display: none; }" in css
+    assert ".conversation:has(.empty-state:not(.is-hidden)) .conversation-context" in css
 
 
 def test_task_workspace_keeps_conversation_context_visible_before_messages():

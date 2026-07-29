@@ -1254,6 +1254,7 @@ select:focus-visible,
 .conversation-context > span { color: var(--muted); font-size: 12px; }
 .conversation-context.has-activity > span { color: var(--success); }
 .conversation-context.is-empty { display: none; }
+.conversation:has(.empty-state:not(.is-hidden)) .conversation-context { display: none; }
 
 .empty-state {
   display: grid;
