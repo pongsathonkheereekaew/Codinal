@@ -27,6 +27,7 @@ def test_release_builder_pins_and_verifies_embedded_python():
     assert "notarytool submit" in script
     assert "stapler staple" in script
     assert "TAURI_SIGNING_PRIVATE_KEY_PATH" in script
+    assert 'TAURI_SIGNING_PRIVATE_KEY="$(<"$TAURI_SIGNING_PRIVATE_KEY_PATH")"' in script
     assert "TAURI_SIGNING_PUBLIC_KEY" in script
     assert "TAURI_SIGNING_PUBLIC_KEY_PATH" in script
     assert 'UPDATER_SOURCE_SIGNATURE="$UPDATER_SOURCE.sig"' in script
