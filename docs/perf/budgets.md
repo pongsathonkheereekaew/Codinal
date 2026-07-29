@@ -71,6 +71,17 @@ sample starts a fresh Python process and measures interpreter startup, runtime
 imports, and service composition. Packaged app launch and first model token
 remain separate metrics.
 
+For the packaged macOS app, first close Codinal and then measure from its
+native executable through the newly spawned sidecar's loopback listener:
+
+```bash
+./.venv/bin/python scripts/measure_desktop_startup.py --samples 5
+```
+
+This reports `desktop_to_sidecar_listener`: native executable launch plus
+sidecar process creation until the sidecar binds its port. It intentionally
+does not claim WebView paint/readiness or first-model-token latency.
+
 ## Baselines (observed)
 
 Recorded on the dev machine (macOS, M-series) and the CI runner
