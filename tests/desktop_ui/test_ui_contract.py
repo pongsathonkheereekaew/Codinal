@@ -277,6 +277,16 @@ assert.equal(await run(false), "session-model", "later session selection restore
     subprocess.run(["node", str(runner)], check=True, cwd=ROOT)
 
 
+def test_conversation_history_is_committed_in_one_dom_batch():
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    start = script.index("function renderConversation()")
+    end = script.index("\n\nfunction scheduleLiveAssistantRender", start)
+    body = script[start:end]
+
+    assert "document.createDocumentFragment()" in body
+    assert 'el["message-list"].replaceChildren(fragment)' in body
+
+
 def test_editor_has_native_find_replace_keybindings():
     """Phase 53: every CodeMirror tab exposes Cmd/Ctrl-F and Cmd/Ctrl-H."""
     editor = (ROOT / "desktop" / "ui-src" / "editor.ts").read_text(encoding="utf-8")

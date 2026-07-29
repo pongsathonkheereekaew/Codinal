@@ -3322,9 +3322,9 @@ function renderConversation() {
     "is-hidden",
     Boolean(visible.length || state.liveAssistant || state.activities.size)
   );
-  el["message-list"].replaceChildren();
+  const fragment = document.createDocumentFragment();
   for (const { message, index } of visible) {
-    el["message-list"].append(
+    fragment.append(
       renderMessage(
         message.role,
         contentText(message.content),
@@ -3336,11 +3336,12 @@ function renderConversation() {
     );
   }
   if (state.liveAssistant) {
-    el["message-list"].append(renderMessage("assistant", state.liveAssistant, true));
+    fragment.append(renderMessage("assistant", state.liveAssistant, true));
   }
   for (const activity of state.activities.values()) {
-    el["message-list"].append(renderActivity(activity));
+    fragment.append(renderActivity(activity));
   }
+  el["message-list"].replaceChildren(fragment);
   const highlighted = el["message-list"].querySelector(
     ".message.is-search-match"
   );
