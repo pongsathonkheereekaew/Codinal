@@ -373,6 +373,34 @@ def test_stirling_url_rolls_back_when_persistence_fails():
     assert service.view()["stirling_url"] is None
 
 
+def test_codex_security_path_is_absolute_and_persistent(tmp_path):
+    path = tmp_path / "prefs.json"
+    service = SettingsService(JsonPreferenceStore(path), default_model="openai:gpt-default")
+
+    assert service.set_codex_security_bin("relative/codex-security")["ok"] is False
+    assert service.set_codex_security_bin("/opt/tools/codex-security") == {
+        "ok": True,
+        "codex_security_bin": "/opt/tools/codex-security",
+    }
+    reborn = SettingsService(JsonPreferenceStore(path), default_model="openai:gpt-default")
+    assert reborn.view()["codex_security_bin"] == "/opt/tools/codex-security"
+
+
+def test_codex_security_path_rolls_back_when_persistence_fails():
+    class FailingStore:
+        def load(self):
+            return {}
+
+        def save(self, _preferences):
+            raise OSError("disk unavailable")
+
+    service = SettingsService(FailingStore(), default_model="openai:gpt-default")
+
+    with pytest.raises(OSError, match="disk unavailable"):
+        service.set_codex_security_bin("/opt/tools/codex-security")
+    assert service.view()["codex_security_bin"] is None
+
+
 def test_default_model_is_required(tmp_path):
     with pytest.raises(ValueError, match="default_model"):
         SettingsService(

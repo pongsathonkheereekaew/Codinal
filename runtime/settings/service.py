@@ -28,6 +28,17 @@ _ROUTING_PROFILES = {"manual", "quality", "balanced", "economy"}
 _STIRLING_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
+def _normalize_executable_path(value: Any) -> tuple[str | None, str | None]:
+    if not isinstance(value, str):
+        return None, "Codex Security path must be a string"
+    candidate = value.strip()
+    if not candidate:
+        return None, None
+    if len(candidate.encode("utf-8")) > 4096 or not Path(candidate).is_absolute():
+        return None, "Codex Security path must be an absolute path"
+    return candidate, None
+
+
 def _normalize_stirling_url(value: Any) -> tuple[str | None, str | None]:
     if not isinstance(value, str):
         return None, "stirling_url must be a string"
@@ -231,6 +242,7 @@ class SettingsService:
             "pdf": self._pdf_preferences(),
             "failover_enabled": self._failover_enabled(),
             "stirling_url": self._stirling_url(),
+            "codex_security_bin": self._codex_security_bin(),
         }
 
     def _failover_enabled(self) -> bool:
@@ -241,6 +253,12 @@ class SettingsService:
     def _stirling_url(self) -> str | None:
         normalized, _ = _normalize_stirling_url(
             self._preferences.get("stirling_url", "")
+        )
+        return normalized
+
+    def _codex_security_bin(self) -> str | None:
+        normalized, _ = _normalize_executable_path(
+            self._preferences.get("codex_security_bin", "")
         )
         return normalized
 
@@ -304,6 +322,26 @@ class SettingsService:
                 self._preferences["stirling_url"] = previous
             raise
         return {"ok": True, "stirling_url": normalized}
+
+    def set_codex_security_bin(self, value: str) -> dict[str, Any]:
+        normalized, error = _normalize_executable_path(value)
+        if error:
+            return {"ok": False, "error": error}
+        sentinel = object()
+        previous = self._preferences.get("codex_security_bin", sentinel)
+        if normalized is None:
+            self._preferences.pop("codex_security_bin", None)
+        else:
+            self._preferences["codex_security_bin"] = normalized
+        try:
+            self._persist()
+        except Exception:
+            if previous is sentinel:
+                self._preferences.pop("codex_security_bin", None)
+            else:
+                self._preferences["codex_security_bin"] = previous
+            raise
+        return {"ok": True, "codex_security_bin": normalized}
 
     def set_onboarded(self, value: bool = True) -> dict[str, Any]:
         self._preferences["onboarded"] = bool(value)

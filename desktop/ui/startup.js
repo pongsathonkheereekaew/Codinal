@@ -156,6 +156,7 @@ const el = Object.fromEntries(
     "commit-message", "git-stage", "git-commit", "git-log",
     "model-summary", "model-catalog", "update-status", "check-update",
     "install-update", "refresh-ollama-models", "ollama-status",
+    "codex-security-bin", "save-codex-security-bin", "codex-security-status",
     "diagnostics-status", "audit-chain-status", "audit-log",
     "copy-support-bundle",
     "provider-list", "toast-region",
@@ -365,6 +366,32 @@ async function loadSettings() {
   el["stirling-status"].textContent = state.settings.stirling_url
     ? "Endpoint saved. Test the connection before previewing Office files."
     : "Not configured.";
+  if (el["codex-security-bin"] && el["codex-security-status"]) {
+    el["codex-security-bin"].value = state.settings.codex_security_bin || "";
+    el["codex-security-status"].textContent = state.settings.codex_security_bin
+      ? "Path saved. Codinal validates it before every scan."
+      : "Not configured.";
+  }
+}
+
+async function saveCodexSecurityBin() {
+  const button = el["save-codex-security-bin"];
+  button.disabled = true;
+  try {
+    const result = await api("/v1/settings/codex-security", {
+      method: "PATCH",
+      body: JSON.stringify({ path: el["codex-security-bin"].value }),
+    });
+    state.settings = { ...(state.settings || {}), codex_security_bin: result.codex_security_bin };
+    el["codex-security-bin"].value = result.codex_security_bin || "";
+    el["codex-security-status"].textContent = result.codex_security_bin
+      ? "Path saved. Codinal validates it before every scan."
+      : "Codex Security integration disabled.";
+  } catch (error) {
+    el["codex-security-status"].textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function saveStirlingUrl() {
@@ -5989,6 +6016,9 @@ function wireEvents() {
   el["open-settings"].addEventListener("click", openSettings);
   el["save-stirling-url"].addEventListener("click", () => {
     saveStirlingUrl().catch((error) => toast(error.message, "error"));
+  });
+  el["save-codex-security-bin"].addEventListener("click", () => {
+    saveCodexSecurityBin().catch((error) => toast(error.message, "error"));
   });
   el["test-stirling-url"].addEventListener("click", () => {
     testStirlingUrl().catch((error) => toast(error.message, "error"));

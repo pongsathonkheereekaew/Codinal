@@ -898,6 +898,16 @@ def create_control_plane_app(
             )
         return result
 
+    @app.patch("/v1/settings/codex-security")
+    async def update_codex_security_bin(request: Request) -> dict[str, Any]:
+        body = await _read_bounded_object(request, limit=8192, detail="invalid Codex Security path")
+        if set(body) != {"path"} or not isinstance(body.get("path"), str):
+            raise HTTPException(status_code=400, detail="invalid Codex Security path")
+        result = services.settings.set_codex_security_bin(body["path"])
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "invalid Codex Security path"))
+        return result
+
     @app.post("/v1/settings/stirling/health")
     async def check_configured_stirling_health() -> dict[str, Any]:
         stirling_url = services.settings.view().get("stirling_url")

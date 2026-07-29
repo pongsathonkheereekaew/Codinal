@@ -42,11 +42,13 @@ class CodexSecurityScanner:
         *,
         process_factory: ProcessFactory = subprocess.Popen,
         environment: Mapping[str, str] | None = None,
+        executable_provider: Callable[[], str | None] | None = None,
     ) -> None:
         self.base = Path(data_dir).expanduser().resolve() / "security-scans"
         secure_directory(self.base)
         self._process_factory = process_factory
         self._environment = environment if environment is not None else os.environ
+        self._executable_provider = executable_provider
 
     def status(self) -> dict[str, object]:
         executable, reason = self._configured_executable()
@@ -142,7 +144,8 @@ class CodexSecurityScanner:
         }
 
     def _configured_executable(self) -> tuple[Path | None, str]:
-        raw = self._environment.get("CODINAL_CODEX_SECURITY_BIN", "").strip()
+        configured = self._executable_provider() if self._executable_provider else None
+        raw = (configured or self._environment.get("CODINAL_CODEX_SECURITY_BIN", "")).strip()
         if not raw:
             return None, (
                 "Configure CODINAL_CODEX_SECURITY_BIN to the absolute Codex Security executable installed from @openai/codex-security."

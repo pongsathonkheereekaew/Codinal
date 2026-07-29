@@ -503,6 +503,19 @@
             <button id="refresh-ollama-models" type="button">Refresh local models</button>
           </div>
           <p id="ollama-status" class="settings-copy" aria-live="polite">Not checked.</p>
+          <div class="settings-section-subtitle">
+            <h4>Codex Security</h4>
+            <p>Use the exact local executable from @openai/codex-security. Codinal validates its path before each scan.</p>
+          </div>
+          <label>
+            Trusted executable path
+            <input id="codex-security-bin" type="text" spellcheck="false"
+              placeholder="/absolute/path/to/codex-security" autocomplete="off" />
+          </label>
+          <div class="update-actions">
+            <button id="save-codex-security-bin" type="button">Save path</button>
+          </div>
+          <p id="codex-security-status" class="settings-copy" aria-live="polite">Not configured.</p>
         </section>
         <section id="settings-office">
           <div class="settings-section-title">

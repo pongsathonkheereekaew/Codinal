@@ -285,5 +285,8 @@ def compose_runtime(
         preview=preview,
         managed_policy=managed_policy,
         extensions=extensions,
-        security=security or CodexSecurityScanner(base),
+        security=security or CodexSecurityScanner(
+            base,
+            executable_provider=lambda: settings.view().get("codex_security_bin"),
+        ),
     )
