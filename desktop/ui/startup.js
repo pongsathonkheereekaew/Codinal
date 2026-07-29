@@ -116,7 +116,7 @@ const el = Object.fromEntries(
   [
     "startup", "startup-status", "app", "sidebar", "new-task",
     "session-search", "refresh-sessions", "session-list", "theme-toggle",
-    "open-settings", "toggle-sidebar", "task-title", "workspace-path",
+    "open-settings", "toggle-sidebar", "task-header", "task-title", "workspace-path",
     "stirling-url", "save-stirling-url", "test-stirling-url", "stirling-status",
     "runtime-status", "review-button", "change-count", "conversation",
     "empty-state", "message-list", "prompt", "attach-files",
@@ -5070,6 +5070,16 @@ function toggleTheme() {
   localStorage.setItem("codinal-theme", next);
 }
 
+async function toggleWindowZoom() {
+  const windowApi = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (!windowApi?.toggleMaximize) return;
+  try {
+    await windowApi.toggleMaximize();
+  } catch {
+    // Browser previews intentionally have no native window API.
+  }
+}
+
 async function openSettings() {
   el["settings-dialog"].showModal();
   try {
@@ -5472,6 +5482,10 @@ function wireEvents() {
   });
   el["toggle-sidebar"].addEventListener("click", () => {
     el.app.classList.toggle("sidebar-collapsed");
+  });
+  el["task-header"].addEventListener("dblclick", (event) => {
+    if (event.target.closest("button, input, select, textarea, a")) return;
+    toggleWindowZoom();
   });
   el["command-palette-close"].addEventListener("click", closePalette);
   el["command-palette-input"].addEventListener("input", () => {

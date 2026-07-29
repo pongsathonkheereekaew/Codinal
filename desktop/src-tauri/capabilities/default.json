@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "No privileged frontend capabilities are enabled in Phase 1.3.",
+  "description": "Native window zoom is enabled for the macOS title-bar double-click gesture.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": ["core:window:allow-toggle-maximize"]
 }
