@@ -159,6 +159,16 @@ def test_terminal_stays_out_of_the_initial_conversation_layout():
     assert "if (state.terminal)" in script
 
 
+def test_wide_mac_layout_uses_a_codex_style_reading_column():
+    """Large windows must not stretch conversation content edge to edge."""
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    assert "clamp(248px, 18.75vw, 360px)" in css
+    assert "@media (min-width: 1440px)" in css
+    assert "width: min(840px, calc(100% - 44px));" in css
+    assert "margin-left: clamp(72px, 9.6vw, 188px);" in css
+    assert ".app-shell.review-open .message-list" in css
+
+
 def test_terminal_bundle_loader_retries_and_preserves_xterm_load_order(tmp_path):
     """Load xterm before its addon and allow a transient failure to retry."""
     import subprocess
