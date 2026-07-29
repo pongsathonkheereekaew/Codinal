@@ -2582,6 +2582,86 @@ body.is-dragging .drop-hint {
   background: var(--surface);
 }
 
+.settings-general-section {
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.settings-general-section > h3 {
+  margin: 0 0 12px;
+}
+
+.settings-card {
+  overflow: hidden;
+  border: 0.5px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.settings-card > .settings-row {
+  min-height: 72px;
+  padding: 13px 18px;
+}
+
+.settings-card > .settings-row + .settings-row {
+  border-top: 0.5px solid var(--line);
+}
+
+.settings-select-row > span,
+.settings-switch-row > span {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-select-row select {
+  min-width: 132px;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 0.5px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-switch-row input[role="switch"] {
+  appearance: none;
+  width: 36px;
+  height: 22px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--line-strong);
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.settings-switch-row input[role="switch"]::before {
+  content: "";
+  display: block;
+  width: 18px;
+  height: 18px;
+  margin: 2px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 16%);
+  transition: transform 140ms ease;
+}
+
+.settings-switch-row input[role="switch"]:checked {
+  background: var(--accent);
+}
+
+.settings-switch-row input[role="switch"]:checked::before {
+  transform: translateX(14px);
+}
+
+.settings-switch-row input[role="switch"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .settings-shell h3 {
   margin: 0 0 10px;
   font-size: 14px;

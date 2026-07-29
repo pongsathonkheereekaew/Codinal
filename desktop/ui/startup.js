@@ -129,6 +129,7 @@ const el = Object.fromEntries(
     "empty-state", "message-list", "prompt", "attach-files",
     "attachment-input", "attachment-list", "choose-workspace",
     "workspace-label", "agent-mode", "routing-profile", "model-select",
+    "settings-routing-profile", "settings-failover-enabled",
     "routing-resolution", "stop-turn",
     "send-turn", "review-panel", "close-review", "review-summary",
     "utility-eyebrow", "utility-title", "utility-environment-tab",
@@ -269,6 +270,23 @@ function resolveActiveModel(defaultModel, sessionModel) {
   return sessionModel || defaultModel || null;
 }
 
+function populateRoutingProfiles(select, routing, selectedProfile) {
+  select.replaceChildren();
+  for (const profile of routing.profiles || []) {
+    const option = node("option", "", profile.label || profile.id);
+    option.value = profile.id;
+    option.title = profile.description || "";
+    option.selected = profile.id === selectedProfile;
+    select.append(option);
+  }
+  if (!select.options.length) {
+    const option = node("option", "", "Manual");
+    option.value = "manual";
+    select.append(option);
+  }
+  select.value = selectedProfile || "manual";
+}
+
 async function loadSettings() {
   state.settings = await api("/v1/settings");
   const routing = state.settings.routing || {};
@@ -301,18 +319,13 @@ async function loadSettings() {
     el["model-select"].append(option);
   }
   if (selectedModel) selectModel(selectedModel);
-  el["routing-profile"].replaceChildren();
-  for (const profile of routing.profiles || []) {
-    const option = node("option", "", profile.label || profile.id);
-    option.value = profile.id;
-    option.title = profile.description || "";
-    option.selected = profile.id === routing.profile;
-    el["routing-profile"].append(option);
+  const selectedProfile = routing.profile || state.settings.routing_profile || "manual";
+  populateRoutingProfiles(el["routing-profile"], routing, selectedProfile);
+  if (el["settings-routing-profile"]) {
+    populateRoutingProfiles(el["settings-routing-profile"], routing, selectedProfile);
   }
-  if (!el["routing-profile"].options.length) {
-    const option = node("option", "", "Manual");
-    option.value = "manual";
-    el["routing-profile"].append(option);
+  if (el["settings-failover-enabled"]) {
+    el["settings-failover-enabled"].checked = state.settings.failover_enabled !== false;
   }
   state.routingResolution = null;
   renderRoutingResolution();
@@ -2647,6 +2660,7 @@ function setBusy(busy) {
   state.busy = busy;
   el["model-select"].disabled = busy;
   el["routing-profile"].disabled = busy || state.routingPending;
+  el["settings-routing-profile"].disabled = busy || state.routingPending;
   el["agent-mode"].disabled = busy;
   el["new-task"].disabled = busy;
   el["choose-workspace"].disabled = busy;
@@ -5913,32 +5927,65 @@ function wireEvents() {
       toast(error.message, "error");
     }
   });
-  el["routing-profile"].addEventListener("change", async () => {
+  async function setRoutingProfile(profile) {
     if (state.routingPending) return;
     const previous = state.settings?.routing_profile || "manual";
     state.routingPending = true;
     el["routing-profile"].disabled = true;
+    if (el["settings-routing-profile"]) el["settings-routing-profile"].disabled = true;
     updateComposer();
     try {
       const result = await api("/v1/settings/routing", {
         method: "PATCH",
         body: JSON.stringify({
-          profile: el["routing-profile"].value,
+          profile,
         }),
       });
       state.settings.routing_profile = result.routing_profile;
       if (result.routing) state.settings.routing = result.routing;
+      el["routing-profile"].value = result.routing_profile;
+      if (el["settings-routing-profile"]) {
+        el["settings-routing-profile"].value = result.routing_profile;
+      }
       state.routingResolution = null;
       renderRoutingResolution();
       toast(`Routing profile changed to ${result.routing_profile}`);
     } catch (error) {
       el["routing-profile"].value = previous;
+      if (el["settings-routing-profile"]) el["settings-routing-profile"].value = previous;
       renderRoutingResolution();
       toast(error.message, "error");
     } finally {
       state.routingPending = false;
       el["routing-profile"].disabled = state.busy;
+      if (el["settings-routing-profile"]) {
+        el["settings-routing-profile"].disabled = state.busy;
+      }
       updateComposer();
+    }
+  }
+  el["routing-profile"].addEventListener("change", () => {
+    setRoutingProfile(el["routing-profile"].value);
+  });
+  el["settings-routing-profile"].addEventListener("change", () => {
+    setRoutingProfile(el["settings-routing-profile"].value);
+  });
+  el["settings-failover-enabled"].addEventListener("change", async () => {
+    const enabled = el["settings-failover-enabled"].checked;
+    el["settings-failover-enabled"].disabled = true;
+    try {
+      const result = await api("/v1/settings/failover", {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      });
+      state.settings.failover_enabled = result.failover_enabled;
+      el["settings-failover-enabled"].checked = result.failover_enabled;
+      toast(result.failover_enabled ? "Automatic failover enabled" : "Automatic failover disabled");
+    } catch (error) {
+      el["settings-failover-enabled"].checked = !enabled;
+      toast(error.message, "error");
+    } finally {
+      el["settings-failover-enabled"].disabled = false;
     }
   });
   el.prompt.addEventListener("input", () => {

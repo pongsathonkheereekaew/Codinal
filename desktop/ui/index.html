@@ -442,15 +442,32 @@
             <button id="close-settings" class="icon-button" type="button"
               aria-label="Close settings">×</button>
           </header>
-        <section id="settings-general">
+        <section id="settings-general" class="settings-general-section">
           <h3>General</h3>
-          <div class="settings-row">
-            <div>
-              <strong>Appearance</strong>
-              <p>Switch between the current light and dark appearance.</p>
+          <div class="settings-card">
+            <div class="settings-row">
+              <div>
+                <strong>Appearance</strong>
+                <p>Switch between the current light and dark appearance.</p>
+              </div>
+              <button id="settings-toggle-theme" class="secondary-button"
+                type="button">Toggle appearance</button>
             </div>
-            <button id="settings-toggle-theme" class="secondary-button"
-              type="button">Toggle appearance</button>
+            <label class="settings-row settings-select-row">
+              <span>
+                <strong>Routing profile</strong>
+                <p>Choose how Codinal balances cost, speed, and capability.</p>
+              </span>
+              <select id="settings-routing-profile" aria-label="Routing profile"></select>
+            </label>
+            <label class="settings-row settings-switch-row">
+              <span>
+                <strong>Automatic failover</strong>
+                <p>Use an eligible fallback model when the selected provider is unavailable.</p>
+              </span>
+              <input id="settings-failover-enabled" type="checkbox"
+                role="switch" aria-label="Automatic failover" />
+            </label>
           </div>
         </section>
         <section id="settings-models">

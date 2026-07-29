@@ -50,6 +50,8 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'class="settings-nav"' in html
     assert 'class="settings-content"' in html
     assert 'id="settings-toggle-theme"' in html
+    assert 'id="settings-routing-profile"' in html
+    assert 'id="settings-failover-enabled"' in html
     assert 'id="settings-search"' in html
     assert 'id="session-dialog"' in html
     assert 'id="context-roots"' in html
@@ -299,6 +301,20 @@ def test_header_and_composer_use_compact_mac_primitives():
     assert ".composer {" in css
     assert "border-radius: 16px;" in css
     assert ".composer select {\n  appearance: none;" in css
+
+
+def test_settings_general_uses_functional_codex_style_rows():
+    """The visual card density must be backed by real local settings APIs."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    css = (UI / "app.css").read_text(encoding="utf-8")
+
+    assert 'class="settings-card"' in html
+    assert 'class="settings-row settings-switch-row"' in html
+    assert 'function setRoutingProfile' in script
+    assert '"/v1/settings/failover"' in script
+    assert 'el["settings-routing-profile"].disabled = busy || state.routingPending;' in script
+    assert ".settings-card > .settings-row + .settings-row" in css
 
 
 def test_composer_preserves_all_controls_at_the_minimum_macos_window_width():
