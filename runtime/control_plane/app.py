@@ -605,6 +605,7 @@ class ControlPlaneServices(Protocol):
     goals: GoalControl | None
     audit: Any | None
     extensions: Any | None
+    integrations: Any | None
     managed_policy: Any | None
 
 
@@ -764,6 +765,23 @@ def create_control_plane_app(
         if ext is None:
             raise HTTPException(status_code=503, detail="extensions unavailable")
         return [pkg.to_dict() for pkg in ext.list()]
+
+    @app.get("/v1/integrations")
+    async def list_integrations() -> list[dict[str, Any]]:
+        catalog = getattr(services, "integrations", None)
+        if catalog is None:
+            raise HTTPException(status_code=503, detail="integrations unavailable")
+        return [
+            {
+                "id": record.integration_id,
+                "version": record.version,
+                "status": record.status,
+                "digest": record.digest,
+                "source_digest": record.source_digest,
+                "provenance": record.provenance,
+            }
+            for record in await asyncio.to_thread(catalog.list)
+        ]
 
     @app.post("/v1/extensions")
     async def register_extension(request: Request) -> dict[str, Any]:

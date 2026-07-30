@@ -80,6 +80,7 @@ class RuntimeServices:
     preview: Any = None
     managed_policy: Any = None
     extensions: Any = None
+    integrations: Any = None
     security: CodexSecurityScanner | None = None
 
 
@@ -112,6 +113,7 @@ def compose_runtime(
     preview: Any = None,
     managed_policy: Any = None,
     extensions: Any = None,
+    integrations: Any = None,
     integration_resolver: IntegrationResolver | None = None,
     security: CodexSecurityScanner | None = None,
 ) -> RuntimeServices:
@@ -303,6 +305,7 @@ def compose_runtime(
         preview=preview,
         managed_policy=managed_policy,
         extensions=extensions,
+        integrations=integrations,
         security=security or CodexSecurityScanner(
             base,
             executable_provider=lambda: settings.view().get("codex_security_bin"),

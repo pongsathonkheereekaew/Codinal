@@ -976,7 +976,21 @@ async function loadArtifacts(sessionId = state.sessionId) {
 
 async function loadExtensions() {
   try {
-    state.extensions = await api("/v1/extensions");
+    const [extensions, integrations] = await Promise.all([
+      api("/v1/extensions"),
+      api("/v1/integrations").catch(() => []),
+    ]);
+    state.extensions = [
+      ...extensions,
+      ...integrations.map((integration) => ({
+        ...integration,
+        name: integration.id.split("/").at(-1),
+        publisher: integration.id.split("/")[0],
+        kind: `integration · ${integration.status}`,
+        requested_permissions: [],
+        enabled: integration.status === "enabled-compatible",
+      })),
+    ];
   } catch (error) {
     state.extensions = [];
     toast(`Extensions unavailable: ${error.message}`, "error");
@@ -992,6 +1006,7 @@ function renderExtensions() {
     return;
   }
   for (const extension of state.extensions) {
+    const integration = String(extension.kind || "").startsWith("integration ·");
     const row = node("article", "extension-row");
     const identity = node("div", "extension-identity");
     identity.append(
@@ -1006,7 +1021,10 @@ function renderExtensions() {
     enabled.checked = Boolean(extension.enabled);
     enabled.setAttribute("role", "switch");
     enabled.setAttribute("aria-label", `Enable ${extension.id}`);
+    enabled.disabled = integration;
+    enabled.title = integration ? "Integration state is determined by compatibility evidence" : "";
     enabled.addEventListener("change", async () => {
+      if (integration) return;
       enabled.disabled = true;
       try {
         await api(`/v1/extensions/${encodeURIComponent(extension.id)}`, {
@@ -1022,7 +1040,9 @@ function renderExtensions() {
     });
     const verify = node("button", "", "Verify");
     verify.type = "button";
+    verify.disabled = integration;
     verify.addEventListener("click", async () => {
+      if (integration) return;
       verify.disabled = true;
       try {
         const result = await api(`/v1/extensions/${encodeURIComponent(extension.id)}/verify`);
@@ -1035,7 +1055,9 @@ function renderExtensions() {
     });
     const remove = node("button", "remove-extension", "Remove");
     remove.type = "button";
+    remove.disabled = integration;
     remove.addEventListener("click", async () => {
+      if (integration) return;
       if (!window.confirm(`Remove ${extension.id}?`)) return;
       remove.disabled = true;
       try {
