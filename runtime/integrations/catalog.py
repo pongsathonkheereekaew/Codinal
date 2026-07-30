@@ -102,6 +102,10 @@ class IntegrationCatalog:
         ).fetchone()
         return self._from_row(row) if row else None
 
+    def load_manifest(self, record: CatalogRecord) -> dict[str, Any]:
+        """Revalidate canonical bytes at the only runtime catalog boundary."""
+        return json.loads((record.path / "integration.json").read_bytes())
+
     def _sync_index(self) -> None:
         records = [self._read(path) for path in self.root.glob("*/*/*/integration.json")]
         with self._connection:
