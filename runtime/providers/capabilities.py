@@ -59,7 +59,11 @@ def capabilities_for(model: str) -> ModelCapabilities:
             parallel_tool_calls=False,
             streaming=True,
         )
+    # An unknown provider/model has no capability evidence. Plugin compatibility
+    # must fail closed rather than inheriting ModelCapabilities' optimistic
+    # constructor defaults.
     return ModelCapabilities(
+        tools=False,
         parallel_tool_calls=False,
-        streaming=True,
+        streaming=False,
     )
