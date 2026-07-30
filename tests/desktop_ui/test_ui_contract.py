@@ -313,6 +313,24 @@ def test_sidebar_controls_stay_pinned_and_primary_panes_are_resizable():
     assert "outline: 2px solid var(--accent);" in css
 
 
+def test_workspace_editor_and_terminal_are_vertically_resizable():
+    """The primary workspace panes expose accessible vertical splitters."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    css = (UI / "app.css").read_text(encoding="utf-8")
+
+    assert 'id="editor-resizer"' in html
+    assert 'id="terminal-resizer"' in html
+    assert 'aria-orientation="horizontal"' in html
+    assert "--editor-height" in css and "--terminal-height" in css
+    assert "function installStackResizer" in script
+    assert '"editor-resizer"' in script and '"terminal-resizer"' in script
+    assert "aria-valuemin" in script and "aria-valuemax" in script and "aria-valuenow" in script
+    assert "const maxSize" in script
+    assert "MutationObserver" in script and "ResizeObserver" in script
+    assert "grid-template-rows: auto auto minmax(72px, 1fr);" in css
+
+
 def test_macos_overlay_reserves_a_safe_traffic_control_zone():
     """The New task control must remain below macOS traffic lights on narrow widths."""
     css = (UI / "app.css").read_text(encoding="utf-8")
@@ -1050,11 +1068,11 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
     assert ".routing-resolution.has-degradation" in css
     assert ".message-routing" in css
     assert ".message-routing.has-degradation" in css
-    assert "58px repeat(3, auto) 0fr minmax(0, 1fr) auto auto" in css
-    assert ".terminal-panel { grid-row: 7; }" in css
+    assert "58px repeat(3, auto) 0 0 minmax(0, 1fr) 0 0 auto auto" in css
+    assert ".terminal-panel { grid-row: 9; }" in css
     assert "#terminal-stop," in css
     assert "grid-template-columns: minmax(0, 1fr) 130px auto auto auto;" in css
-    assert ".composer-wrap { grid-row: 8; }" in css
+    assert ".composer-wrap { grid-row: 11; }" in css
     workspace_css = css.split(".workspace {", 1)[1].split("}", 1)[0]
     assert "min-height: 0" in workspace_css
     assert "overflow: hidden" in workspace_css

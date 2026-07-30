@@ -37,6 +37,9 @@
   --sidebar-width: clamp(248px, 18.75vw, 360px);
   --utility-width: clamp(300px, 18.75vw, 360px);
   --pane-resizer-width: 6px;
+  --pane-resizer-height: 6px;
+  --editor-height: 38%;
+  --terminal-height: 280px;
 }
 
 :root[data-theme="dark"] {
@@ -269,10 +272,12 @@ select:focus-visible,
 }
 
 .pane-resizer-vertical { cursor: col-resize; }
+.pane-resizer-horizontal { cursor: row-resize; }
 .pane-resizer:hover,
 .pane-resizer:focus-visible { background: var(--accent-soft); }
 .pane-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 body.is-resizing-pane { cursor: col-resize; user-select: none; }
+body.is-resizing-row { cursor: row-resize; user-select: none; }
 #sidebar-resizer { grid-column: 2; }
 #utility-resizer { grid-column: 4; visibility: hidden; pointer-events: none; }
 .review-open #utility-resizer { visibility: visible; pointer-events: auto; }
@@ -761,14 +766,24 @@ body.is-resizing-pane { cursor: col-resize; user-select: none; }
   height: 100%;
   overflow: hidden;
   grid-template-rows:
-    58px repeat(3, auto) 0fr minmax(0, 1fr) auto auto;
+    58px repeat(3, auto) 0 0 minmax(0, 1fr) 0 0 auto auto;
   background: var(--bg);
 }
 
 /* When the editor is visible, it claims a flexible slice above the chat. */
 .workspace:has(.editor-panel:not(.is-hidden)) {
   grid-template-rows:
-    58px repeat(3, auto) minmax(180px, 38%) minmax(0, 1fr) auto auto;
+    58px repeat(3, auto) minmax(180px, var(--editor-height)) var(--pane-resizer-height) minmax(160px, 1fr) 0 0 auto auto;
+}
+
+.workspace:has(.terminal-panel:not(.is-hidden)) {
+  grid-template-rows:
+    58px repeat(3, auto) 0 0 minmax(160px, 1fr) var(--pane-resizer-height) minmax(160px, var(--terminal-height)) auto auto;
+}
+
+.workspace:has(.editor-panel:not(.is-hidden)):has(.terminal-panel:not(.is-hidden)) {
+  grid-template-rows:
+    58px repeat(3, auto) minmax(180px, var(--editor-height)) var(--pane-resizer-height) minmax(160px, 1fr) var(--pane-resizer-height) minmax(160px, var(--terminal-height)) auto auto;
 }
 
 .task-header { grid-row: 1; }
@@ -776,9 +791,15 @@ body.is-resizing-pane { cursor: col-resize; user-select: none; }
 .plan-build-panel { grid-row: 3; }
 .goal-panel { grid-row: 4; }
 .editor-panel { grid-row: 5; }
-.conversation { grid-row: 6; }
-.terminal-panel { grid-row: 7; }
-.composer-wrap { grid-row: 8; }
+.editor-panel + .pane-resizer { grid-row: 6; }
+.conversation { grid-row: 7; }
+#terminal-resizer { grid-row: 8; }
+.terminal-panel { grid-row: 9; }
+.preview-panel { grid-row: 10; }
+.composer-wrap { grid-row: 11; }
+
+.editor-panel.is-hidden + .pane-resizer,
+#terminal-resizer:has(+ .terminal-panel.is-hidden) { display: none; }
 
 .editor-panel {
   display: grid;
@@ -1399,9 +1420,11 @@ body.is-resizing-pane { cursor: col-resize; user-select: none; }
 
 .terminal-panel {
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   padding: 8px 20px 12px;
   display: grid;
+  grid-template-rows: auto auto minmax(72px, 1fr);
   gap: 8px;
   background: linear-gradient(transparent, var(--bg) 18%);
 }
@@ -1584,8 +1607,9 @@ iframe.preview-frame {
 
 /* xterm.js mount point: needs an explicit height or the renderer collapses. */
 .terminal-host {
-  min-height: 200px;
-  max-height: 320px;
+  min-height: 72px;
+  max-height: none;
+  height: 100%;
   margin: 0;
   padding: 6px 8px;
   overflow: hidden;
@@ -3416,6 +3440,26 @@ body.is-dragging .drop-hint {
   .composer select {
     max-width: 90px;
   }
+}
+
+@media (max-height: 700px) {
+  .workspace:has(.editor-panel:not(.is-hidden)) {
+    grid-template-rows:
+      52px repeat(3, auto) minmax(120px, var(--editor-height)) var(--pane-resizer-height) minmax(100px, 1fr) 0 0 auto auto;
+  }
+
+  .workspace:has(.terminal-panel:not(.is-hidden)) {
+    grid-template-rows:
+      52px repeat(3, auto) 0 0 minmax(100px, 1fr) var(--pane-resizer-height) minmax(120px, var(--terminal-height)) auto auto;
+  }
+
+  .workspace:has(.editor-panel:not(.is-hidden)):has(.terminal-panel:not(.is-hidden)) {
+    grid-template-rows:
+      52px repeat(3, auto) minmax(120px, var(--editor-height)) var(--pane-resizer-height) minmax(100px, 1fr) var(--pane-resizer-height) minmax(120px, var(--terminal-height)) auto auto;
+  }
+
+  .terminal-host { min-height: 72px; max-height: 200px; }
+  .composer-wrap { padding-block: 8px 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

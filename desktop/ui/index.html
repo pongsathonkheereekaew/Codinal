@@ -100,7 +100,7 @@
         role="separator" aria-orientation="vertical" aria-label="Resize sidebar"
         aria-controls="sidebar" tabindex="0"></div>
 
-      <main class="workspace">
+      <main id="workspace" class="workspace">
         <header id="task-header" class="task-header" data-tauri-drag-region>
           <button id="toggle-sidebar" class="icon-button" type="button"
             aria-label="Toggle sidebar" title="Toggle sidebar">☰</button>
@@ -186,6 +186,9 @@
             <div class="editor-empty">Open a file from the project tree to start editing</div>
           </div>
         </section>
+        <div id="editor-resizer" class="pane-resizer pane-resizer-horizontal"
+          role="separator" aria-orientation="horizontal" aria-label="Resize editor"
+          aria-controls="editor-panel" tabindex="0"></div>
 
         <section id="conversation" class="conversation"
           aria-label="Conversation" aria-live="polite">
@@ -214,6 +217,9 @@
           </div>
           <div id="message-list" class="message-list"></div>
         </section>
+        <div id="terminal-resizer" class="pane-resizer pane-resizer-horizontal"
+          role="separator" aria-orientation="horizontal" aria-label="Resize terminal"
+          aria-controls="terminal-panel" tabindex="0"></div>
 
         <section id="terminal-panel" class="terminal-panel is-hidden"
           aria-label="Interactive terminal">

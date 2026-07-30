@@ -127,7 +127,7 @@ const el = Object.fromEntries(
   [
     "startup", "startup-status", "app", "sidebar", "sidebar-resizer", "utility-resizer", "new-task",
     "session-search", "refresh-sessions", "session-list", "theme-toggle",
-    "open-settings", "toggle-sidebar", "task-header", "task-title", "workspace-path",
+    "open-settings", "toggle-sidebar", "workspace", "task-header", "task-title", "workspace-path",
     "stirling-url", "save-stirling-url", "test-stirling-url", "stirling-status",
     "runtime-status", "review-button", "subagents-button", "change-count", "conversation",
     "empty-state", "message-list", "prompt", "attach-files",
@@ -183,7 +183,7 @@ const el = Object.fromEntries(
     "plan-build-dialog", "plan-build-tasks", "plan-build-models",
     "create-plan-build",
     "goal-panel", "goal-summary", "goal-list", "new-goal",
-    "editor-panel", "editor-strip", "editor-pane",
+    "editor-panel", "editor-resizer", "editor-strip", "editor-pane", "terminal-resizer",
     "goal-dialog", "goal-objective", "goal-requirements",
     "command-palette", "command-palette-close", "command-palette-input",
     "command-palette-status", "command-palette-results",
@@ -250,6 +250,91 @@ function installPaneResizer(handle, property, direction) {
       ? el.sidebar.getBoundingClientRect().width
       : el["review-panel"].getBoundingClientRect().width;
     setSize(size + (event.key === "ArrowRight" ? 16 : -16) * direction);
+  });
+}
+
+function installStackResizer(handle, panel, property, direction, min) {
+  if (!handle || !panel) return;
+  const storageKey = `codinal${property}`;
+  const other = property === "--editor-height" ? el["terminal-panel"] : el["editor-panel"];
+  const fixedPanels = [
+    el["task-header"], el["plan-panel"], el["plan-build-panel"], el["goal-panel"],
+    el["preview-panel"], el["composer-wrap"], el["editor-resizer"], el["terminal-resizer"],
+  ];
+  let currentSize = null;
+  const isVisible = (element) => element && !element.classList.contains("is-hidden");
+  const height = (element) => isVisible(element) ? element.getBoundingClientRect().height : 0;
+  const maxSize = () => {
+    const fixed = fixedPanels.reduce((total, element) => total + height(element), 0);
+    const conversationMin = window.innerHeight <= 700 ? 100 : 160;
+    return Math.max(min, Math.floor(el.workspace.clientHeight - fixed - height(other) - conversationMin));
+  };
+  const syncAria = (size, max) => {
+    handle.setAttribute("aria-valuemin", String(min));
+    handle.setAttribute("aria-valuemax", String(max));
+    handle.setAttribute("aria-valuenow", String(size));
+  };
+  const setSize = (value) => {
+    const max = maxSize();
+    const size = Math.max(min, Math.min(max, Math.round(value)));
+    currentSize = size;
+    el.workspace.style.setProperty(property, `${size}px`);
+    localStorage.setItem(storageKey, String(size));
+    syncAria(size, max);
+  };
+  const saved = Number(localStorage.getItem(storageKey));
+  if (Number.isFinite(saved) && saved >= min) setSize(saved);
+  else syncAria(min, maxSize());
+  window.addEventListener("resize", () => {
+    if (currentSize !== null) setSize(currentSize);
+    else syncAria(min, maxSize());
+  });
+  handle.addEventListener("focus", () => {
+    syncAria(Math.max(min, Math.round(panel.getBoundingClientRect().height)), maxSize());
+  });
+  const visibilityObserver = new MutationObserver(() => {
+    if (currentSize !== null) setSize(currentSize);
+    else syncAria(min, maxSize());
+  });
+  const watchedPanels = new Set([...fixedPanels, panel, other]);
+  for (const watched of watchedPanels) {
+    visibilityObserver.observe(watched, { attributes: true, attributeFilter: ["class"] });
+  }
+  const layoutObserver = new ResizeObserver(() => {
+    if (currentSize !== null) setSize(currentSize);
+    else syncAria(min, maxSize());
+  });
+  for (const watched of new Set([el.workspace, ...fixedPanels, other])) {
+    layoutObserver.observe(watched);
+  }
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startY = event.clientY;
+    const startSize = panel.getBoundingClientRect().height;
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add("is-resizing-row");
+    const move = (moveEvent) => setSize(startSize + direction * (moveEvent.clientY - startY));
+    let finished = false;
+    const end = () => {
+      if (finished) return;
+      finished = true;
+      document.body.classList.remove("is-resizing-row");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      handle.removeEventListener("lostpointercapture", end);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end, { once: true });
+    window.addEventListener("pointercancel", end, { once: true });
+    handle.addEventListener("lostpointercapture", end, { once: true });
+  });
+  handle.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    event.preventDefault();
+    const amount = event.key === "ArrowDown" ? 16 : -16;
+    setSize(panel.getBoundingClientRect().height + direction * amount);
   });
 }
 
@@ -5981,6 +6066,8 @@ async function renderCustomProviders() {
 function wireEvents() {
   installPaneResizer(el["sidebar-resizer"], "--sidebar-width", 1);
   installPaneResizer(el["utility-resizer"], "--utility-width", -1);
+  installStackResizer(el["editor-resizer"], el["editor-panel"], "--editor-height", 1, 180);
+  installStackResizer(el["terminal-resizer"], el["terminal-panel"], "--terminal-height", -1, 160);
   el["new-task"].addEventListener("click", newTask);
   el["add-context-root"].addEventListener("click", () => {
     addContextRoot().catch((error) => toast(error.message, "error"));
