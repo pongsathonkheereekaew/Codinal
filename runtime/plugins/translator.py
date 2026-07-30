@@ -16,6 +16,12 @@ _ASSET_KINDS = frozenset({"skills", "instructions", "mcp", "agents"})
 _EXECUTABLE_ASSET_KINDS = frozenset({"hooks", "scripts", "executables"})
 _MODEL_CAPABILITIES = frozenset(ModelCapabilities.__dataclass_fields__)
 _MAX_MANIFEST_BYTES = 64 * 1024
+_ASSET_FIELDS = {
+    "skills": frozenset({"name", "content"}),
+    "instructions": frozenset({"path", "content"}),
+    "mcp": frozenset({"name", "url", "include_tools", "exclude_tools"}),
+    "agents": frozenset({"name", "instructions"}),
+}
 
 
 @dataclass(frozen=True)
@@ -184,7 +190,9 @@ def _validated_manifest(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], by
     for kind, values in assets.items():
         if not isinstance(values, list) or not all(isinstance(value, Mapping) for value in values):
             raise ValueError(f"assets.{kind} must be a list of objects")
-        normalized_assets[kind] = [dict(value) for value in values]
+        normalized_assets[kind] = [
+            _validated_asset(kind, value) for value in values
+        ]
     data["assets"] = normalized_assets
     try:
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -193,6 +201,48 @@ def _validated_manifest(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], by
     if len(canonical) > _MAX_MANIFEST_BYTES:
         raise ValueError("plugin manifest is too large")
     return data, canonical
+
+
+def _validated_asset(kind: str, asset: Mapping[str, Any]) -> dict[str, Any]:
+    data = dict(asset)
+    unknown = set(data) - _ASSET_FIELDS[kind]
+    if unknown:
+        raise ValueError(f"assets.{kind} contains unsupported field: {sorted(unknown)[0]}")
+    if kind == "instructions":
+        path = data.get("path")
+        if path != "AGENTS.md":
+            raise ValueError("assets.instructions.path must be AGENTS.md")
+        _required_text(data, "content", kind, maximum=16 * 1024)
+        return data
+    if kind in ("skills", "agents"):
+        _required_text(data, "name", kind, maximum=128)
+        _required_text(
+            data,
+            "content" if kind == "skills" else "instructions",
+            kind,
+            maximum=16 * 1024,
+        )
+        return data
+    _required_text(data, "name", kind, maximum=128)
+    url = data.get("url")
+    if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+        raise ValueError("assets.mcp.url must be an HTTP(S) URL")
+    for field in ("include_tools", "exclude_tools"):
+        values = data.get(field, [])
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value or len(value) > 128
+            for value in values
+        ):
+            raise ValueError(f"assets.mcp.{field} must be a list of strings")
+    return data
+
+
+def _required_text(
+    asset: Mapping[str, Any], field: str, kind: str, *, maximum: int
+) -> None:
+    value = asset.get(field)
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise ValueError(f"assets.{kind}.{field} must be a non-empty string")
 
 
 def _compatibility_diagnostics(

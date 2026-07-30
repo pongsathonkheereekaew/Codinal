@@ -49,12 +49,12 @@ def capabilities_for(model: str) -> ModelCapabilities:
             tools=True,
             streaming=True,
         )
-    if name.startswith(("gpt-5", "gpt-4")):
+    if provider == "openai" and name.startswith(("gpt-5", "gpt-4")):
         return ModelCapabilities(
             vision=True,
             streaming=True,
         )
-    if name.startswith(("o1", "o3", "o4")):
+    if provider == "openai" and name.startswith(("o1", "o3", "o4")):
         return ModelCapabilities(
             parallel_tool_calls=False,
             streaming=True,
