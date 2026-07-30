@@ -214,7 +214,7 @@ def test_environment_panel_is_a_codex_style_right_utility_rail():
     css = (UI / "app.css").read_text(encoding="utf-8")
     markup = (UI / "index.html").read_text(encoding="utf-8")
     assert ".app-shell {\n  position: relative;" in css
-    assert "grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) clamp(300px, 18.75vw, 360px);" in css
+    assert "grid-template-columns: var(--sidebar-width) var(--pane-resizer-width) minmax(0, 1fr) var(--pane-resizer-width) var(--utility-width);" in css
     assert "grid-column: 3;" in css
     assert "border-left: 0.5px solid var(--line);" in css
     assert "visibility: hidden;" in css
@@ -292,6 +292,33 @@ def test_sidebar_uses_quiet_codex_navigation_primitives():
     new_task = css.split(".new-task {", 1)[1].split("}\n\n.new-task:hover", 1)[0]
     assert "background: transparent;" in new_task
     assert ".new-task:hover {\n  background: var(--surface-hover);" in css
+
+
+def test_sidebar_controls_stay_pinned_and_primary_panes_are_resizable():
+    """Navigation utilities stay reachable and pane sizes are user-adjustable."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    css = (UI / "app.css").read_text(encoding="utf-8")
+
+    assert 'id="sidebar-resizer"' in html
+    assert 'id="utility-resizer"' in html
+    assert 'role="separator"' in html
+    assert 'aria-orientation="vertical"' in html
+    footer = css.rsplit(".sidebar-footer {", 1)[1].split("}", 1)[0]
+    assert "margin-top: auto;" in footer
+    assert "--sidebar-width" in css and "--utility-width" in css
+    assert "function installPaneResizer" in script
+    assert '"sidebar-resizer"' in script and '"utility-resizer"' in script
+    assert "pointercancel" in script and "lostpointercapture" in script
+    assert "outline: 2px solid var(--accent);" in css
+
+
+def test_macos_overlay_reserves_a_safe_traffic_control_zone():
+    """The New task control must remain below macOS traffic lights on narrow widths."""
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    assert "--macos-titlebar-safe-height: 52px;" in css
+    traffic_spacer = css.split(".traffic-spacer {", 1)[1].split("}", 1)[0]
+    assert "height: var(--macos-titlebar-safe-height);" in traffic_spacer
 
 
 def test_header_and_composer_use_compact_mac_primitives():

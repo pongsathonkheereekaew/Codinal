@@ -125,7 +125,7 @@ const state = {
 
 const el = Object.fromEntries(
   [
-    "startup", "startup-status", "app", "sidebar", "new-task",
+    "startup", "startup-status", "app", "sidebar", "sidebar-resizer", "utility-resizer", "new-task",
     "session-search", "refresh-sessions", "session-list", "theme-toggle",
     "open-settings", "toggle-sidebar", "task-header", "task-title", "workspace-path",
     "stirling-url", "save-stirling-url", "test-stirling-url", "stirling-status",
@@ -200,6 +200,57 @@ function node(tag, className, text) {
   if (className) element.className = className;
   if (text !== undefined && text !== null) element.textContent = String(text);
   return element;
+}
+
+function installPaneResizer(handle, property, direction) {
+  if (!handle) return;
+  const min = property === "--sidebar-width" ? 232 : 280;
+  const storageKey = `codinal${property}`;
+  let currentSize = null;
+  const setSize = (value) => {
+    const max = Math.max(min, Math.floor(window.innerWidth * 0.45));
+    const size = Math.max(min, Math.min(max, Math.round(value)));
+    currentSize = size;
+    el.app.style.setProperty(property, `${size}px`);
+    localStorage.setItem(storageKey, String(size));
+  };
+  const saved = Number(localStorage.getItem(storageKey));
+  if (Number.isFinite(saved) && saved >= min) setSize(saved);
+  window.addEventListener("resize", () => { if (currentSize !== null) setSize(currentSize); });
+  const start = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startSize = direction === "start"
+      ? el.sidebar.getBoundingClientRect().width
+      : el["review-panel"].getBoundingClientRect().width;
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add("is-resizing-pane");
+    const move = (moveEvent) => setSize(startSize + direction * (moveEvent.clientX - startX));
+    let finished = false;
+    const end = () => {
+      if (finished) return;
+      finished = true;
+      document.body.classList.remove("is-resizing-pane");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      handle.removeEventListener("lostpointercapture", end);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end, { once: true });
+    window.addEventListener("pointercancel", end, { once: true });
+    handle.addEventListener("lostpointercapture", end, { once: true });
+  };
+  handle.addEventListener("pointerdown", start);
+  handle.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const size = property === "--sidebar-width"
+      ? el.sidebar.getBoundingClientRect().width
+      : el["review-panel"].getBoundingClientRect().width;
+    setSize(size + (event.key === "ArrowRight" ? 16 : -16) * direction);
+  });
 }
 
 function shortPath(path) {
@@ -5928,6 +5979,8 @@ async function renderCustomProviders() {
 }
 
 function wireEvents() {
+  installPaneResizer(el["sidebar-resizer"], "--sidebar-width", 1);
+  installPaneResizer(el["utility-resizer"], "--utility-width", -1);
   el["new-task"].addEventListener("click", newTask);
   el["add-context-root"].addEventListener("click", () => {
     addContextRoot().catch((error) => toast(error.message, "error"));

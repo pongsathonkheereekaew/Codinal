@@ -33,6 +33,10 @@
   --motion-fast: 120ms;
   --motion-base: 180ms;
   --motion-panel: 220ms;
+  --macos-titlebar-safe-height: 52px;
+  --sidebar-width: clamp(248px, 18.75vw, 360px);
+  --utility-width: clamp(300px, 18.75vw, 360px);
+  --pane-resizer-width: 6px;
 }
 
 :root[data-theme="dark"] {
@@ -224,21 +228,21 @@ select:focus-visible,
 .app-shell {
   position: relative;
   display: grid;
-  grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) 0;
+  grid-template-columns: var(--sidebar-width) var(--pane-resizer-width) minmax(0, 1fr) 0 0;
   height: 100%;
   transition: grid-template-columns var(--motion-panel) var(--ease-out);
 }
 
 .app-shell.sidebar-collapsed {
-  grid-template-columns: 0 minmax(0, 1fr) 0;
+  grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
 }
 
 .app-shell.review-open {
-  grid-template-columns: clamp(248px, 18.75vw, 360px) minmax(0, 1fr) clamp(300px, 18.75vw, 360px);
+  grid-template-columns: var(--sidebar-width) var(--pane-resizer-width) minmax(0, 1fr) var(--pane-resizer-width) var(--utility-width);
 }
 
 .app-shell.sidebar-collapsed.review-open {
-  grid-template-columns: 0 minmax(0, 1fr) clamp(300px, 18.75vw, 360px);
+  grid-template-columns: 0 0 minmax(0, 1fr) var(--pane-resizer-width) var(--utility-width);
 }
 
 .sidebar {
@@ -252,9 +256,26 @@ select:focus-visible,
 }
 
 .traffic-spacer {
-  height: 38px;
+  height: var(--macos-titlebar-safe-height);
   flex: 0 0 auto;
 }
+
+.pane-resizer {
+  z-index: 4;
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+  touch-action: none;
+}
+
+.pane-resizer-vertical { cursor: col-resize; }
+.pane-resizer:hover,
+.pane-resizer:focus-visible { background: var(--accent-soft); }
+.pane-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+body.is-resizing-pane { cursor: col-resize; user-select: none; }
+#sidebar-resizer { grid-column: 2; }
+#utility-resizer { grid-column: 4; visibility: hidden; pointer-events: none; }
+.review-open #utility-resizer { visibility: visible; pointer-events: auto; }
 
 .brand-row {
   display: flex;
@@ -711,6 +732,7 @@ select:focus-visible,
 }
 
 .sidebar-footer {
+  margin-top: auto;
   min-width: 232px;
   padding: 8px;
   border-top: 1px solid var(--line);
@@ -732,6 +754,7 @@ select:focus-visible,
 }
 
 .workspace {
+  grid-column: 3;
   display: grid;
   min-width: 0;
   min-height: 0;
@@ -2090,7 +2113,7 @@ body.is-dragging .drop-hint {
 
 .review-panel {
   position: relative;
-  grid-column: 3;
+  grid-column: 5;
   z-index: 2;
   width: auto;
   max-height: none;
@@ -3315,12 +3338,14 @@ body.is-dragging .drop-hint {
 @media (max-width: 900px) {
   .app-shell,
   .app-shell.review-open {
-    grid-template-columns: 0 minmax(0, 1fr) 0;
+    grid-template-columns: 0 0 minmax(0, 1fr) 0 0;
   }
 
   .app-shell:not(.sidebar-collapsed) {
-    grid-template-columns: 232px minmax(0, 1fr) 0;
+    grid-template-columns: 232px 0 minmax(0, 1fr) 0 0;
   }
+
+  .pane-resizer { display: none; }
 
   .review-panel {
     position: absolute;
