@@ -68,6 +68,7 @@ class ServerConfig:
     default_model: str
     host: str = "127.0.0.1"
     managed_policy_path: Path | None = None
+    integrations_dir: Path | None = None
 
 
 def load_server_config() -> ServerConfig:
@@ -98,12 +99,16 @@ def load_server_config() -> ServerConfig:
     )
     policy_path = os.environ.get("CODINAL_MANAGED_POLICY", "")
     managed_policy_path = Path(policy_path).expanduser() if policy_path else None
+    integrations_dir = Path(
+        os.environ.get("CODINAL_INTEGRATIONS_DIR", "~/.agents/integrations")
+    ).expanduser()
     return ServerConfig(
         token=token,
         port=port,
         data_dir=data_dir,
         default_model=default_model,
         managed_policy_path=managed_policy_path,
+        integrations_dir=integrations_dir,
     )
 
 
@@ -146,7 +151,9 @@ def build_services(
     github_service = GitHubService(secret_service)
     preview_store = PreviewEvidenceStore(config.data_dir)
     extension_registry = ExtensionRegistry(config.data_dir)
-    integration_catalog = IntegrationCatalog(config.data_dir / "integrations")
+    integration_catalog = IntegrationCatalog(
+        config.integrations_dir or config.data_dir / "integrations"
+    )
     sandbox_base = (config.data_dir / "sandbox").expanduser().resolve()
 
     def sandbox_directory(session_id: str) -> Path:

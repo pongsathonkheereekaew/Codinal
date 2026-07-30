@@ -776,11 +776,12 @@ def create_control_plane_app(
                 "id": record.integration_id,
                 "version": record.version,
                 "status": record.status,
+                "diagnostics": list(record.diagnostics),
                 "digest": record.digest,
                 "source_digest": record.source_digest,
                 "provenance": record.provenance,
             }
-            for record in await asyncio.to_thread(catalog.list)
+            for record in catalog.list()
         ]
 
     @app.post("/v1/extensions")

@@ -986,7 +986,7 @@ async function loadExtensions() {
         ...integration,
         name: integration.id.split("/").at(-1),
         publisher: integration.id.split("/")[0],
-        kind: `integration · ${integration.status}`,
+        kind: `integration · ${integration.status}${integration.diagnostics?.length ? ` · ${integration.diagnostics.join("; ")}` : ""}`,
         requested_permissions: [],
         enabled: integration.status === "enabled-compatible",
       })),

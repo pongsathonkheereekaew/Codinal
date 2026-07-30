@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
+import threading
 from typing import Any, Mapping
 
 from runtime.plugins.translator import _validated_manifest
@@ -25,6 +26,7 @@ class CatalogRecord:
     digest: str
     source_digest: str
     status: str
+    diagnostics: tuple[str, ...]
     path: Path
     provenance: dict[str, Any]
 
@@ -37,17 +39,26 @@ class IntegrationCatalog:
         self.root.mkdir(parents=True, exist_ok=True)
         self._staging = self.root / ".staging"
         self._staging.mkdir(exist_ok=True)
-        self._connection = sqlite3.connect(self.root / _INDEX)
+        self._lock = threading.RLock()
+        self._connection = sqlite3.connect(self.root / _INDEX, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute(
             "CREATE TABLE IF NOT EXISTS integrations "
-            "(id TEXT, version TEXT, digest TEXT, source_digest TEXT, status TEXT, "
+            "(id TEXT, version TEXT, digest TEXT, source_digest TEXT, status TEXT, diagnostics TEXT NOT NULL DEFAULT '[]', "
             "path TEXT, provenance TEXT, PRIMARY KEY(id, version))"
         )
+        columns = {
+            row[1] for row in self._connection.execute("PRAGMA table_info(integrations)")
+        }
+        if "diagnostics" not in columns:
+            self._connection.execute(
+                "ALTER TABLE integrations ADD COLUMN diagnostics TEXT NOT NULL DEFAULT '[]'"
+            )
         self._sync_index()
 
     def close(self) -> None:
-        self._connection.close()
+        with self._lock:
+            self._connection.close()
 
     def stage_and_activate(
         self,
@@ -57,8 +68,25 @@ class IntegrationCatalog:
         status: str = "enabled-compatible",
         diagnostics: tuple[str, ...] = (),
     ) -> CatalogRecord:
+        with self._lock:
+            return self._stage_and_activate(
+                manifest,
+                provenance=provenance,
+                status=status,
+                diagnostics=diagnostics,
+            )
+
+    def _stage_and_activate(
+        self,
+        manifest: Mapping[str, Any],
+        *,
+        provenance: Mapping[str, Any],
+        status: str = "enabled-compatible",
+        diagnostics: tuple[str, ...] = (),
+    ) -> CatalogRecord:
         if status not in _STATUSES:
             raise ValueError(f"unsupported catalog status: {status}")
+        diagnostics = _diagnostics(diagnostics)
         if (status == "enabled-compatible") != (not diagnostics):
             raise ValueError("catalog status and diagnostics disagree")
         provenance_data = _provenance(provenance)
@@ -75,7 +103,8 @@ class IntegrationCatalog:
         record = CatalogRecord(
             integration_id=data["id"], version=version,
             digest=_digest(canonical), source_digest=_digest(source_canonical),
-            status=status, path=target, provenance=provenance_data,
+            status=status, diagnostics=diagnostics, path=target,
+            provenance=provenance_data,
         )
         stage = Path(tempfile.mkdtemp(prefix="integration-", dir=self._staging))
         try:
@@ -97,15 +126,17 @@ class IntegrationCatalog:
             raise
 
     def get(self, integration_id: str, version: str) -> CatalogRecord | None:
-        row = self._connection.execute(
-            "SELECT * FROM integrations WHERE id = ? AND version = ?", (integration_id, version)
-        ).fetchone()
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM integrations WHERE id = ? AND version = ?", (integration_id, version)
+            ).fetchone()
         return self._from_row(row) if row else None
 
     def list(self) -> list[CatalogRecord]:
-        rows = self._connection.execute(
-            "SELECT * FROM integrations ORDER BY id, version"
-        ).fetchall()
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM integrations ORDER BY id, version"
+            ).fetchall()
         return [self._from_row(row) for row in rows]
 
     def load_manifest(self, record: CatalogRecord) -> dict[str, Any]:
@@ -134,23 +165,37 @@ class IntegrationCatalog:
         provenance = _provenance(json.loads((folder / "provenance.json").read_text(encoding="utf-8")))
         status_data = json.loads((folder / "status.json").read_text(encoding="utf-8"))
         status = status_data["status"]
-        diagnostics = tuple(status_data.get("diagnostics", []))
+        diagnostics = _diagnostics(status_data.get("diagnostics", []))
         if status not in _STATUSES:
             raise ValueError(f"invalid catalog status: {status}")
         if (status == "enabled-compatible") != (not diagnostics):
             raise ValueError("catalog status and diagnostics disagree")
-        return CatalogRecord(data["id"], data["version"], _digest(canonical), _digest(canonical), status, folder, provenance)
+        return CatalogRecord(
+            data["id"], data["version"], _digest(canonical),
+            _digest(canonical), status, diagnostics, folder, provenance,
+        )
 
     def _upsert(self, record: CatalogRecord) -> None:
         self._connection.execute(
-            "INSERT OR REPLACE INTO integrations VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (record.integration_id, record.version, record.digest, record.source_digest,
-             record.status, str(record.path), json.dumps(record.provenance, sort_keys=True)),
+            "INSERT OR REPLACE INTO integrations "
+            "(id, version, digest, source_digest, status, diagnostics, path, provenance) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.integration_id, record.version, record.digest,
+                record.source_digest, record.status,
+                json.dumps(record.diagnostics), str(record.path),
+                json.dumps(record.provenance, sort_keys=True),
+            ),
         )
 
     @staticmethod
     def _from_row(row: sqlite3.Row) -> CatalogRecord:
-        return CatalogRecord(row["id"], row["version"], row["digest"], row["source_digest"], row["status"], Path(row["path"]), json.loads(row["provenance"]))
+        return CatalogRecord(
+            row["id"], row["version"], row["digest"],
+            row["source_digest"], row["status"],
+            tuple(json.loads(row["diagnostics"])), Path(row["path"]),
+            json.loads(row["provenance"]),
+        )
 
 
 def _identity(manifest: Mapping[str, Any]) -> tuple[str, str]:
@@ -185,6 +230,15 @@ def _provenance(value: Mapping[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError) as error:
         raise ValueError("provenance must contain JSON values") from error
     return data
+
+
+def _diagnostics(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)) or any(
+        not isinstance(item, str) or not item or len(item) > 1024
+        for item in value
+    ):
+        raise ValueError("catalog diagnostics must be non-empty strings")
+    return tuple(value)
 
 
 def _digest(content: bytes) -> str:

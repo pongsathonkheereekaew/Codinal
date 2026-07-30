@@ -68,3 +68,15 @@ def test_rejects_unsafe_version_and_tampered_catalog_content(tmp_path):
     catalog.close()
     with pytest.raises(ValueError, match="unsupported executable content"):
         IntegrationCatalog(tmp_path)
+
+
+def test_rejects_non_string_catalog_diagnostics(tmp_path):
+    catalog = IntegrationCatalog(tmp_path)
+
+    with pytest.raises(ValueError, match="catalog diagnostics"):
+        catalog.stage_and_activate(
+            _manifest(),
+            provenance=_provenance(),
+            status="rejected",
+            diagnostics=(1,),
+        )

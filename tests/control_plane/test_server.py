@@ -47,7 +47,58 @@ def test_server_config_is_loopback_only(
     assert config.token == TOKEN
     assert config.data_dir == tmp_path
     assert config.default_model == "test/provider-model"
+    assert config.integrations_dir == Path("~/.agents/integrations").expanduser()
     assert "CODINAL_SESSION_TOKEN" not in os.environ
+
+
+def test_integrations_endpoint_exposes_catalog_provenance_and_rejection(tmp_path: Path) -> None:
+    catalog_dir = tmp_path / "integrations"
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=43123,
+            data_dir=tmp_path / "data",
+            default_model="openai:gpt-test",
+            integrations_dir=catalog_dir,
+        )
+    )
+    services.integrations.stage_and_activate(
+        {
+            "schema": "codinal.integration.v1",
+            "id": "acme/reviewer",
+            "publisher": "acme",
+            "version": "1.0.0",
+            "requested_permissions": [],
+            "host_requirements": [],
+            "model_requirements": [],
+            "assets": {"skills": [{"name": "review", "content": "Review."}]},
+        },
+        provenance={"source": "fixture", "issuer": "acme", "signature": "test"},
+        status="rejected",
+        diagnostics=("policy denied",),
+    )
+    with TestClient(create_control_plane_app(token=TOKEN, services=services)) as client:
+        response = client.get(
+            "/v1/integrations", headers={"Authorization": f"Bearer {TOKEN}"}
+        )
+
+    assert response.status_code == 200
+    record = services.integrations.list()[0]
+    assert response.json() == [
+        {
+            "id": "acme/reviewer",
+            "version": "1.0.0",
+            "status": "rejected",
+            "diagnostics": ["policy denied"],
+            "digest": record.digest,
+            "source_digest": record.source_digest,
+            "provenance": {
+                "source": "fixture",
+                "issuer": "acme",
+                "signature": "test",
+            },
+        }
+    ]
 
 
 def test_server_config_requires_session_token(

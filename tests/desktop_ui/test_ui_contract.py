@@ -379,6 +379,8 @@ def test_settings_exposes_only_real_ecosystem_controls():
         assert f'id="{element}"' in html
     assert "async function loadExtensions" in script
     assert 'api("/v1/extensions")' in script
+    assert 'api("/v1/integrations")' in script
+    assert "integration.diagnostics" in script
     assert "function renderShortcutReference" in script
     assert 'data-planned="true"' in html
 
