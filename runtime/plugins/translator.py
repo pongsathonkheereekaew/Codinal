@@ -1,4 +1,4 @@
-"""Translate ``codinal.plugin.v1`` manifests without executing their content."""
+"""Translate portable integration manifests without executing their content."""
 
 from __future__ import annotations
 
@@ -11,22 +11,22 @@ from runtime.providers import ModelCapabilities
 from runtime.providers.capabilities import capabilities_for
 
 
-_SCHEMA = "codinal.plugin.v1"
-_ASSET_KINDS = frozenset({"skills", "instructions", "mcp", "agents"})
+_SCHEMA = "codinal.integration.v1"
+_LEGACY_SCHEMA = "codinal.plugin.v1"
+_ASSET_KINDS = frozenset({"skills", "mcp", "agents"})
 _EXECUTABLE_ASSET_KINDS = frozenset({"hooks", "scripts", "executables"})
 _MODEL_CAPABILITIES = frozenset(ModelCapabilities.__dataclass_fields__)
 _MAX_MANIFEST_BYTES = 64 * 1024
 _ASSET_FIELDS = {
     "skills": frozenset({"name", "content"}),
-    "instructions": frozenset({"path", "content"}),
     "mcp": frozenset({"name", "url", "include_tools", "exclude_tools"}),
-    "agents": frozenset({"name", "instructions"}),
+    "agents": frozenset({"name", "prompt"}),
 }
 
 
 @dataclass(frozen=True)
-class PluginTranslation:
-    """A canonical declarative plugin plus its dispatch compatibility result."""
+class IntegrationTranslation:
+    """A canonical declarative integration plus its compatibility result."""
 
     plugin_id: str
     publisher: str
@@ -34,21 +34,28 @@ class PluginTranslation:
     host: str
     model: str
     digest: str
+    source_digest: str
     assets: dict[str, tuple[dict[str, Any], ...]]
     requested_permissions: tuple[str, ...]
     compatible: bool
     diagnostics: tuple[str, ...]
+    migration_diagnostics: tuple[str, ...] = ()
 
     def require_compatible(self) -> None:
         """Raise at the dispatch boundary if this pair cannot run the plugin."""
         if not self.compatible:
-            raise PluginCompatibilityError(
-                f"cannot dispatch plugin {self.plugin_id}: {'; '.join(self.diagnostics)}"
+            raise IntegrationCompatibilityError(
+                f"cannot dispatch integration {self.plugin_id}: {'; '.join(self.diagnostics)}"
             )
 
 
-class PluginCompatibilityError(ValueError):
-    """A host/model pair does not meet a plugin's declared requirements."""
+class IntegrationCompatibilityError(ValueError):
+    """A host/model pair does not meet an integration's requirements."""
+
+
+# Compatibility aliases for callers that imported the Phase 0 plugin contract.
+PluginTranslation = IntegrationTranslation
+PluginCompatibilityError = IntegrationCompatibilityError
 
 
 @dataclass(frozen=True)
@@ -74,27 +81,57 @@ class CapabilityMatrix:
         with open(path, encoding="utf-8") as file:
             return cls.from_host_manifest(yaml.safe_load(file))
 
-    def translate(self, manifest: Mapping[str, Any], *, host: str, model: str) -> PluginTranslation:
+    def translate(self, manifest: Mapping[str, Any], *, host: str, model: str) -> IntegrationTranslation:
         host_entry = self.hosts.get(host)
         if not isinstance(host_entry, Mapping):
-            data, canonical = _validated_manifest(manifest)
+            data, canonical, source_canonical, migration_diagnostics = _validated_manifest(manifest)
+            migration_notes, migration_errors = _migration_outcome(migration_diagnostics)
             return _translation(
                 data,
                 canonical,
                 host,
                 model,
-                (f"host {host} is not declared in the capability matrix",),
+                (*migration_errors, f"host {host} is not declared in the capability matrix"),
+                migration_notes,
+                source_canonical,
             )
         capabilities = host_entry.get("capabilities", {})
         if not isinstance(capabilities, Mapping):
             capabilities = {}
-        return translate_plugin(
+        return translate_integration(
             manifest,
             host=host,
             host_capabilities=capabilities,
             model=model,
             model_capabilities=capabilities_for(model),
         )
+
+
+def translate_integration(
+    manifest: Mapping[str, Any],
+    *,
+    host: str,
+    host_capabilities: Mapping[str, Mapping[str, Any]],
+    model: str,
+    model_capabilities: ModelCapabilities,
+) -> IntegrationTranslation:
+    """Validate and translate an integration, reporting unmet requirements.
+
+    The translator intentionally returns no executable representation. Callers
+    must refuse dispatch whenever ``compatible`` is false.
+    """
+    data, canonical, source_canonical, migration_diagnostics = _validated_manifest(manifest)
+    migration_notes, migration_errors = _migration_outcome(migration_diagnostics)
+    diagnostics = [*migration_errors, *_compatibility_diagnostics(
+        data,
+        host=host,
+        host_capabilities=host_capabilities,
+        model=model,
+        model_capabilities=model_capabilities,
+    )]
+    return _translation(
+        data, canonical, host, model, diagnostics, migration_notes, source_canonical
+    )
 
 
 def translate_plugin(
@@ -104,21 +141,24 @@ def translate_plugin(
     host_capabilities: Mapping[str, Mapping[str, Any]],
     model: str,
     model_capabilities: ModelCapabilities,
-) -> PluginTranslation:
-    """Validate and translate a plugin, reporting every unmet requirement.
-
-    The translator intentionally returns no executable representation. Callers
-    must refuse dispatch whenever ``compatible`` is false.
-    """
-    data, canonical = _validated_manifest(manifest)
-    diagnostics = _compatibility_diagnostics(
-        data,
+) -> IntegrationTranslation:
+    """Deprecated compatibility wrapper for ``translate_integration``."""
+    return translate_integration(
+        manifest,
         host=host,
         host_capabilities=host_capabilities,
         model=model,
         model_capabilities=model_capabilities,
     )
-    return _translation(data, canonical, host, model, diagnostics)
+
+
+def _migration_outcome(diagnostics: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    errors = tuple(
+        diagnostic for diagnostic in diagnostics
+        if diagnostic.startswith("rejected legacy policy overlay:")
+    )
+    notes = tuple(diagnostic for diagnostic in diagnostics if diagnostic not in errors)
+    return notes, errors
 
 
 def _translation(
@@ -127,14 +167,17 @@ def _translation(
     host: str,
     model: str,
     diagnostics: list[str] | tuple[str, ...],
-) -> PluginTranslation:
-    return PluginTranslation(
+    migration_diagnostics: tuple[str, ...] = (),
+    source_canonical: bytes | None = None,
+) -> IntegrationTranslation:
+    return IntegrationTranslation(
         plugin_id=manifest["id"],
         publisher=manifest["publisher"],
         version=manifest["version"],
         host=host,
         model=model,
         digest=f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+        source_digest=f"sha256:{hashlib.sha256(source_canonical or canonical).hexdigest()}",
         assets={
             kind: tuple(dict(asset) for asset in assets)
             for kind, assets in manifest["assets"].items()
@@ -142,20 +185,45 @@ def _translation(
         requested_permissions=tuple(manifest["requested_permissions"]),
         compatible=not diagnostics,
         diagnostics=tuple(diagnostics),
+        migration_diagnostics=migration_diagnostics,
     )
 
 
-def _validated_manifest(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], bytes]:
+def _validated_manifest(
+    manifest: Mapping[str, Any],
+) -> tuple[dict[str, Any], bytes, bytes, tuple[str, ...]]:
     if not isinstance(manifest, Mapping):
-        raise ValueError("plugin manifest must be a JSON object")
+        raise ValueError("integration manifest must be a JSON object")
     allowed = {
         "schema", "id", "version", "publisher", "requested_permissions",
         "host_requirements", "model_requirements", "assets",
     }
     unknown = set(manifest) - allowed
     if unknown:
-        raise ValueError("plugin manifest contains unsupported fields")
+        raise ValueError("integration manifest contains unsupported fields")
+    try:
+        source_canonical = json.dumps(
+            manifest, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    except (TypeError, ValueError) as error:
+        raise ValueError("integration manifest must contain JSON values") from error
+    if len(source_canonical) > _MAX_MANIFEST_BYTES:
+        raise ValueError("integration manifest is too large")
     data = dict(manifest)
+    migration_diagnostics: tuple[str, ...] = ()
+    if data.get("schema") == _LEGACY_SCHEMA:
+        assets = data.get("assets")
+        if isinstance(assets, Mapping) and "instructions" in assets:
+            assets = dict(assets)
+            assets.pop("instructions")
+            data["assets"] = assets
+            migration_diagnostics = (
+                "legacy plugin manifest migrated to codinal.integration.v1",
+                "rejected legacy policy overlay: assets.instructions",
+            )
+        else:
+            migration_diagnostics = ("legacy plugin manifest migrated to codinal.integration.v1",)
+        data["schema"] = _SCHEMA
     if data.get("schema") != _SCHEMA:
         raise ValueError(f"schema must be {_SCHEMA}")
     for field, maximum in (("id", 256), ("version", 64), ("publisher", 128)):
@@ -197,10 +265,10 @@ def _validated_manifest(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], by
     try:
         canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     except (TypeError, ValueError) as error:
-        raise ValueError("plugin manifest must contain JSON values") from error
+        raise ValueError("integration manifest must contain JSON values") from error
     if len(canonical) > _MAX_MANIFEST_BYTES:
-        raise ValueError("plugin manifest is too large")
-    return data, canonical
+        raise ValueError("integration manifest is too large")
+    return data, canonical, source_canonical, migration_diagnostics
 
 
 def _validated_asset(kind: str, asset: Mapping[str, Any]) -> dict[str, Any]:
@@ -208,17 +276,11 @@ def _validated_asset(kind: str, asset: Mapping[str, Any]) -> dict[str, Any]:
     unknown = set(data) - _ASSET_FIELDS[kind]
     if unknown:
         raise ValueError(f"assets.{kind} contains unsupported field: {sorted(unknown)[0]}")
-    if kind == "instructions":
-        path = data.get("path")
-        if path != "AGENTS.md":
-            raise ValueError("assets.instructions.path must be AGENTS.md")
-        _required_text(data, "content", kind, maximum=16 * 1024)
-        return data
     if kind in ("skills", "agents"):
         _required_text(data, "name", kind, maximum=128)
         _required_text(
             data,
-            "content" if kind == "skills" else "instructions",
+            "content" if kind == "skills" else "prompt",
             kind,
             maximum=16 * 1024,
         )

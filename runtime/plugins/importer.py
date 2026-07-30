@@ -15,6 +15,8 @@ class PluginImport:
 
 
 def import_plugin(root: str | Path, *, host: str) -> PluginImport:
+    if host not in {"claude", "codex"}:
+        raise ValueError(f"unsupported plugin host: {host}")
     base = Path(root).resolve()
     manifest_path = base / (".claude-plugin/plugin.json" if host == "claude" else ".codex-plugin/plugin.json")
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -27,7 +29,7 @@ def import_plugin(root: str | Path, *, host: str) -> PluginImport:
     )
     status = "translated_with_gaps" if diagnostics else "translated"
     return PluginImport(status, {
-        "schema": "codinal.plugin.v1", "id": f"{publisher}/{raw['name']}",
+        "schema": "codinal.integration.v1", "id": f"{publisher}/{raw['name']}",
         "version": raw.get("version", "0.0.0"), "publisher": publisher,
         "requested_permissions": [], "host_requirements": ["skill_discovery"],
         "model_requirements": [], "assets": {"skills": skills},

@@ -1,14 +1,14 @@
-# `codinal.plugin.v1`
+# `codinal.integration.v1`
 
-`codinal.plugin.v1` is the canonical, declarative plugin exchange format for
-Codinal's Mac Solid release gate. It carries content and requirements; it never
-carries code to execute.
+`codinal.integration.v1` is Codinal's canonical, declarative integration
+exchange format. It carries portable content and requirements; it never carries
+code to execute. `codinal.plugin.v1` is read only as a migration input.
 
 ## Manifest
 
 ```json
 {
-  "schema": "codinal.plugin.v1",
+  "schema": "codinal.integration.v1",
   "id": "acme/review-helper",
   "version": "1.0.0",
   "publisher": "acme",
@@ -17,16 +17,18 @@ carries code to execute.
   "model_requirements": ["tools", "streaming"],
   "assets": {
     "skills": [{"name": "review", "content": "Review the diff."}],
-    "instructions": [{"path": "AGENTS.md", "content": "Be precise."}],
     "mcp": [],
-    "agents": []
+    "agents": [{"name": "reviewer", "prompt": "Review the diff."}]
   }
 }
 ```
 
-Only `skills`, `instructions`, `mcp`, and `agents` are permitted assets. Hooks,
-scripts, and executables are rejected at validation time. Imported assets stay
-data until a later, policy-backed host adapter elects to install them.
+Allowed assets are `skills`, bounded `agents` (a name and prompt only), and
+declarative remote `mcp` definitions. Hooks, scripts, installers, background
+workers, executable/local-command assets, and instruction/policy overlays
+(including `AGENTS.md` and `CLAUDE.md`) are rejected. A legacy manifest with
+`assets.instructions` is normalized without that asset and marked incompatible;
+it cannot dispatch until republished as an integration.
 
 ## Compatibility
 
@@ -38,7 +40,7 @@ Each declared host and model requirement must be `supported`/true. `partial`,
 `unsupported`, `unverified`, absent capabilities, and unknown hosts produce a
 diagnostic and make the result incompatible. Dispatchers must refuse an
 incompatible result; no fallback or semantic downgrade is allowed. Dispatchers
-call `PluginTranslation.require_compatible()` at their dispatch boundary.
+call `IntegrationTranslation.require_compatible()` at their dispatch boundary.
 
 The canonical JSON encoding is SHA-256 hashed and returned as `sha256:<hex>` so
 the translation can be recorded with extension provenance and audit evidence.

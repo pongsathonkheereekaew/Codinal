@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from runtime.plugins import import_plugin
 
 
@@ -16,5 +18,11 @@ def test_imports_codex_skills_and_reports_hooks(tmp_path):
     result = import_plugin(tmp_path, host="codex")
 
     assert result.status == "translated_with_gaps"
+    assert result.manifest["schema"] == "codinal.integration.v1"
     assert result.manifest["assets"]["skills"][0]["name"] == "review"
     assert result.diagnostics == ("rejected executable plugin content: hooks",)
+
+
+def test_rejects_unknown_plugin_host(tmp_path):
+    with pytest.raises(ValueError, match="unsupported plugin host: cursor"):
+        import_plugin(tmp_path, host="cursor")
