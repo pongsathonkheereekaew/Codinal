@@ -492,6 +492,10 @@ class SessionService:
         record = self._store.load(session_id)
         return list(record.messages) if record else []
 
+    def exists(self, session_id: str) -> bool:
+        """Whether a persisted or live session can accept a workspace-less turn."""
+        return session_id in self._engines or self._store.load(session_id) is not None
+
     def selected_model(self, session_id: str) -> str | None:
         engine = self._engines.get(session_id)
         if engine is not None:
