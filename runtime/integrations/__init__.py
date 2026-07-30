@@ -3,5 +3,6 @@
 from .catalog import CatalogRecord, IntegrationCatalog
 from .resolver import IntegrationResolutionError, IntegrationResolver, ResolvedIntegration
 from .adapters import RenderedIntegration, render_actions
+from .codex_backend import CodexBackendError, CodexRuntimeBackend
 
-__all__ = ["CatalogRecord", "IntegrationCatalog", "IntegrationResolutionError", "IntegrationResolver", "RenderedIntegration", "ResolvedIntegration", "render_actions"]
+__all__ = ["CatalogRecord", "CodexBackendError", "CodexRuntimeBackend", "IntegrationCatalog", "IntegrationResolutionError", "IntegrationResolver", "RenderedIntegration", "ResolvedIntegration", "render_actions"]
