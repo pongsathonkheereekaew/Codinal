@@ -141,7 +141,12 @@ class TurnCoordinator:
     ) -> dict[str, Any]:
         if self._shutting_down:
             raise SessionBusyError("turn coordinator is shutting down")
-        if workspace is None and not self._sessions.exists(session_id):
+        session_exists = getattr(self._sessions, "exists", None)
+        if (
+            workspace is None
+            and session_exists is not None
+            and not session_exists(session_id)
+        ):
             raise SessionNotFoundError(session_id)
         active = self._active.get(session_id)
         if (
