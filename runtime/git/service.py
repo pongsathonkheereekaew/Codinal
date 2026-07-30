@@ -2438,8 +2438,10 @@ class GitWorktreeService:
                     )
                 )
                 self._cleanup_failed(failed, shell)
+                detail = result.stderr.strip().replace("\n", " ")[:512]
+                message = "failed to create isolated Git worktree"
                 raise GitWorkspaceError(
-                    "failed to create isolated Git worktree"
+                    f"{message}: {detail}" if detail else message
                 )
 
             active = self.store.save(
