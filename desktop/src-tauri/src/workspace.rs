@@ -42,7 +42,9 @@ pub fn choose_workspace() -> io::Result<PathBuf> {
     let path = rfd::FileDialog::new()
         .set_title("Choose a Codinal workspace")
         .pick_folder()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Interrupted, "workspace selection cancelled"))?;
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Interrupted, "workspace selection cancelled")
+        })?;
     validate_workspace_output(path.to_string_lossy().as_bytes())
 }
 
