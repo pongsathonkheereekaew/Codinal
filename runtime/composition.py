@@ -15,6 +15,7 @@ from .audit import AuditLedger
 from .checkpoint_restore import CheckpointRestoreCoordinator
 from .events import EventHub
 from .goals import GoalCoordinator, GoalStore
+from .integrations import IntegrationResolver, ResolvedIntegration
 from .mcp import MCPManager, MCPService, MCPStore
 from .oauth import OAuthCoordinator
 from .policy import ApprovalBroker, Approver, Mode, PermissionEngine, deny_all
@@ -45,6 +46,7 @@ class EngineBuildContext:
     roots: list[RootDir]
     emit: EventEmitter
     secrets: ProviderSecretService
+    integrations: tuple[ResolvedIntegration, ...] = ()
 
 
 class EngineBuilder(Protocol):
@@ -110,6 +112,7 @@ def compose_runtime(
     preview: Any = None,
     managed_policy: Any = None,
     extensions: Any = None,
+    integration_resolver: IntegrationResolver | None = None,
     security: CodexSecurityScanner | None = None,
 ) -> RuntimeServices:
     """Build runtime services while forcing all engines through policy."""
@@ -170,6 +173,20 @@ def compose_runtime(
             permissions.allow_tool_for_session(str(tool))
         for command in request.grants.get("commands") or []:
             permissions.allow_command_for_session(str(command))
+        requested_integrations = request.grants.get("integrations") or []
+        if not isinstance(requested_integrations, list):
+            raise RuntimeError("integration grants must be a list")
+        if requested_integrations and integration_resolver is None:
+            raise RuntimeError("integration resolver is required for integration grants")
+        integrations = (
+            integration_resolver.resolve(
+                requested_integrations,
+                model=request.model,
+                granted_permissions={str(value) for value in request.grants.get("integration_permissions") or []},
+            )
+            if integration_resolver is not None
+            else ()
+        )
 
         async def emit(message: dict[str, Any]) -> None:
             await events.publish_session(request.session_id, message)
@@ -186,6 +203,7 @@ def compose_runtime(
                 roots=roots,
                 emit=emit,
                 secrets=secrets,
+                integrations=integrations,
             )
         )
 
