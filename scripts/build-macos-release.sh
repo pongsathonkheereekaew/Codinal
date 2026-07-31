@@ -2,229 +2,148 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TAURI_ROOT="$ROOT/desktop/src-tauri"
-RESOURCES="$TAURI_ROOT/resources"
-LOCK="$ROOT/runtime/requirements.lock"
-PYTHON_VERSION="3.12.13"
-PYTHON_BUILD="20260718"
-PYTHON_SHA256="62aeee6161d57303a71a138b75fd5cc6fb8c89c4b1d9c7f0a052d89fa0b6652b"
-PYTHON_ARCHIVE_NAME="cpython-${PYTHON_VERSION}+${PYTHON_BUILD}-aarch64-apple-darwin-install_only.tar.gz"
-PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_BUILD}/${PYTHON_ARCHIVE_NAME}"
-CACHE_DIR="${CODINAL_RELEASE_CACHE:-/tmp/codinal-release-cache}"
-ARCHIVE="${CODINAL_PYTHON_ARCHIVE:-$CACHE_DIR/$PYTHON_ARCHIVE_NAME}"
+GPUI_ROOT="$ROOT/desktop/gpui-prototype"
+RUNTIME_ROOT="$ROOT/crates/codinal-runtime"
+BUNDLE_ROOT="$GPUI_ROOT/target/release/bundle"
+APP="$BUNDLE_ROOT/macos/Codinal.app"
+CONTENTS="$APP/Contents"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+SIGNER_MANIFEST="$ROOT/tools/update-signer/Cargo.toml"
+SIGNER_BINARY="$ROOT/tools/update-signer/target/release/codinal-update-signer"
+
+# Capture release credentials as non-exported shell variables, then remove the
+# exported originals before any dependency build script can execute.
+SIGNING_IDENTITY_VALUE="${APPLE_SIGNING_IDENTITY:-}"
+NOTARY_PROFILE_VALUE="${CODINAL_NOTARY_PROFILE:-}"
+NOTARY_APPLE_ID_VALUE="${APPLE_ID:-}"
+NOTARY_PASSWORD_VALUE="${APPLE_PASSWORD:-}"
+NOTARY_TEAM_ID_VALUE="${APPLE_TEAM_ID:-}"
+UPDATE_KEY_PATH_VALUE="${CODINAL_UPDATE_SIGNING_PRIVATE_KEY_PATH:-}"
+UPDATE_PASSWORD_VALUE="${CODINAL_UPDATE_SIGNING_PASSWORD:-}"
+unset APPLE_SIGNING_IDENTITY CODINAL_NOTARY_PROFILE APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+unset CODINAL_UPDATE_SIGNING_PRIVATE_KEY_PATH CODINAL_UPDATE_SIGNING_PASSWORD
 
 if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
-  echo "Codinal v1 release builds require Apple Silicon macOS" >&2
+  echo "Codinal release builds require Apple Silicon macOS" >&2
   exit 1
 fi
-if [ "$RESOURCES" != "$ROOT/desktop/src-tauri/resources" ]; then
-  echo "invalid release resource path" >&2
+
+APP_VERSION="$({
+  awk '
+    /^\[package\]$/ { package = 1; next }
+    package && /^version = / {
+      value = $0
+      sub(/^version = "/, "", value)
+      sub(/"$/, "", value)
+      print value
+      exit
+    }
+  ' "$GPUI_ROOT/Cargo.toml"
+})"
+test -n "$APP_VERSION"
+
+if [ "${CODINAL_SKIP_CARGO_BUILD:-0}" != "1" ]; then
+  TOOLCHAINS="${TOOLCHAINS:-com.apple.dt.toolchain.Metal.32023.864}" \
+    cargo build --release --locked --manifest-path "$GPUI_ROOT/Cargo.toml"
+  cargo build --release --locked --manifest-path "$RUNTIME_ROOT/Cargo.toml"
+  cargo build --release --locked --manifest-path "$SIGNER_MANIFEST"
+fi
+test -x "$GPUI_ROOT/target/release/codinal-gpui-prototype"
+test -x "$RUNTIME_ROOT/target/release/codinal-runtime"
+test -x "$SIGNER_BINARY"
+
+rm -rf "$APP"
+mkdir -p "$MACOS" "$RESOURCES"
+install -m 755 "$GPUI_ROOT/target/release/codinal-gpui-prototype" "$MACOS/codinal"
+install -m 755 "$RUNTIME_ROOT/target/release/codinal-runtime" "$RESOURCES/codinal-runtime"
+install -m 644 "$ROOT/desktop/src-tauri/icons/icon.icns" "$RESOURCES/Codinal.icns"
+
+INFO_PLIST="$CONTENTS/Info.plist"
+plutil -create xml1 "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Codinal" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string codinal" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Codinal" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string dev.codinal.desktop" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleInfoDictionaryVersion string 6.0" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleName string Codinal" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $APP_VERSION" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $APP_VERSION" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 12.0" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string dev.codinal.desktop" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$INFO_PLIST"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string codinal" "$INFO_PLIST"
+plutil -lint "$INFO_PLIST"
+
+test -x "$MACOS/codinal"
+test -x "$RESOURCES/codinal-runtime"
+if otool -L "$MACOS/codinal" "$RESOURCES/codinal-runtime" \
+  | grep -E '^[[:space:]]+(/target/|/usr/local/|/opt/homebrew/)'; then
+  echo "release binaries contain non-system local dynamic-library paths" >&2
   exit 1
 fi
-if ! TAURI_VERSION="$(cargo tauri --version 2>/dev/null)"; then
-  echo "tauri-cli 2.11.4 is required: cargo install tauri-cli --version 2.11.4 --locked" >&2
-  exit 1
-fi
-if [ "$TAURI_VERSION" != "tauri-cli 2.11.4" ]; then
-  echo "tauri-cli 2.11.4 is required; found $TAURI_VERSION" >&2
-  exit 1
-fi
-if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ] \
-  && [ -z "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]; then
-  echo "TAURI_SIGNING_PRIVATE_KEY or TAURI_SIGNING_PRIVATE_KEY_PATH is required" >&2
-  exit 1
-fi
-if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-  if [ ! -f "$TAURI_SIGNING_PRIVATE_KEY_PATH" ]; then
-    echo "TAURI_SIGNING_PRIVATE_KEY_PATH does not exist" >&2
-    exit 1
-  fi
-  export TAURI_SIGNING_PRIVATE_KEY="$(<"$TAURI_SIGNING_PRIVATE_KEY_PATH")"
-fi
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 
-mkdir -p "$CACHE_DIR"
-if [ ! -f "$ARCHIVE" ]; then
-  curl --fail --location --proto '=https' --tlsv1.2 \
-    --output "$ARCHIVE" "$PYTHON_URL"
-fi
-printf '%s  %s\n' "$PYTHON_SHA256" "$ARCHIVE" | shasum -a 256 -c -
-
-BUILD_DIR="$(mktemp -d /tmp/codinal-release.XXXXXX)"
-trap 'rm -rf "$BUILD_DIR"' EXIT
-tar -xzf "$ARCHIVE" -C "$BUILD_DIR"
-test -x "$BUILD_DIR/python/bin/python3"
-APP_VERSION="$("$BUILD_DIR/python/bin/python3" -c \
-  'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' \
-  "$TAURI_ROOT/Cargo.toml")"
-"$BUILD_DIR/python/bin/python3" -c \
-  'import json, sys; assert json.load(open(sys.argv[1]))["version"] == sys.argv[2]' \
-  "$TAURI_ROOT/tauri.conf.json" "$APP_VERSION"
-
-"$BUILD_DIR/python/bin/python3" -m pip install \
-  --disable-pip-version-check \
-  --require-hashes \
-  --requirement "$LOCK"
-
-mkdir -p "$BUILD_DIR/resources/runtime"
-ditto "$ROOT/runtime" "$BUILD_DIR/resources/runtime/runtime"
-find "$BUILD_DIR/resources/runtime" \
-  -type d -name __pycache__ -prune -exec rm -rf {} +
-find "$BUILD_DIR/resources/runtime" \
-  -type f \( -name '*.pyc' -o -name '.DS_Store' \) -delete
-cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/runtime/requirements.lock" \
-  "$BUILD_DIR/resources/runtime/"
-"$BUILD_DIR/python/bin/python3" "$ROOT/scripts/generate_python_sbom.py" \
-  "$ROOT/runtime/requirements.lock" \
-  "$BUILD_DIR/resources/runtime/python-sbom.cdx.json" \
-  --version "$APP_VERSION"
-ditto "$BUILD_DIR/python" "$BUILD_DIR/resources/python"
-
-rm -rf "$RESOURCES/runtime" "$RESOURCES/python"
-mkdir -p "$RESOURCES"
-ditto "$BUILD_DIR/resources/runtime" "$RESOURCES/runtime"
-ditto "$BUILD_DIR/resources/python" "$RESOURCES/python"
-
-SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
+SIGNING_IDENTITY="$SIGNING_IDENTITY_VALUE"
 if [ "${CODINAL_REQUIRE_SIGNING:-0}" = "1" ] && [ -z "$SIGNING_IDENTITY" ]; then
   echo "APPLE_SIGNING_IDENTITY is required for a release build" >&2
   exit 1
 fi
 if [ -n "$SIGNING_IDENTITY" ]; then
-  while IFS= read -r -d '' candidate; do
-    case "$(file -b "$candidate")" in
-      Mach-O*)
-        codesign --force --options runtime --timestamp \
-          --sign "$SIGNING_IDENTITY" "$candidate"
-        ;;
-    esac
-  done < <(find "$RESOURCES/python" -type f -print0)
-fi
-
-TAURI_BUILD_CONFIG="$TAURI_ROOT/tauri.release.conf.json"
-if [ -n "${TAURI_SIGNING_PUBLIC_KEY:-}" ] && [ -n "${TAURI_SIGNING_PUBLIC_KEY_PATH:-}" ]; then
-  echo "TAURI_SIGNING_PUBLIC_KEY and TAURI_SIGNING_PUBLIC_KEY_PATH cannot both be set" >&2
-  exit 1
-fi
-
-TAURI_SIGNING_PUBLIC_KEY_FROM_PATH="${TAURI_SIGNING_PUBLIC_KEY:-}"
-if [ -z "${TAURI_SIGNING_PUBLIC_KEY_FROM_PATH}" ] && [ -n "${TAURI_SIGNING_PUBLIC_KEY_PATH:-}" ]; then
-  if [ ! -f "$TAURI_SIGNING_PUBLIC_KEY_PATH" ]; then
-    echo "TAURI_SIGNING_PUBLIC_KEY_PATH does not exist" >&2
-    exit 1
-  fi
-
-  TAURI_SIGNING_PUBLIC_KEY_FROM_PATH="$(
-    "$BUILD_DIR/python/bin/python3" - "$TAURI_SIGNING_PUBLIC_KEY_PATH" <<'PY'
-import base64
-import binascii
-import sys
-
-value = open(sys.argv[1], "r", encoding="utf-8").read().strip()
-try:
-    raw = base64.b64decode(value, validate=True)
-except binascii.Error:
-    raw = value.encode()
-
-if not raw.startswith(b"untrusted comment: "):
-    raw = value.encode()
-
-print(base64.b64encode(raw).decode())
-PY
-  )"
-fi
-
-if [ -n "${TAURI_SIGNING_PUBLIC_KEY_FROM_PATH}" ]; then
-  TAURI_BUILD_CONFIG="$BUILD_DIR/tauri.release.config.with-overrides.json"
-  "$BUILD_DIR/python/bin/python3" - \
-    "$TAURI_ROOT/tauri.release.conf.json" \
-    "$TAURI_BUILD_CONFIG" \
-    "$TAURI_SIGNING_PUBLIC_KEY_FROM_PATH" <<'PY'
-import json
-import sys
-
-base = json.loads(open(sys.argv[1], "r", encoding="utf-8").read())
-base.setdefault("plugins", {})["updater"] = {
-    "pubkey": sys.argv[3].strip()
-}
-open(sys.argv[2], "w", encoding="utf-8").write(
-    json.dumps(base, indent=2) + "\n"
-)
-PY
-fi
-
-BUILD_LOG="$BUILD_DIR/tauri-build.log"
-(
-  cd "$TAURI_ROOT"
-  cargo tauri build \
-    --config "$TAURI_BUILD_CONFIG" \
-    --bundles app 2>&1 | tee "$BUILD_LOG"
-)
-if grep -q "updater secret key.*does not match" "$BUILD_LOG"; then
-  echo "updater private key does not match the committed public key" >&2
-  exit 1
-fi
-
-APP="$TAURI_ROOT/target/release/bundle/macos/Codinal.app"
-test -x "$APP/Contents/MacOS/codinal"
-test -x "$APP/Contents/Resources/python/bin/python3"
-test -f "$APP/Contents/Resources/runtime/runtime/control_plane/__main__.py"
-test -f "$APP/Contents/Resources/runtime/python-sbom.cdx.json"
-
-if [ -z "$SIGNING_IDENTITY" ]; then
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+    "$RESOURCES/codinal-runtime"
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+    "$MACOS/codinal"
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
+else
+  codesign --force --sign - "$RESOURCES/codinal-runtime"
+  codesign --force --sign - "$MACOS/codinal"
   codesign --force --sign - "$APP"
 fi
-
 codesign --verify --deep --strict --verbose=2 "$APP"
 
 if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
-  NOTARY_ARCHIVE="$BUILD_DIR/Codinal-notary.zip"
+  NOTARY_ARCHIVE="$(mktemp /tmp/Codinal-notary.XXXXXX.zip)"
+  trap 'rm -f "$NOTARY_ARCHIVE"' EXIT
   ditto -c -k --keepParent "$APP" "$NOTARY_ARCHIVE"
-
-  if [ -n "${CODINAL_NOTARY_PROFILE:-}" ]; then
+  if [ -n "$NOTARY_PROFILE_VALUE" ]; then
     xcrun notarytool submit "$NOTARY_ARCHIVE" \
-      --keychain-profile "$CODINAL_NOTARY_PROFILE" \
-      --wait
-  elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+      --keychain-profile "$NOTARY_PROFILE_VALUE" --wait
+  elif [ -n "$NOTARY_APPLE_ID_VALUE" ] && [ -n "$NOTARY_PASSWORD_VALUE" ] && [ -n "$NOTARY_TEAM_ID_VALUE" ]; then
     xcrun notarytool submit "$NOTARY_ARCHIVE" \
-      --apple-id "$APPLE_ID" \
-      --password "$APPLE_PASSWORD" \
-      --team-id "$APPLE_TEAM_ID" \
-      --wait
+      --apple-id "$NOTARY_APPLE_ID_VALUE" --password "$NOTARY_PASSWORD_VALUE" \
+      --team-id "$NOTARY_TEAM_ID_VALUE" --wait
   else
-    echo "notarization credentials are required: set CODINAL_NOTARY_PROFILE or APPLE_ID/APPLE_TEAM_ID/APPLE_PASSWORD" >&2
+    echo "notarization credentials are required" >&2
     exit 1
   fi
-
   xcrun stapler staple "$APP"
   xcrun stapler validate "$APP"
   spctl --assess --type execute --verbose=2 "$APP"
 fi
 
-ARTIFACT="$TAURI_ROOT/target/release/bundle/Codinal-${APP_VERSION}-macos-arm64.zip"
+ARTIFACT="$BUNDLE_ROOT/Codinal-${APP_VERSION}-macos-arm64.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARTIFACT"
 shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
 
-UPDATER_SOURCE="$TAURI_ROOT/target/release/bundle/macos/Codinal.app.tar.gz"
-UPDATER_SOURCE_SIGNATURE="$UPDATER_SOURCE.sig"
-UPDATER_ARTIFACT="$TAURI_ROOT/target/release/bundle/Codinal-${APP_VERSION}-macos-arm64.app.tar.gz"
-test -f "$UPDATER_SOURCE"
-test -s "$UPDATER_SOURCE_SIGNATURE"
-cp "$UPDATER_SOURCE" "$UPDATER_ARTIFACT"
-cp "$UPDATER_SOURCE_SIGNATURE" "$UPDATER_ARTIFACT.sig"
+UPDATER_ARTIFACT="$BUNDLE_ROOT/Codinal-${APP_VERSION}-macos-arm64.app.tar.gz"
+COPYFILE_DISABLE=1 tar -czf "$UPDATER_ARTIFACT" -C "$BUNDLE_ROOT/macos" Codinal.app
 shasum -a 256 "$UPDATER_ARTIFACT" > "$UPDATER_ARTIFACT.sha256"
 
-if [ -n "${CODINAL_UPDATE_MANIFEST_URL:-}" ] && [ -n "${CODINAL_UPDATE_MANIFEST_PATH:-}" ]; then
-  CODINAL_UPDATE_MANIFEST_NOTES="${CODINAL_UPDATE_MANIFEST_NOTES:-Codinal ${APP_VERSION}}"
-  CODINAL_UPDATE_MANIFEST_PUB_DATE="${CODINAL_UPDATE_MANIFEST_PUB_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-  "$BUILD_DIR/python/bin/python3" "$ROOT/scripts/generate_update_manifest.py" \
-    --version "$APP_VERSION" \
-    --url "$CODINAL_UPDATE_MANIFEST_URL" \
-    --signature-file "$UPDATER_ARTIFACT.sig" \
-    --notes "$CODINAL_UPDATE_MANIFEST_NOTES" \
-    --pub-date "$CODINAL_UPDATE_MANIFEST_PUB_DATE" \
-    --output "$CODINAL_UPDATE_MANIFEST_PATH"
-  test -f "$CODINAL_UPDATE_MANIFEST_PATH"
+UPDATE_KEY_PATH="$UPDATE_KEY_PATH_VALUE"
+if [ "${CODINAL_REQUIRE_UPDATE_SIGNING:-0}" = "1" ] && [ -z "$UPDATE_KEY_PATH" ]; then
+  echo "CODINAL_UPDATE_SIGNING_PRIVATE_KEY_PATH is required" >&2
+  exit 1
+fi
+if [ -n "$UPDATE_KEY_PATH" ]; then
+  test -f "$UPDATE_KEY_PATH"
+  CODINAL_UPDATE_SIGNING_PASSWORD="$UPDATE_PASSWORD_VALUE" \
+    "$SIGNER_BINARY" "$UPDATE_KEY_PATH" "$UPDATER_ARTIFACT" \
+    > "$UPDATER_ARTIFACT.sig"
+  test -s "$UPDATER_ARTIFACT.sig"
 fi
 
 echo "release app: $APP"

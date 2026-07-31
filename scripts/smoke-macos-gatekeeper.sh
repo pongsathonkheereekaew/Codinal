@@ -16,9 +16,9 @@ fi
 VERSION="$(
   "$PYTHON_BIN" -c \
     'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' \
-    "$ROOT/desktop/src-tauri/Cargo.toml"
+  "$ROOT/desktop/gpui-prototype/Cargo.toml"
 )"
-ZIP="${1:-$ROOT/desktop/src-tauri/target/release/bundle/Codinal-${VERSION}-macos-arm64.zip}"
+ZIP="${1:-$ROOT/desktop/gpui-prototype/target/release/bundle/Codinal-${VERSION}-macos-arm64.zip}"
 SMOKE_ROOT="$(mktemp -d /tmp/codinal-gatekeeper.XXXXXX)"
 trap 'rm -rf "$SMOKE_ROOT"' EXIT
 
@@ -26,16 +26,18 @@ test -f "$ZIP"
 ditto -x -k "$ZIP" "$SMOKE_ROOT"
 APP="$SMOKE_ROOT/Codinal.app"
 test -d "$APP"
-xattr -w com.apple.quarantine "0081;00000000;Codinal;" "$APP"
 if [ "${CODINAL_REQUIRE_NOTARIZATION:-1}" = "1" ]; then
+  xattr -w com.apple.quarantine "0081;00000000;Codinal;" "$APP"
   xcrun stapler validate "$APP"
   spctl --assess --type execute --verbose=2 "$APP"
 else
-  echo "Codinal gatekeeper smoke running without stapled/notarization validation"
+  echo "Codinal packaged smoke running without quarantine/notarization validation"
 fi
 
-CODINAL_SKIP_APP_LAUNCH=1 \
-CODINAL_SKIP_EMBEDDED_IMPORTS=1 \
 bash "$ROOT/scripts/smoke-macos-release.sh" "$APP"
 
-echo "quarantined release smoke test passed"
+if [ "${CODINAL_REQUIRE_NOTARIZATION:-1}" = "1" ]; then
+  echo "quarantined notarized release smoke test passed"
+else
+  echo "packaged release smoke test passed"
+fi

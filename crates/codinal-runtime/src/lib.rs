@@ -232,6 +232,7 @@ impl RuntimeBootstrap {
     pub fn from_values(port: u16, token: &str, data_dir: &Path) -> io::Result<Self> {
         let mut config = RuntimeConfig::new(port, token, data_dir)?;
         let owner_lock = RuntimeOwnerLock::acquire(config.data_dir())?;
+        codinal_storage::prepare_owned_data_directory(config.data_dir())?;
         config.attach_audit_ledger()?;
         Ok(Self {
             config,
@@ -1758,6 +1759,26 @@ mod tests {
         assert!(response.ends_with(expected["json"].to_string().as_str()));
         server.join().expect("server").expect("serve");
         fs::remove_dir(data_dir).expect("remove");
+    }
+
+    #[test]
+    fn fresh_runtime_lists_zero_sessions_instead_of_rejecting_request() {
+        let data_dir = data_dir();
+        let runtime = RuntimeBootstrap::from_values(free_loopback_port(), TOKEN, &data_dir)
+            .expect("fresh runtime");
+        let listener = runtime.config().bind().expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || serve_one(&listener, runtime.config()));
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream
+            .write_all(format!("GET /v1/sessions HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n\r\n").as_bytes())
+            .expect("request");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("response");
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+        assert!(response.ends_with("[]"), "{response}");
+        server.join().expect("server").expect("serve");
+        fs::remove_dir_all(data_dir).expect("remove");
     }
 
     #[test]

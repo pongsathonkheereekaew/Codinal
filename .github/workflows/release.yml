@@ -44,7 +44,7 @@ jobs:
             *) echo "release tag must start with v" >&2; exit 1 ;;
           esac
           VERSION="${TAG#v}"
-          CARGO_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("desktop/src-tauri/Cargo.toml", "rb"))["package"]["version"])')"
+          CARGO_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("desktop/gpui-prototype/Cargo.toml", "rb"))["package"]["version"])')"
           test "$VERSION" = "$CARGO_VERSION"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -55,8 +55,8 @@ jobs:
       - name: Verify source
         run: bash verify.sh
 
-      - name: Install pinned Tauri CLI
-        run: cargo install tauri-cli --version 2.11.4 --locked
+      - name: Build native release binaries without release secrets
+        run: bash scripts/build-macos-release.sh
 
       - name: Import Developer ID certificate
         env:
@@ -81,7 +81,7 @@ jobs:
 
       - name: Stage updater signing key
         env:
-          UPDATER_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          UPDATER_PRIVATE_KEY: ${{ secrets.CODINAL_UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
           test -n "$UPDATER_PRIVATE_KEY"
           printf '%s' "$UPDATER_PRIVATE_KEY" > "$RUNNER_TEMP/codinal-updater.key"
@@ -93,10 +93,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY_PATH: ${{ runner.temp }}/codinal-updater.key
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CODINAL_UPDATE_SIGNING_PRIVATE_KEY_PATH: ${{ runner.temp }}/codinal-updater.key
+          CODINAL_UPDATE_SIGNING_PASSWORD: ${{ secrets.CODINAL_UPDATE_SIGNING_PASSWORD }}
           CODINAL_REQUIRE_SIGNING: "1"
           CODINAL_REQUIRE_NOTARIZATION: "1"
+          CODINAL_REQUIRE_UPDATE_SIGNING: "1"
+          CODINAL_SKIP_CARGO_BUILD: "1"
         run: bash scripts/build-macos-release.sh
 
       - name: Smoke quarantined package on clean runner
@@ -107,7 +109,7 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          BUNDLE="desktop/src-tauri/target/release/bundle"
+          BUNDLE="desktop/gpui-prototype/target/release/bundle"
           UPDATE_NAME="Codinal-${VERSION}-macos-arm64.app.tar.gz"
           python scripts/generate_update_manifest.py \
             --version "$VERSION" \
@@ -123,7 +125,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          BUNDLE="desktop/src-tauri/target/release/bundle"
+          BUNDLE="desktop/gpui-prototype/target/release/bundle"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --generate-notes
           fi

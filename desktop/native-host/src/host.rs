@@ -150,6 +150,42 @@ impl NativeRuntimeProcess {
     }
 }
 
+pub struct NativeRuntime {
+    process: NativeRuntimeProcess,
+}
+
+impl NativeRuntime {
+    pub fn shutdown(&mut self) -> io::Result<()> {
+        self.process.shutdown()
+    }
+}
+
+impl Drop for NativeRuntime {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
+pub fn launch_native_runtime_with_bootstrap(
+    binary: PathBuf,
+    data_dir: &Path,
+    port: u16,
+    token: String,
+    secret_bootstrap: Zeroizing<Vec<u8>>,
+) -> io::Result<NativeRuntime> {
+    std::fs::create_dir_all(data_dir)?;
+    let token = Zeroizing::new(token);
+    let launch = NativeRuntimeLaunch::new(binary, data_dir.to_owned(), port, token.to_string())?;
+    let mut process = launch.spawn_with_bootstrap(secret_bootstrap)?;
+    if let Err(readiness_error) = wait_for_runtime_ready(port, &token, Duration::from_secs(2)) {
+        process
+            .shutdown()
+            .map_err(|_| io::Error::other("runtime readiness and shutdown both failed"))?;
+        return Err(readiness_error);
+    }
+    Ok(NativeRuntime { process })
+}
+
 /// A disposable Rust-runtime validation process. Its data directory is an
 /// isolated SQLite snapshot and is removed when the process stops.
 pub struct ShadowRuntime {

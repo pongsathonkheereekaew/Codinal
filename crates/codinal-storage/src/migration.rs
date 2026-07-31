@@ -92,6 +92,40 @@ pub struct ConversationMigrationReport {
     pub cleanup_complete: bool,
 }
 
+/// Initialize missing databases and migrate existing databases only after the
+/// caller has acquired exclusive ownership of this data directory.
+pub fn prepare_owned_data_directory(
+    data_dir: &Path,
+) -> io::Result<Vec<ConversationMigrationReport>> {
+    validate_owned_directory(data_dir)?;
+    let mut reports = Vec::with_capacity(ALL_PLANS.len());
+    for plan in ALL_PLANS {
+        let database = data_dir.join(plan.file);
+        if validate_owned_database(data_dir, &database)? {
+            reports.push(migrate_owned_database(data_dir, None, true, plan)?);
+            continue;
+        }
+        let staging = data_dir.join(format!(
+            ".{}.initialize-{}-{}",
+            plan.file,
+            std::process::id(),
+            timestamp()
+        ));
+        secure_owned_directory(data_dir, &staging)?;
+        let result: io::Result<ConversationMigrationReport> = (|| {
+            let staged_database = staging.join(plan.file);
+            drop(Connection::open(&staged_database).map_err(sqlite_error)?);
+            let report = migrate_owned_database(&staging, None, false, plan)?;
+            fs::rename(&staged_database, &database)?;
+            sync_directory(data_dir)?;
+            Ok(report)
+        })();
+        let _ = fs::remove_dir_all(&staging);
+        reports.push(result?);
+    }
+    Ok(reports)
+}
+
 pub fn migrate_data_directory_snapshot(
     source: &Path,
     destination: &Path,
@@ -288,7 +322,7 @@ fn recover_snapshot(
     };
 
     let recovery = destination.join("recovery");
-    secure_directory(&recovery)?;
+    secure_owned_directory(destination, &recovery)?;
     let preserved = recovery.join(format!("{}.corrupt-{}.preserved", plan.file, timestamp()));
     if database.exists() {
         copy_private_file(&database, &preserved)?;
@@ -320,6 +354,12 @@ fn migrate_owned_database(
 ) -> io::Result<ConversationMigrationReport> {
     validate_owned_directory(destination)?;
     let database = destination.join(plan.file);
+    if !validate_owned_database(destination, &database)? {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "owned database is missing",
+        ));
+    }
     let (from_version, integrity) = inspect_database(&database)?;
     if integrity != "ok" {
         return Err(io::Error::new(
@@ -633,6 +673,29 @@ fn validate_owned_directory(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn validate_owned_database(directory: &Path, database: &Path) -> io::Result<bool> {
+    let metadata = match fs::symlink_metadata(database) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "owned database must be a regular non-symlink file",
+        ));
+    }
+    let canonical_directory = fs::canonicalize(directory)?;
+    let canonical_database = fs::canonicalize(database)?;
+    if !canonical_database.starts_with(&canonical_directory) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "owned database escapes its data directory",
+        ));
+    }
+    Ok(true)
+}
+
 fn create_backup(
     destination: &Path,
     database: &Path,
@@ -640,7 +703,7 @@ fn create_backup(
     target: i64,
 ) -> io::Result<PathBuf> {
     let backups = destination.join("backups");
-    secure_directory(&backups)?;
+    secure_owned_directory(destination, &backups)?;
     let backup = backups.join(format!(
         "{}.pre-v{version}-to-v{target}-{}.bak",
         database
@@ -658,9 +721,10 @@ fn create_backup(
 
 fn latest_valid_backup(destination: &Path, plan: MigrationPlan) -> io::Result<Option<PathBuf>> {
     let backups = destination.join("backups");
-    if !backups.is_dir() {
+    if !backups.exists() {
         return Ok(None);
     }
+    validate_owned_directory_within(destination, &backups)?;
     let mut candidates = fs::read_dir(backups)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -736,13 +800,51 @@ fn inspect_database(path: &Path) -> io::Result<(i64, String)> {
     Ok((version, integrity))
 }
 
-fn secure_directory(path: &Path) -> io::Result<()> {
-    fs::create_dir_all(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+fn secure_owned_directory(owner: &Path, path: &Path) -> io::Result<()> {
+    validate_owned_directory(owner)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "owned subdirectory must be a non-symlink directory",
+                ));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(path)?,
+        Err(error) => return Err(error),
+    }
+    validate_owned_directory_within(owner, path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+fn validate_owned_directory_within(owner: &Path, path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "owned subdirectory must be a non-symlink directory",
+        ));
+    }
+    let canonical_owner = fs::canonicalize(owner)?;
+    let canonical_path = fs::canonicalize(path)?;
+    if !canonical_path.starts_with(&canonical_owner) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "owned subdirectory escapes its data directory",
+        ));
+    }
     Ok(())
 }
 
 fn secure_file(path: &Path) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "database artifact must be a regular non-symlink file",
+        ));
+    }
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
 }
 
@@ -970,11 +1072,12 @@ mod tests {
     use super::{
         apply_conversation_migration, apply_git_worktree_migration, apply_worker_migration,
         migrate_conversation_snapshot, migrate_data_directory_snapshot,
-        migrate_git_worktree_snapshot, migrate_worker_snapshot, recover_conversation_snapshot,
-        ALL_PLANS, CONVERSATION_SCHEMA_VERSION,
+        migrate_git_worktree_snapshot, migrate_worker_snapshot, prepare_owned_data_directory,
+        recover_conversation_snapshot, ALL_PLANS, CONVERSATION_SCHEMA_VERSION,
     };
     use rusqlite::Connection;
     use std::fs;
+    use std::os::unix::fs::symlink;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1401,6 +1504,72 @@ mod tests {
             }
             transaction.commit().expect("fixture commit");
         }
+    }
+
+    #[test]
+    fn owned_directory_preparation_is_reentrant_and_preserves_records() {
+        let root = directory();
+        let first = prepare_owned_data_directory(&root).expect("initialize");
+        assert_eq!(first.len(), ALL_PLANS.len());
+        let database = Connection::open(root.join("codinal.db")).expect("conversation database");
+        database
+            .execute(
+                "INSERT INTO sessions (session_id, workspace, model, mode, title, agent)
+                 VALUES ('session-1', '/workspace', 'model', 'code', 'Preserved', 'code')",
+                [],
+            )
+            .expect("session");
+        drop(database);
+
+        let second = prepare_owned_data_directory(&root).expect("prepare again");
+        assert_eq!(second.len(), ALL_PLANS.len());
+        let database = Connection::open(root.join("codinal.db")).expect("conversation database");
+        let title: String = database
+            .query_row(
+                "SELECT title FROM sessions WHERE session_id = 'session-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("preserved session");
+        assert_eq!(title, "Preserved");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn owned_directory_preparation_rejects_database_symlinks() {
+        let root = directory();
+        let data = root.join("data");
+        fs::create_dir(&data).expect("data directory");
+        let external = root.join("external.db");
+        fs::write(&external, b"external data").expect("external database");
+        symlink(&external, data.join("codinal.db")).expect("database symlink");
+
+        let error = prepare_owned_data_directory(&data).expect_err("reject symlink");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(
+            fs::read(&external).expect("external data"),
+            b"external data"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn owned_directory_preparation_rejects_backup_directory_symlink() {
+        let root = directory();
+        let data = root.join("data");
+        fs::create_dir(&data).expect("data directory");
+        create_v1(&data.join("codinal.db"));
+        let external = root.join("external-backups");
+        fs::create_dir(&external).expect("external backup directory");
+        symlink(&external, data.join("backups")).expect("backup symlink");
+
+        let error = prepare_owned_data_directory(&data).expect_err("reject backup symlink");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(
+            fs::read_dir(&external).expect("external backups").count(),
+            0
+        );
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

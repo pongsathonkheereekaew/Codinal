@@ -1,10 +1,10 @@
-//! PROTOTYPE — delete or absorb after G2 resolves.
+//! Native Codinal desktop shell.
 //!
-//! Run:
+//! Development run:
 //! `cargo build --manifest-path crates/codinal-runtime/Cargo.toml`
 //! `CODINAL_NATIVE_RUNTIME=crates/codinal-runtime/target/debug/codinal-runtime CODINAL_DATA_DIR=/absolute/codinal/data cargo run --manifest-path desktop/gpui-prototype/Cargo.toml`
-//! This development shell boots the authenticated Rust runtime on an isolated
-//! snapshot, while its UI remains an opt-in prototype.
+//! Debug builds boot an authenticated Rust runtime on an isolated snapshot.
+//! Release builds boot the bundled native runtime against the production data.
 
 #[cfg(target_os = "macos")]
 mod secure_prompt;
@@ -49,12 +49,13 @@ use codinal_native_host::pty::{PtyOutputBuffer, PtyOutputDelta, PtyRegistry};
 #[cfg(target_os = "macos")]
 use codinal_native_host::workspace::choose_workspace as choose_native_workspace;
 use codinal_native_host::{
-    free_loopback_port, launch_shadow_runtime_with_bootstrap, mint_session_token,
+    free_loopback_port, launch_native_runtime_with_bootstrap, launch_shadow_runtime_with_bootstrap,
+    mint_session_token,
     secrets::{
         encode_secret_bootstrap, CustomProviderRecord, PlatformSecretVault, ProviderSecretStatus,
         ProviderSettingsController,
     },
-    ShadowRuntime,
+    NativeRuntime, ShadowRuntime,
 };
 use gpui::Task;
 use gpui::{
@@ -96,7 +97,7 @@ fn enqueue_oauth_urls(
 }
 
 struct WorkspacePrototype {
-    _runtime: ShadowRuntime,
+    _runtime: DesktopRuntime,
     client: Arc<ControlPlaneClient>,
     approval_session_id: Option<String>,
     approval_id: Option<String>,
@@ -145,6 +146,11 @@ struct WorkspacePrototype {
     terminal_resize_failed: Option<(u16, u16)>,
     #[cfg(target_os = "macos")]
     terminal_poll: Option<Task<()>>,
+}
+
+enum DesktopRuntime {
+    Production { _process: NativeRuntime },
+    Shadow { _process: ShadowRuntime },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1795,42 +1801,82 @@ fn development_data_dir() -> io::Result<PathBuf> {
         })
 }
 
+fn production_data_dir() -> io::Result<PathBuf> {
+    let home = std::env::var_os("HOME").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "could not locate the user home directory",
+        )
+    })?;
+    Ok(PathBuf::from(home).join("Library/Application Support/dev.codinal.desktop"))
+}
+
+fn desktop_data_dir() -> io::Result<PathBuf> {
+    if cfg!(debug_assertions) {
+        development_data_dir()
+    } else {
+        production_data_dir()
+    }
+}
+
 fn native_runtime_binary() -> io::Result<PathBuf> {
-    std::env::var_os("CODINAL_NATIVE_RUNTIME")
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "CODINAL_NATIVE_RUNTIME is required for the GPUI development shell",
-            )
-        })
+    if cfg!(debug_assertions) {
+        return std::env::var_os("CODINAL_NATIVE_RUNTIME")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "CODINAL_NATIVE_RUNTIME is required for a GPUI debug build",
+                )
+            });
+    }
+    let executable = std::env::current_exe()?;
+    let contents = executable
+        .parent()
+        .and_then(|path| path.parent())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "invalid app bundle layout"))?;
+    Ok(contents.join("Resources/codinal-runtime"))
 }
 
 fn start_native_runtime() -> io::Result<(
     ControlPlaneClient,
-    ShadowRuntime,
+    DesktopRuntime,
     Arc<ProviderSettingsController>,
     Arc<OAuthRelayController>,
 )> {
-    let data_dir = development_data_dir()?;
+    let data_dir = desktop_data_dir()?;
     let token = mint_session_token()?;
     let secret_sync_token = Zeroizing::new(mint_session_token()?);
     let vault = PlatformSecretVault;
     let secret_bootstrap = encode_secret_bootstrap(&vault, &secret_sync_token)?;
     let port = free_loopback_port()?;
-    let snapshot = std::env::temp_dir().join(format!(
-        "codinal-gpui-shadow-{}-{}",
-        std::process::id(),
-        NEXT_SHADOW.fetch_add(1, Ordering::Relaxed)
-    ));
-    let runtime = launch_shadow_runtime_with_bootstrap(
-        native_runtime_binary()?,
-        &data_dir,
-        &snapshot,
-        port,
-        token.clone(),
-        secret_bootstrap,
-    )?;
+    let runtime = if cfg!(debug_assertions) {
+        let snapshot = std::env::temp_dir().join(format!(
+            "codinal-gpui-shadow-{}-{}",
+            std::process::id(),
+            NEXT_SHADOW.fetch_add(1, Ordering::Relaxed)
+        ));
+        DesktopRuntime::Shadow {
+            _process: launch_shadow_runtime_with_bootstrap(
+                native_runtime_binary()?,
+                &data_dir,
+                &snapshot,
+                port,
+                token.clone(),
+                secret_bootstrap,
+            )?,
+        }
+    } else {
+        DesktopRuntime::Production {
+            _process: launch_native_runtime_with_bootstrap(
+                native_runtime_binary()?,
+                &data_dir,
+                port,
+                token.clone(),
+                secret_bootstrap,
+            )?,
+        }
+    };
     let client = ControlPlaneClient::new(port, &token)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
     let provider_settings = Arc::new(ProviderSettingsController::new(
@@ -1851,7 +1897,7 @@ fn start_native_runtime() -> io::Result<(
 fn prepare_native_terminal() -> io::Result<(Arc<PtyRegistry>, String, String)> {
     let workspace = std::env::var_os("CODINAL_WORKSPACE")
         .map(PathBuf::from)
-        .unwrap_or(development_data_dir()?);
+        .unwrap_or(desktop_data_dir()?);
     let workspace = workspace
         .to_str()
         .ok_or_else(|| {
