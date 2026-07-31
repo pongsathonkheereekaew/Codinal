@@ -55,7 +55,7 @@ def verify_http(raw_url: str) -> dict[str, object]:
         return {
             "origin": origin,
             "status_code": response.status,
-            "ok": 200 <= response.status < 400,
+            "ok": 200 <= response.status < 300,
             "content_length": min(int(response.getheader("Content-Length") or 0), 65_536),
         }
     except (OSError, ValueError, http.client.HTTPException) as error:

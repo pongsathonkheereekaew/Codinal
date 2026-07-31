@@ -17,6 +17,7 @@ use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder}
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_updater::UpdaterExt;
 use zeroize::{Zeroize, Zeroizing};
+use url::Url;
 
 use control_client::{relay_oauth_callback, sync_provider_secret};
 use host::{
@@ -39,6 +40,15 @@ struct DesktopState {
     port: u16,
     token: String,
     secret_sync_token: String,
+}
+
+fn allows_preview_navigation(url: &Url) -> bool {
+    if url.scheme() == "tauri" {
+        return true;
+    }
+    matches!(url.scheme(), "http" | "https")
+        && matches!(url.host_str(), Some("127.0.0.1") | Some("[::1]") | Some("::1"))
+        && url.port().is_some()
 }
 
 impl DesktopState {
@@ -826,7 +836,8 @@ pub fn run() {
                     .title("Codinal")
                     .inner_size(1180.0, 760.0)
                     .min_inner_size(760.0, 520.0)
-                    .initialization_script(initialization_script(port, &token));
+                    .initialization_script(initialization_script(port, &token))
+                    .on_navigation(|url| allows_preview_navigation(url));
             #[cfg(target_os = "macos")]
             let window = window
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -846,8 +857,16 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::copy_dir_recursive;
+    use super::{allows_preview_navigation, copy_dir_recursive};
     use std::fs;
+    use url::Url;
+
+    #[test]
+    fn preview_navigation_allows_only_loopback_or_app_urls() {
+        assert!(allows_preview_navigation(&Url::parse("tauri://localhost/").unwrap()));
+        assert!(allows_preview_navigation(&Url::parse("http://127.0.0.1:3000/").unwrap()));
+        assert!(!allows_preview_navigation(&Url::parse("https://example.com/").unwrap()));
+    }
 
     #[test]
     fn copy_dir_recursive_copies_files_and_subdirs() {
