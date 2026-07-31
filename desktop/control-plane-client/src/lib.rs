@@ -424,6 +424,18 @@ mod tests {
     }
 
     #[test]
+    fn golden_v1_event_fixtures_pin_order_and_reconnect_contracts() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/v1/control-plane.json"
+        ))
+        .expect("valid golden fixture");
+        let events = fixture["events"].as_array().expect("event fixtures");
+        assert_eq!(events[0]["sequence"], serde_json::json!(["turn_started", "tool_proposed", "turn_completed"]));
+        assert_eq!(events[1]["before_reconnect"], serde_json::json!(["turn_started"]));
+        assert_eq!(events[1]["after_reconnect"], serde_json::json!(["turn_completed"]));
+    }
+
+    #[test]
     fn golden_storage_fixture_pins_every_reference_database() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../contracts/v1/storage.json"
