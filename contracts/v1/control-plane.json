@@ -8,6 +8,10 @@
     "unauthenticated_status": 401,
     "www_authenticate": "Bearer"
   },
+  "route_surface": {
+    "count": 107,
+    "sha256": "0550124973bcb267a0c338fda25127c984309004acd4a8614eabe2dfdffcb8ea"
+  },
   "http": [
     {
       "id": "health-without-bearer-is-rejected",

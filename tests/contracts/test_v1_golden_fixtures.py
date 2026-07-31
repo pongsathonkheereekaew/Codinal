@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -94,11 +95,16 @@ def test_every_reference_v1_route_matches_golden_auth_negative_case(
     ]
     assert routes
     surface = v1_route_surface(app)
-    assert len(surface) == len(routes) + 2
     assert surface == sorted(
         surface,
         key=lambda item: (item["path"], item["kind"], item["methods"]),
     )
+    expected_surface = _fixture()["route_surface"]
+    assert len(surface) == expected_surface["count"]
+    canonical = json.dumps(surface, sort_keys=True, separators=(",", ":"))
+    assert hashlib.sha256(canonical.encode()).hexdigest() == expected_surface[
+        "sha256"
+    ]
     for route in routes:
         path = route.path.replace("{session_id}", "fixture-session")
         path = path.replace("{approval_id}", "0" * 32)
