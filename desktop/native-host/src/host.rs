@@ -1,6 +1,8 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -123,6 +125,128 @@ impl NativeRuntimeProcess {
                 Ok(())
             }
         }
+    }
+}
+
+/// A disposable Rust-runtime validation process. Its data directory is an
+/// isolated SQLite snapshot and is removed when the process stops.
+pub struct ShadowRuntime {
+    process: NativeRuntimeProcess,
+    snapshot_dir: PathBuf,
+}
+
+impl ShadowRuntime {
+    pub fn shutdown(&mut self) -> io::Result<()> {
+        self.process.shutdown()?;
+        remove_shadow_snapshot(&self.snapshot_dir)
+    }
+}
+
+impl Drop for ShadowRuntime {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
+/// Copy a validated production snapshot, launch the native runtime against
+/// that copy, and require its authenticated health response before returning.
+/// This deliberately never selects the process as the production writer.
+pub fn launch_shadow_runtime(
+    binary: PathBuf,
+    source_data_dir: &Path,
+    snapshot_dir: &Path,
+    port: u16,
+    token: String,
+) -> io::Result<ShadowRuntime> {
+    validate_shadow_destination(source_data_dir, snapshot_dir)?;
+    codinal_storage::create_v1_shadow_snapshot(source_data_dir, snapshot_dir)?;
+    let token = Zeroizing::new(token);
+    let launch =
+        match NativeRuntimeLaunch::new(binary, snapshot_dir.to_owned(), port, token.to_string()) {
+            Ok(launch) => launch,
+            Err(error) => {
+                let _ = remove_shadow_snapshot(snapshot_dir);
+                return Err(error);
+            }
+        };
+    let mut process = match launch.spawn() {
+        Ok(process) => process,
+        Err(error) => {
+            let _ = remove_shadow_snapshot(snapshot_dir);
+            return Err(error);
+        }
+    };
+    if let Err(readiness_error) = wait_for_runtime_ready(port, &token, Duration::from_secs(2)) {
+        process
+            .shutdown()
+            .map_err(|_| io::Error::other("shadow runtime readiness and shutdown both failed"))?;
+        remove_shadow_snapshot(snapshot_dir)?;
+        return Err(readiness_error);
+    }
+    Ok(ShadowRuntime {
+        process,
+        snapshot_dir: snapshot_dir.to_owned(),
+    })
+}
+
+fn validate_shadow_destination(source_data_dir: &Path, snapshot_dir: &Path) -> io::Result<()> {
+    let source = source_data_dir.canonicalize()?;
+    let parent = snapshot_dir
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid shadow path"))?
+        .canonicalize()?;
+    if parent.starts_with(source) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "shadow snapshot must be outside production data",
+        ));
+    }
+    Ok(())
+}
+
+fn remove_shadow_snapshot(snapshot_dir: &Path) -> io::Result<()> {
+    match std::fs::remove_dir_all(snapshot_dir) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Poll the native runtime's authenticated loopback health route until it is
+/// ready or the caller-provided deadline expires.
+pub fn wait_for_runtime_ready(port: u16, token: &str, timeout: Duration) -> io::Result<()> {
+    validate_session_token(token)?;
+    let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
+    let deadline = Instant::now() + timeout;
+    let mut last_error;
+    loop {
+        match TcpStream::connect_timeout(&address.into(), Duration::from_millis(100)) {
+            Ok(mut stream) => {
+                let result = (|| {
+                    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+                    stream.set_write_timeout(Some(Duration::from_millis(100)))?;
+                    let request = Zeroizing::new(format!(
+                            "GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+                        ));
+                    stream.write_all(request.as_bytes())?;
+                    let mut response = String::new();
+                    stream.read_to_string(&mut response)?;
+                    (response.starts_with("HTTP/1.1 200 OK\r\n")
+                        && response.ends_with("{\"status\":\"ok\"}"))
+                    .then_some(())
+                    .ok_or_else(|| io::Error::other("native runtime health check failed"))
+                })();
+                last_error = match result {
+                    Ok(()) => return Ok(()),
+                    Err(error) => error,
+                };
+            }
+            Err(error) => last_error = error,
+        }
+        if Instant::now() >= deadline {
+            return Err(last_error);
+        }
+        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -275,8 +399,63 @@ pub fn validate_runtime_layout(layout: &RuntimeLayout) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{runtime_layout_from, NativeRuntimeLaunch, RuntimeLayout, SidecarLaunch};
+    use super::{
+        free_loopback_port, launch_shadow_runtime, runtime_layout_from, wait_for_runtime_ready,
+        NativeRuntimeLaunch, RuntimeLayout, SidecarLaunch,
+    };
+    use rusqlite::Connection;
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::thread;
+    use std::time::Duration;
+
+    const TOKEN: &str = "abcdefghijklmnopqrstuvwxyzABCDEF";
+    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
+
+    fn fixture_data_dir() -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "codinal-native-host-test-{}-{}",
+            std::process::id(),
+            NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir(&path).expect("data directory");
+        for database in codinal_storage::load_v1_fixture()
+            .expect("fixture")
+            .databases
+        {
+            let connection = Connection::open(path.join(database.file)).expect("database");
+            connection
+                .execute_batch(&format!("PRAGMA user_version = {};", database.user_version))
+                .expect("version");
+            for table in database.tables {
+                connection
+                    .execute_batch(&format!("CREATE TABLE {table} (id INTEGER);"))
+                    .expect("table");
+            }
+        }
+        path
+    }
+
+    fn ready_listener() -> (u16, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut request = [0_u8; 1024];
+            let size = stream.read(&mut request).expect("request");
+            assert!(std::str::from_utf8(&request[..size])
+                .expect("request text")
+                .contains(&format!("Authorization: Bearer {TOKEN}")));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\n\r\n{\"status\":\"ok\"}")
+                .expect("response");
+        });
+        (port, server)
+    }
 
     #[test]
     fn release_layout_uses_app_resources() {
@@ -368,5 +547,51 @@ mod tests {
                 .to_string_lossy()
                 .contains("abcdefghijklmnopqrstuvwxyzABCDEF")
         }));
+    }
+
+    #[test]
+    fn readiness_probe_requires_authenticated_loopback_health() {
+        let (port, server) = ready_listener();
+        wait_for_runtime_ready(port, TOKEN, Duration::from_secs(1)).expect("ready");
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn failed_shadow_launch_removes_the_isolated_snapshot() {
+        let source = fixture_data_dir();
+        let snapshot = source.with_extension("shadow");
+        assert!(launch_shadow_runtime(
+            PathBuf::from("/usr/bin/true"),
+            &source,
+            &snapshot,
+            free_loopback_port().expect("port"),
+            TOKEN.to_owned(),
+        )
+        .is_err());
+        assert!(!snapshot.exists());
+        assert!(codinal_storage::inspect_v1_data_dir(&source)
+            .expect("source inspection")
+            .is_empty());
+        fs::remove_dir_all(source).expect("remove source");
+    }
+
+    #[test]
+    fn shadow_launch_rejects_a_destination_inside_production_data() {
+        let source = fixture_data_dir();
+        let snapshot = source.join("shadow");
+        let result = launch_shadow_runtime(
+            PathBuf::from("/usr/bin/true"),
+            &source,
+            &snapshot,
+            free_loopback_port().expect("port"),
+            TOKEN.to_owned(),
+        );
+        let error = match result {
+            Ok(_) => panic!("nested shadow destination was accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!snapshot.exists());
+        fs::remove_dir_all(source).expect("remove source");
     }
 }

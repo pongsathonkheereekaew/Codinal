@@ -15,11 +15,12 @@ Do not dual-write production SQLite data or expose bearer/provider secrets.
 - [Decouple native host from Tauri](issues/01-decouple-native-host-from-tauri.md) — native host now owns token, secure launch, and Keychain bootstrap; Tauri consumes the crate unchanged as fallback.
 - [Define native runtime launch contract](issues/02-define-native-runtime-launch-contract.md) — the runtime must consume environment credentials, own a data-directory lock, prove authenticated health, and use stdin for future provider-secret bootstrap.
 - [Implement native runtime bootstrap and owner lock](issues/04-implement-native-runtime-bootstrap-and-owner-lock.md) — executable startup now consumes credentials, holds an OS lock, and survives malformed loopback clients without releasing ownership.
+- [Prove native runtime shadow launch](issues/05-prove-native-runtime-shadow-launch.md) — the native host now runs the real Rust binary only on a validated snapshot, verifies authenticated readiness, and cleans up after confirmed shutdown.
 
 ## Not yet specified
 
-- The native host's read-only shadow-launch readiness flow must be proven before
-  the Rust runtime can be selected outside its direct executable tests.
+- Read-only v1 session routes need storage-backed parity on shadow snapshots
+  before GPUI can use the Rust runtime for real user-visible data.
 - GPUI production-pane design and performance/accessibility budgets need a
   concrete native runtime client surface before implementation can be scoped.
 - Release signing, notarization, updater migration, and final deletion evidence
