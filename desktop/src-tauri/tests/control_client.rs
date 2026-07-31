@@ -2,8 +2,9 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
-use codinal_desktop::control_client::{relay_oauth_callback, sync_provider_secret};
+use codinal_desktop::control_client::relay_oauth_callback;
 use codinal_desktop::oauth::parse_oauth_deep_link;
+use codinal_native_host::secrets::sync_runtime_provider_secret;
 use url::Url;
 
 fn capture_request(status: &str) -> (u16, thread::JoinHandle<String>) {
@@ -50,7 +51,7 @@ fn capture_request(status: &str) -> (u16, thread::JoinHandle<String>) {
 fn provider_secret_sync_uses_authenticated_body_not_url() {
     let (port, request) = capture_request("200 OK");
 
-    sync_provider_secret(
+    sync_runtime_provider_secret(
         port,
         "test-session-token-with-at-least-32-characters",
         "test-secret-sync-token-with-at-least-32-chars",
@@ -74,7 +75,7 @@ fn provider_secret_sync_uses_authenticated_body_not_url() {
 fn provider_secret_sync_errors_never_echo_secret() {
     let (port, request) = capture_request("500 Internal Server Error");
 
-    let error = sync_provider_secret(
+    let error = sync_runtime_provider_secret(
         port,
         "test-session-token-with-at-least-32-characters",
         "test-secret-sync-token-with-at-least-32-chars",

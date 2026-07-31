@@ -6,55 +6,6 @@ use zeroize::Zeroizing;
 
 use crate::host::validate_session_token;
 use crate::oauth::OAuthDeepLink;
-use crate::secrets::validate_provider;
-
-pub fn sync_provider_secret(
-    port: u16,
-    token: &str,
-    secret_sync_token: &str,
-    provider: &str,
-    api_key: Option<&str>,
-    base_url: Option<&str>,
-) -> io::Result<()> {
-    validate_session_token(token)?;
-    validate_session_token(secret_sync_token)?;
-    let provider = validate_provider(provider)?;
-    let (method, body) = match api_key {
-        Some(value) if !value.trim().is_empty() => {
-            let payload = match base_url {
-                Some(url) if !url.trim().is_empty() => serde_json::json!({
-                    "api_key": value,
-                    "base_url": url.trim(),
-                }),
-                _ => serde_json::json!({ "api_key": value }),
-            };
-            (
-                "PUT",
-                serde_json::to_vec(&payload)
-                    .map_err(|error| io::Error::other(error.to_string()))?,
-            )
-        }
-        Some(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "api key must not be empty",
-            ));
-        }
-        None => ("DELETE", Vec::new()),
-    };
-    let body = Zeroizing::new(body);
-
-    send_json_request(
-        port,
-        token,
-        secret_sync_token,
-        method,
-        &format!("/v1/secrets/providers/{provider}"),
-        &body,
-        "control plane rejected secret update",
-    )
-}
-
 /// Sync a custom OpenAI-compatible provider add/remove to the Python runtime.
 /// `api_key = None` triggers DELETE; otherwise POST with full metadata.
 pub fn sync_custom_provider(

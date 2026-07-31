@@ -28,3 +28,15 @@ one-shot updates authenticated by both bearer and secret-sync tokens.
 
 - Removing the Tauri fallback before the remaining settings, terminal, LSP,
   updater, OAuth, and release gates pass.
+
+## Progress
+
+- Rust `ProviderSecrets` now validates constant-time sync-token authorization,
+  bounded live update/delete, stable provider IDs, and HTTP(S) base URLs.
+- Rust runtime PUT/DELETE routes require bearer plus secret-sync tokens, audit
+  only non-secret metadata before mutation, and zeroize raw buffers, headers,
+  bodies, replacement secrets, and superseded values.
+- The provider sync transport moved from the Tauri crate into `native-host`, so
+  GPUI and Tauri share one native API. Tauri retains only temporary command
+  orchestration while the GPUI settings form is ported.
+- Remaining: GPUI provider status/edit/delete UI and custom-provider live sync.

@@ -544,6 +544,80 @@ impl ProviderSecrets {
     pub fn configured_profiles(&self) -> usize {
         self.profiles.len()
     }
+
+    pub fn sync_token_matches(&self, candidate: &str) -> bool {
+        let expected = self._sync_token.as_bytes();
+        let candidate = candidate.as_bytes();
+        if candidate.len() != expected.len() || candidate.is_empty() {
+            return false;
+        }
+        candidate
+            .iter()
+            .zip(expected)
+            .fold(0_u8, |difference, (left, right)| {
+                difference | (left ^ right)
+            })
+            == 0
+    }
+
+    pub fn update(
+        &mut self,
+        provider: &str,
+        api_key: Option<&str>,
+        base_url: Option<&str>,
+        failover_eligible: Option<bool>,
+    ) -> io::Result<()> {
+        self.validate_update(provider, api_key, base_url, failover_eligible)?;
+        let provider = ProviderId::parse(provider).ok_or_else(invalid_secret_update)?;
+        let account = provider.as_keychain_account();
+        let Some(api_key) = api_key else {
+            self.profiles.remove(&account);
+            return Ok(());
+        };
+        self.profiles.insert(
+            account,
+            SecretProfile {
+                api_key: Zeroizing::new(api_key.to_owned()),
+                base_url: base_url.map(str::to_owned),
+                _failover_eligible: failover_eligible,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn validate_update(
+        &self,
+        provider: &str,
+        api_key: Option<&str>,
+        base_url: Option<&str>,
+        failover_eligible: Option<bool>,
+    ) -> io::Result<()> {
+        let provider = ProviderId::parse(provider).ok_or_else(invalid_secret_update)?;
+        let Some(api_key) = api_key else {
+            return if base_url.is_none() && failover_eligible.is_none() {
+                Ok(())
+            } else {
+                Err(invalid_secret_update())
+            };
+        };
+        if api_key.is_empty()
+            || api_key.trim() != api_key
+            || api_key.len() > MAX_API_KEY_BYTES
+            || base_url.is_some_and(|url| {
+                url.is_empty()
+                    || url.trim() != url
+                    || url.len() > MAX_BASE_URL_BYTES
+                    || !(url.starts_with("http://") || url.starts_with("https://"))
+            })
+            || (base_url.is_some()
+                && !matches!(provider, ProviderId::OmniRoute | ProviderId::Custom(_)))
+            || (matches!(provider, ProviderId::Custom(_)) && base_url.is_none())
+            || (failover_eligible.is_some() && !matches!(provider, ProviderId::Custom(_)))
+        {
+            return Err(invalid_secret_update());
+        }
+        Ok(())
+    }
 }
 
 fn valid_token(token: &str) -> bool {
@@ -555,6 +629,13 @@ fn valid_token(token: &str) -> bool {
 
 fn invalid_bootstrap() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid secret bootstrap")
+}
+
+fn invalid_secret_update() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "invalid provider secret update",
+    )
 }
 
 #[cfg(test)]
@@ -645,6 +726,39 @@ mod tests {
             br#"{"sync_token":"0123456789abcdef0123456789abcdef","profiles":{"provider:unknown":{"api_key":"secret"}}}"#,
         )
         .is_err());
+    }
+
+    #[test]
+    fn live_secret_updates_require_the_bootstrap_sync_token_and_preserve_validation() {
+        let mut secrets = ProviderSecrets::from_bootstrap(
+            br#"{"sync_token":"0123456789abcdef0123456789abcdef","profiles":{}}"#,
+        )
+        .expect("bootstrap");
+        assert!(!secrets.sync_token_matches("0123456789abcdef0123456789abcdeg"));
+        assert!(secrets.sync_token_matches("0123456789abcdef0123456789abcdef"));
+        secrets
+            .update("openai", Some("replacement-secret"), None, None)
+            .expect("update");
+        assert_eq!(
+            secrets.api_key(&ProviderId::OpenAi),
+            Some("replacement-secret")
+        );
+        assert!(secrets
+            .update("openai", Some(" secret"), None, None)
+            .is_err());
+        assert!(secrets
+            .update("openai", Some("secret"), Some("https://invalid"), None)
+            .is_err());
+        assert!(secrets
+            .update(
+                "omniroute",
+                Some("secret"),
+                Some("file:///tmp/provider"),
+                None,
+            )
+            .is_err());
+        secrets.update("openai", None, None, None).expect("delete");
+        assert_eq!(secrets.api_key(&ProviderId::OpenAi), None);
     }
 
     #[test]

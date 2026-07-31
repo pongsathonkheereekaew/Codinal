@@ -12,8 +12,8 @@ use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use zeroize::Zeroizing;
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
+use zeroize::{Zeroize, Zeroizing};
 
 pub use codinal_policy::{ApprovalBroker, ApprovalChokepoint, PermissionRequest, Risk};
 pub use codinal_providers::{AssistantTurn, OllamaProvider, ProviderId, ProviderSecrets, ToolCall};
@@ -189,6 +189,7 @@ pub struct RuntimeConfig {
     data_dir: PathBuf,
     approval_broker: Arc<Mutex<ApprovalBroker>>,
     audit_ledger: Option<codinal_policy::AuditLedger>,
+    provider_secrets: Arc<RwLock<ProviderSecrets>>,
     ollama_port: u16,
 }
 
@@ -203,7 +204,6 @@ pub struct TurnIngressResult {
 /// the data directory before any writable store can be opened.
 pub struct RuntimeBootstrap {
     config: RuntimeConfig,
-    provider_secrets: ProviderSecrets,
     _owner_lock: RuntimeOwnerLock,
 }
 
@@ -235,7 +235,6 @@ impl RuntimeBootstrap {
         config.attach_audit_ledger()?;
         Ok(Self {
             config,
-            provider_secrets: ProviderSecrets::empty(),
             _owner_lock: owner_lock,
         })
     }
@@ -263,11 +262,11 @@ impl RuntimeBootstrap {
         let data_dir = std::env::var_os("CODINAL_DATA_DIR").ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "CODINAL_DATA_DIR is required")
         })?;
-        let mut runtime = Self::from_values(port, &token, Path::new(&data_dir))?;
+        let runtime = Self::from_values(port, &token, Path::new(&data_dir))?;
         let channel = std::env::var("CODINAL_SECRET_BOOTSTRAP").unwrap_or_default();
         // Safe at process startup before the runtime creates threads.
         unsafe { std::env::remove_var("CODINAL_SECRET_BOOTSTRAP") };
-        runtime.provider_secrets = match channel.as_str() {
+        let provider_secrets = match channel.as_str() {
             "" => ProviderSecrets::empty(),
             "stdin-v1" => {
                 let mut payload = Zeroizing::new(Vec::new());
@@ -281,6 +280,11 @@ impl RuntimeBootstrap {
                 ));
             }
         };
+        *runtime
+            .config
+            .provider_secrets
+            .write()
+            .map_err(|_| io::Error::other("provider secret lock poisoned"))? = provider_secrets;
         Ok(runtime)
     }
 
@@ -288,8 +292,11 @@ impl RuntimeBootstrap {
         &self.config
     }
 
-    pub fn provider_secrets(&self) -> &ProviderSecrets {
-        &self.provider_secrets
+    pub fn provider_secrets(&self) -> io::Result<RwLockReadGuard<'_, ProviderSecrets>> {
+        self.config
+            .provider_secrets
+            .read()
+            .map_err(|_| io::Error::other("provider secret lock poisoned"))
     }
 
     pub fn serve_forever(&self) -> io::Result<()> {
@@ -341,6 +348,7 @@ impl RuntimeConfig {
             data_dir: data_dir.to_owned(),
             approval_broker: Arc::new(Mutex::new(ApprovalBroker::default())),
             audit_ledger: None,
+            provider_secrets: Arc::new(RwLock::new(ProviderSecrets::empty())),
             ollama_port,
         })
     }
@@ -549,7 +557,7 @@ fn serve_stream(mut stream: TcpStream, config: &RuntimeConfig) -> io::Result<()>
     stream.set_write_timeout(Some(std::time::Duration::from_secs(2)))?;
     let request = read_headers(&mut stream)?;
     let authenticated = request.headers.iter().any(|(name, value)| {
-        name == "authorization" && valid_bearer(value, config.token.as_bytes())
+        name == "authorization" && valid_bearer(value.as_str(), config.token.as_bytes())
     });
     if !authenticated {
         return write_response(
@@ -632,6 +640,164 @@ fn serve_stream(mut stream: TcpStream, config: &RuntimeConfig) -> io::Result<()>
                     None,
                 ),
             };
+        }
+    }
+    if matches!(request.method.as_str(), "PUT" | "DELETE") {
+        if let Some(provider) = request.path.strip_prefix("/v1/secrets/providers/") {
+            if !matches!(
+                ProviderId::parse(provider),
+                Some(
+                    ProviderId::OpenAi
+                        | ProviderId::Anthropic
+                        | ProviderId::Gemini
+                        | ProviderId::Zai
+                        | ProviderId::DeepSeek
+                        | ProviderId::OmniRoute
+                        | ProviderId::GitHub
+                )
+            ) {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid provider secret update\"}",
+                    None,
+                );
+            }
+            let sync_tokens = request
+                .headers
+                .iter()
+                .filter(|(name, _)| name == "x-codinal-secret-sync")
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>();
+            let mut secrets = config
+                .provider_secrets
+                .write()
+                .map_err(|_| io::Error::other("provider secret lock poisoned"))?;
+            if sync_tokens.len() != 1 || !secrets.sync_token_matches(sync_tokens[0]) {
+                return write_response(
+                    &mut stream,
+                    "401 Unauthorized",
+                    "{\"detail\":\"unauthorized secret sync\"}",
+                    None,
+                );
+            }
+            let (api_key, base_url) = if request.method == "PUT" {
+                let mut document: serde_json::Value = match serde_json::from_slice(&request.body) {
+                    Ok(document) => document,
+                    Err(_) => {
+                        return write_response(
+                            &mut stream,
+                            "400 Bad Request",
+                            "{\"detail\":\"invalid provider secret update\"}",
+                            None,
+                        );
+                    }
+                };
+                let Some(object) = document.as_object_mut() else {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid provider secret update\"}",
+                        None,
+                    );
+                };
+                let api_key = match object.remove("api_key") {
+                    Some(serde_json::Value::String(value)) => Zeroizing::new(value),
+                    _ => {
+                        return write_response(
+                            &mut stream,
+                            "400 Bad Request",
+                            "{\"detail\":\"invalid provider secret update\"}",
+                            None,
+                        );
+                    }
+                };
+                let base_url = match object.remove("base_url") {
+                    Some(serde_json::Value::String(value)) => Some(value),
+                    None => None,
+                    _ => {
+                        return write_response(
+                            &mut stream,
+                            "400 Bad Request",
+                            "{\"detail\":\"invalid provider secret update\"}",
+                            None,
+                        );
+                    }
+                };
+                if !object.is_empty() {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid provider secret update\"}",
+                        None,
+                    );
+                }
+                (Some(api_key), base_url)
+            } else if request.body.is_empty() {
+                (None, None)
+            } else {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid provider secret update\"}",
+                    None,
+                );
+            };
+            if secrets
+                .validate_update(
+                    provider,
+                    api_key.as_deref().map(String::as_str),
+                    base_url.as_deref(),
+                    None,
+                )
+                .is_err()
+            {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid provider secret update\"}",
+                    None,
+                );
+            }
+            let Some(audit) = config.audit_ledger.as_ref() else {
+                return write_response(
+                    &mut stream,
+                    "503 Service Unavailable",
+                    "{\"detail\":\"provider secret update could not be audited\"}",
+                    None,
+                );
+            };
+            if audit
+                .record(codinal_policy::AuditLedgerInput {
+                    domain: "provider_secret".to_owned(),
+                    action: if api_key.is_some() {
+                        "configured"
+                    } else {
+                        "deleted"
+                    }
+                    .to_owned(),
+                    actor: "system".to_owned(),
+                    subject: provider.to_owned(),
+                    payload: serde_json::json!({}),
+                })
+                .is_err()
+                || secrets
+                    .update(
+                        provider,
+                        api_key.as_deref().map(String::as_str),
+                        base_url.as_deref(),
+                        None,
+                    )
+                    .is_err()
+            {
+                return write_response(
+                    &mut stream,
+                    "503 Service Unavailable",
+                    "{\"detail\":\"provider secret update failed\"}",
+                    None,
+                );
+            }
+            return write_response(&mut stream, "200 OK", "{\"ok\":true}", None);
         }
     }
     if request.method == "POST" {
@@ -810,15 +976,24 @@ fn valid_bearer(value: &str, token: &[u8]) -> bool {
 struct RequestHead {
     method: String,
     path: String,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
+    headers: Vec<(String, Zeroizing<String>)>,
+    body: Zeroizing<Vec<u8>>,
+}
+
+impl Drop for RequestHead {
+    fn drop(&mut self) {
+        for (_, value) in &mut self.headers {
+            value.zeroize();
+        }
+        self.body.zeroize();
+    }
 }
 
 fn read_headers(stream: &mut TcpStream) -> io::Result<RequestHead> {
-    let mut request = Vec::with_capacity(1024);
-    let mut buffer = [0_u8; 1024];
+    let mut request = Zeroizing::new(Vec::with_capacity(1024));
+    let mut buffer = Zeroizing::new([0_u8; 1024]);
     loop {
-        let read = stream.read(&mut buffer)?;
+        let read = stream.read(&mut *buffer)?;
         if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -862,7 +1037,10 @@ fn read_headers(stream: &mut TcpStream) -> io::Result<RequestHead> {
             let (name, value) = line.split_once(':').ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "invalid request header")
             })?;
-            Ok((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+            Ok((
+                name.trim().to_ascii_lowercase(),
+                Zeroizing::new(value.trim().to_owned()),
+            ))
         })
         .collect::<io::Result<Vec<_>>>()?;
     let content_lengths = headers
@@ -886,7 +1064,7 @@ fn read_headers(stream: &mut TcpStream) -> io::Result<RequestHead> {
     }
     let body_start = end + 4;
     while request.len() < body_start + content_length {
-        let read = stream.read(&mut buffer)?;
+        let read = stream.read(&mut *buffer)?;
         if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -895,7 +1073,8 @@ fn read_headers(stream: &mut TcpStream) -> io::Result<RequestHead> {
         }
         request.extend_from_slice(&buffer[..read]);
     }
-    let body = request[body_start..body_start + content_length].to_vec();
+    let body = Zeroizing::new(request[body_start..body_start + content_length].to_vec());
+    request.zeroize();
     Ok(RequestHead {
         method,
         path,
@@ -941,7 +1120,8 @@ fn write_json_response<T: serde::Serialize>(
 #[cfg(test)]
 mod tests {
     use super::{
-        serve_one, EventHub, Risk, RuntimeBootstrap, RuntimeConfig, RuntimeEvent, RuntimePolicy,
+        serve_one, EventHub, ProviderId, ProviderSecrets, Risk, RuntimeBootstrap, RuntimeConfig,
+        RuntimeEvent, RuntimePolicy,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -1153,12 +1333,21 @@ mod tests {
         assert_eq!(
             runtime
                 .provider_secrets()
+                .expect("provider secrets")
                 .api_key(&super::ProviderId::OpenAi),
             Some("provider-secret")
         );
         assert!(std::env::var_os("CODINAL_SECRET_BOOTSTRAP").is_none());
-        assert!(format!("{:?}", runtime.provider_secrets()).contains("configured_profiles"));
-        assert!(!format!("{:?}", runtime.provider_secrets()).contains("provider-secret"));
+        assert!(format!(
+            "{:?}",
+            runtime.provider_secrets().expect("provider secrets")
+        )
+        .contains("configured_profiles"));
+        assert!(!format!(
+            "{:?}",
+            runtime.provider_secrets().expect("provider secrets")
+        )
+        .contains("provider-secret"));
         drop(runtime);
         fs::remove_dir_all(path).expect("remove");
     }
@@ -1521,6 +1710,55 @@ mod tests {
         assert_eq!(events[0].subject, approval_id);
         assert_eq!(events[0].payload["outcome"], "deny");
         drop(audit);
+        fs::remove_dir_all(data_dir).expect("remove");
+    }
+
+    #[test]
+    fn live_provider_secret_update_requires_both_tokens_and_persists_no_secret() {
+        let data_dir = fixture_data_dir();
+        let mut config =
+            RuntimeConfig::new(free_loopback_port(), TOKEN, &data_dir).expect("config");
+        config.attach_audit_ledger().expect("audit ledger");
+        *config.provider_secrets.write().expect("provider secrets") =
+            ProviderSecrets::from_bootstrap(
+                br#"{"sync_token":"abcdef0123456789abcdef0123456789","profiles":{}}"#,
+            )
+            .expect("bootstrap");
+        let provider_secrets = Arc::clone(&config.provider_secrets);
+        let listener = config.bind().expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            serve_one(&listener, &config)?;
+            serve_one(&listener, &config)
+        });
+        let body = r#"{"api_key":"live-provider-secret"}"#;
+        for (sync_token, expected) in [
+            ("abcdef0123456789abcdef012345678x", "401 Unauthorized"),
+            ("abcdef0123456789abcdef0123456789", "200 OK"),
+        ] {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+            write!(
+                stream,
+                "PUT /v1/secrets/providers/openai HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nX-Codinal-Secret-Sync: {sync_token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("request");
+            let mut response = String::new();
+            stream.read_to_string(&mut response).expect("response");
+            assert!(response.starts_with(&format!("HTTP/1.1 {expected}\r\n")));
+        }
+        server.join().expect("server").expect("serve");
+        assert_eq!(
+            provider_secrets
+                .read()
+                .expect("provider secrets")
+                .api_key(&ProviderId::OpenAi),
+            Some("live-provider-secret")
+        );
+        let bytes = fs::read(data_dir.join("audit.db")).expect("audit bytes");
+        assert!(!bytes
+            .windows("live-provider-secret".len())
+            .any(|window| window == b"live-provider-secret"));
         fs::remove_dir_all(data_dir).expect("remove");
     }
 

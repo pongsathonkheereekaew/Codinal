@@ -20,14 +20,15 @@ use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 use zeroize::{Zeroize, Zeroizing};
 
-use control_client::{relay_oauth_callback, sync_provider_secret};
+use control_client::relay_oauth_callback;
 use host::{
     free_loopback_port, initialization_script, mint_session_token, runtime_layout,
     validate_runtime_layout, SidecarLaunch,
 };
 use oauth::parse_oauth_deep_link;
 use secrets::{
-    encode_secret_bootstrap, provider_secret_status, update_provider_secret, PlatformSecretVault,
+    encode_secret_bootstrap, provider_secret_status, sync_runtime_provider_secret,
+    update_provider_secret, PlatformSecretVault,
 };
 use workspace::choose_workspace;
 
@@ -121,7 +122,7 @@ fn set_provider_secret(
         Some(&api_key),
         base_url.as_deref(),
         || {
-            sync_provider_secret(
+            sync_runtime_provider_secret(
                 state.port,
                 &state.token,
                 &state.secret_sync_token,
@@ -144,7 +145,7 @@ fn delete_provider_secret(
     state: State<'_, DesktopState>,
 ) -> Result<SecretMutationResult, String> {
     update_provider_secret(&state.vault, &provider, None, None, || {
-        sync_provider_secret(
+        sync_runtime_provider_secret(
             state.port,
             &state.token,
             &state.secret_sync_token,
