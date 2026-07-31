@@ -7,6 +7,8 @@ import platform
 import signal
 import subprocess
 import threading
+import time
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Iterable, Mapping, Optional
@@ -99,6 +101,9 @@ class SandboxResult:
     interrupted: bool = False
     output_truncated: bool = False
     profile: str = "build"
+    argv_digest: str = ""
+    duration_ms: int = 0
+    changed_paths: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -109,6 +114,9 @@ class SandboxResult:
             "interrupted": self.interrupted,
             "output_truncated": self.output_truncated,
             "profile": self.profile,
+            "argv_digest": self.argv_digest,
+            "duration_ms": self.duration_ms,
+            "changed_paths": list(self.changed_paths),
         }
 
 
@@ -244,6 +252,7 @@ class SandboxedShell:
         )
         if timeout <= 0:
             raise ValueError("timeout must be positive")
+        argv_digest = _argv_digest(command_argv)
 
         definitions: list[str] = []
         for index, root in enumerate(self.read_roots):
@@ -301,6 +310,7 @@ class SandboxedShell:
         for reader in readers:
             reader.start()
 
+        started_at = time.monotonic()
         timed_out = False
         try:
             process.wait(timeout=timeout)
@@ -325,6 +335,8 @@ class SandboxedShell:
             interrupted=interrupted,
             output_truncated=capture.truncated,
             profile=self.profile,
+            argv_digest=argv_digest,
+            duration_ms=round((time.monotonic() - started_at) * 1000),
         )
 
     def interrupt(self) -> bool:
@@ -410,3 +422,8 @@ def _deduplicate_paths(paths: Iterable[Path]) -> list[Path]:
         seen.add(path)
         unique.append(path)
     return unique
+
+
+def _argv_digest(argv: list[str]) -> str:
+    canonical = "\0".join(argv).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"

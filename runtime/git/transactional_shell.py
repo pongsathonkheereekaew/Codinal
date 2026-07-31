@@ -10,7 +10,7 @@ import stat
 import subprocess
 import tempfile
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
@@ -239,7 +239,7 @@ class TransactionalShell:
                     result,
                     "shell transaction conflicts with current files",
                 )
-            return result
+            return replace(result, changed_paths=tuple(changed))
         except _TransactionInterrupted:
             return _interrupted(result)
         except Exception:
@@ -601,12 +601,12 @@ def _failed(result: SandboxResult, message: str) -> SandboxResult:
     stderr = result.stderr
     if stderr and not stderr.endswith("\n"):
         stderr += "\n"
-    return SandboxResult(
+    return replace(
+        result,
         exit_code=1,
-        stdout=result.stdout,
         stderr=f"{stderr}{message}",
-        output_truncated=result.output_truncated,
-        profile=result.profile,
+        timed_out=False,
+        interrupted=False,
     )
 
 
@@ -619,15 +619,7 @@ def _interrupted(result: SandboxResult | None) -> SandboxResult:
             interrupted=True,
             profile="build",
         )
-    return SandboxResult(
-        exit_code=result.exit_code,
-        stdout=result.stdout,
-        stderr=result.stderr,
-        timed_out=result.timed_out,
-        interrupted=True,
-        output_truncated=result.output_truncated,
-        profile=result.profile,
-    )
+    return replace(result, interrupted=True)
 
 
 def _with_warning(
@@ -637,12 +629,4 @@ def _with_warning(
     stderr = result.stderr
     if stderr and not stderr.endswith("\n"):
         stderr += "\n"
-    return SandboxResult(
-        exit_code=result.exit_code,
-        stdout=result.stdout,
-        stderr=f"{stderr}{message}",
-        timed_out=result.timed_out,
-        interrupted=result.interrupted,
-        output_truncated=result.output_truncated,
-        profile=result.profile,
-    )
+    return replace(result, stderr=f"{stderr}{message}")

@@ -595,6 +595,9 @@ def test_run_shell_returns_bounded_executor_result(tmp_path: Path) -> None:
             "interrupted": False,
             "output_truncated": False,
             "profile": "build",
+            "argv_digest": "",
+            "duration_ms": 0,
+            "changed_paths": [],
         }
 
 

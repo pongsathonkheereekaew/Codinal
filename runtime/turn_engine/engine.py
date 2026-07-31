@@ -877,7 +877,7 @@ class TurnEngine:
             result=result,
             result_preview=_preview(result),
         )
-        self._record_execution_evidence(tool_call, result)
+        evidence_status = self._record_execution_evidence(tool_call, result)
         rule = self._standing_notes.pop(tool_call.id, "")
         return Event(
             EventType.TOOL_FINISHED,
@@ -888,28 +888,58 @@ class TurnEngine:
                 "result_preview": _preview(result),
                 **({"display": display} if display else {}),
                 **({"standing_rule": rule} if rule else {}),
+                **(
+                    {"execution_evidence": evidence_status}
+                    if evidence_status is not None
+                    else {}
+                ),
             },
         )
 
-    def _record_execution_evidence(self, tool_call: ToolCall, result: Any) -> None:
+    def _record_execution_evidence(
+        self,
+        tool_call: ToolCall,
+        result: Any,
+    ) -> str | None:
         """Persist shell evidence without retaining commands or captured output."""
         if self.execution_evidence_sink is None or tool_call.name != "run_shell":
-            return
+            return None
         if not isinstance(result, dict):
-            return
+            return None
+        required_fields = {
+            "exit_code",
+            "stdout",
+            "stderr",
+            "timed_out",
+            "interrupted",
+            "output_truncated",
+            "argv_digest",
+            "duration_ms",
+            "changed_paths",
+        }
+        if not required_fields.issubset(result):
+            return None
 
-        command = tool_call.arguments.get("command", "")
-        command_bytes = str(command).encode("utf-8")
         stdout_bytes = str(result.get("stdout", "")).encode("utf-8")
         stderr_bytes = str(result.get("stderr", "")).encode("utf-8")
+        changed_paths = result.get("changed_paths")
+        if not isinstance(changed_paths, list) or not all(
+            isinstance(path, str) for path in changed_paths
+        ):
+            return None
+        changed_digest = _sha256_digest(
+            json.dumps(changed_paths, separators=(",", ":")).encode("utf-8")
+        )
         profile = result.get("profile", "build")
         if profile not in {"read", "test", "build"}:
             profile = "unknown"
         payload = {
             "tool_call_id": tool_call.id,
+            "turn_id": self.audit_context.get("turn_id", ""),
             "profile": profile,
-            "command_digest": _sha256_digest(command_bytes),
+            "argv_digest": result["argv_digest"],
             "exit_code": result.get("exit_code"),
+            "duration_ms": result["duration_ms"],
             "timed_out": bool(result.get("timed_out", False)),
             "interrupted": bool(result.get("interrupted", False)),
             "output_truncated": bool(result.get("output_truncated", False)),
@@ -917,11 +947,14 @@ class TurnEngine:
             "stdout_digest": _sha256_digest(stdout_bytes),
             "stderr_bytes": len(stderr_bytes),
             "stderr_digest": _sha256_digest(stderr_bytes),
+            "changed_path_count": len(changed_paths),
+            "changed_paths_digest": changed_digest,
         }
         try:
             self.execution_evidence_sink(payload)
         except Exception:
-            pass
+            return "failed"
+        return "recorded"
 
     def _audit(self, tool_call: ToolCall, **event: Any) -> None:
         if self.audit_sink is None:

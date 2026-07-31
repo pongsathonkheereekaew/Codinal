@@ -274,6 +274,9 @@ def test_shell_execution_audit_contains_only_bounded_hashed_evidence(tmp_path) -
             "interrupted": False,
             "output_truncated": False,
             "profile": "test",
+            "argv_digest": "sha256:argv",
+            "duration_ms": 37,
+            "changed_paths": ["runtime/owned.py"],
         }
 
     async def approve(_request):
@@ -319,8 +322,10 @@ def test_shell_execution_audit_contains_only_bounded_hashed_evidence(tmp_path) -
         {
             "tool_call_id": "call_1",
             "profile": "test",
-            "command_digest": "sha256:c3b206874e8a7a233c1954889847b7d584a619e7ae1a29c44cfa2f1b06214867",
+            "turn_id": "",
+            "argv_digest": "sha256:argv",
             "exit_code": 0,
+            "duration_ms": 37,
             "timed_out": False,
             "interrupted": False,
             "output_truncated": False,
@@ -328,8 +333,127 @@ def test_shell_execution_audit_contains_only_bounded_hashed_evidence(tmp_path) -
             "stdout_digest": "sha256:f2254fd30f0840a3523cb779e3da39a95a81c0410d1437fe3614ff52b9207f4e",
             "stderr_bytes": 14,
             "stderr_digest": "sha256:a0f3158ecf8fb5189f71dd407fa95acf984a722826ea7332c2285432049f6cd9",
+            "changed_path_count": 1,
+            "changed_paths_digest": "sha256:ae30e632848669921169e35bea7d53c59da1ae4ebbce6027bd9f393b5c9c99b9",
         }
     ]
+
+
+def test_shell_execution_audit_skips_unexecuted_result(tmp_path) -> None:
+    evidence = []
+
+    def run_shell(command):
+        assert command == "missing-command"
+        return {"error": "invalid command"}
+
+    async def approve(_request):
+        return ApprovalOutcome.ONCE
+
+    registry = ToolRegistry(ToolManifest())
+    registry.register(
+        run_shell,
+        schema={
+            "type": "function",
+            "function": {
+                "name": "run_shell",
+                "description": "Run a command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    )
+    provider = SequenceProvider(
+        [
+            AssistantTurn(
+                tool_calls=[
+                    ToolCall(
+                        "call_1",
+                        "run_shell",
+                        {"command": "missing-command"},
+                    )
+                ]
+            ),
+            AssistantTurn(text="done"),
+        ]
+    )
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(tmp_path, mode=Mode.INTERACTIVE),
+        model="openai:gpt-test",
+        approver=approve,
+        execution_evidence_sink=evidence.append,
+    )
+
+    asyncio.run(collect(engine))
+
+    assert evidence == []
+
+
+def test_shell_execution_evidence_failure_is_visible(tmp_path) -> None:
+    def run_shell(command):
+        assert command == "pytest -q"
+        return {
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "timed_out": False,
+            "interrupted": False,
+            "output_truncated": False,
+            "profile": "test",
+            "argv_digest": "sha256:argv",
+            "duration_ms": 1,
+            "changed_paths": [],
+        }
+
+    async def approve(_request):
+        return ApprovalOutcome.ONCE
+
+    def unavailable(_payload):
+        raise OSError("audit unavailable")
+
+    registry = ToolRegistry(ToolManifest())
+    registry.register(
+        run_shell,
+        schema={
+            "type": "function",
+            "function": {
+                "name": "run_shell",
+                "description": "Run a command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    )
+    provider = SequenceProvider(
+        [
+            AssistantTurn(
+                tool_calls=[ToolCall("call_1", "run_shell", {"command": "pytest -q"})]
+            ),
+            AssistantTurn(text="done"),
+        ]
+    )
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(tmp_path, mode=Mode.INTERACTIVE),
+        model="openai:gpt-test",
+        approver=approve,
+        execution_evidence_sink=unavailable,
+    )
+
+    events = asyncio.run(collect(engine))
+
+    finished = next(event for event in events if event.type is EventType.TOOL_FINISHED)
+    assert finished.data["execution_evidence"] == "failed"
 
 
 def test_unregistered_control_tool_cannot_invoke_callback(tmp_path) -> None:

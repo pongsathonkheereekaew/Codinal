@@ -553,13 +553,18 @@ class TurnCoordinator:
         source: dict[str, Any] | None,
         code_checkpoint_id: str | None,
     ) -> None:
-        await self._drive(
-            session_id,
-            turn_id,
-            engine,
-            engine.run(user_input, source=source),
-            code_checkpoint_id=code_checkpoint_id,
-        )
+        prior_context = dict(engine.audit_context)
+        engine.audit_context = {**prior_context, "turn_id": turn_id}
+        try:
+            await self._drive(
+                session_id,
+                turn_id,
+                engine,
+                engine.run(user_input, source=source),
+                code_checkpoint_id=code_checkpoint_id,
+            )
+        finally:
+            engine.audit_context = prior_context
 
     async def _resume(
         self,
