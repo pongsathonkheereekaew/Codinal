@@ -57,7 +57,7 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 install -m 755 "$GPUI_ROOT/target/release/codinal-gpui-prototype" "$MACOS/codinal"
 install -m 755 "$RUNTIME_ROOT/target/release/codinal-runtime" "$RESOURCES/codinal-runtime"
-install -m 644 "$ROOT/desktop/src-tauri/icons/icon.icns" "$RESOURCES/Codinal.icns"
+install -m 644 "$ROOT/desktop/assets/Codinal.icns" "$RESOURCES/Codinal.icns"
 
 INFO_PLIST="$CONTENTS/Info.plist"
 plutil -create xml1 "$INFO_PLIST"

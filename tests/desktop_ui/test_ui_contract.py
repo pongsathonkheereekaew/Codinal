@@ -285,8 +285,8 @@ def test_task_workspace_keeps_conversation_context_visible_before_messages():
 
 
 def test_workspace_picker_uses_a_native_dialog_not_an_apple_script_bridge():
-    source = (ROOT / "desktop/src-tauri/src/workspace.rs").read_text(encoding="utf-8")
-    manifest = (ROOT / "desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8")
+    source = (ROOT / "desktop/native-host/src/workspace.rs").read_text(encoding="utf-8")
+    manifest = (ROOT / "desktop/native-host/Cargo.toml").read_text(encoding="utf-8")
 
     assert "rfd::FileDialog" in source
     assert "osascript" not in source
@@ -409,12 +409,12 @@ def test_every_visible_titlebar_zone_supports_native_window_zoom():
 
 
 def test_app_icon_uses_a_dock_safe_margin_around_the_monochrome_tile():
-    icon = (ROOT / "desktop" / "src-tauri" / "icons" / "icon.svg").read_text(
+    icon = (ROOT / "desktop" / "assets" / "Codinal.svg").read_text(
         encoding="utf-8"
     )
     assert '<rect x="144" y="144" width="736" height="736"' in icon
     assert 'fill="#111111"' in icon
-    png = ROOT / "desktop" / "src-tauri" / "icons" / "icon.png"
+    png = ROOT / "desktop" / "assets" / "Codinal.png"
     assert _png_top_left_alpha(png) == 0
     if sys.platform != "darwin":
         return
@@ -425,7 +425,7 @@ def test_app_icon_uses_a_dock_safe_margin_around_the_monochrome_tile():
                 "iconutil",
                 "-c",
                 "iconset",
-                str(ROOT / "desktop" / "src-tauri" / "icons" / "icon.icns"),
+                str(ROOT / "desktop" / "assets" / "Codinal.icns"),
                 "-o",
                 str(output),
             ],
