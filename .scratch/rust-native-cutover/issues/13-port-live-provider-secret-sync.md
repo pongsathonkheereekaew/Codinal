@@ -39,4 +39,11 @@ one-shot updates authenticated by both bearer and secret-sync tokens.
 - The provider sync transport moved from the Tauri crate into `native-host`, so
   GPUI and Tauri share one native API. Tauri retains only temporary command
   orchestration while the GPUI settings form is ported.
-- Remaining: GPUI provider status/edit/delete UI and custom-provider live sync.
+- Custom-provider add/delete now uses the same dual-token, zeroizing native
+  transport and a dedicated Rust route with bounded slug/URL/key validation.
+- Definite runtime rejection rolls Keychain metadata back atomically; an
+  ambiguous post-send failure preserves Keychain as restart source of truth
+  instead of creating permanent inverse state.
+- GPUI now renders standard/custom configured status directly from native-host
+  Keychain APIs without exposing values or invoking Tauri.
+- Remaining: GPUI provider edit/delete controls with secure native text input.

@@ -82,8 +82,8 @@ struct SecretBootstrap {
 
 #[derive(Serialize)]
 pub struct ProviderSecretStatus {
-    provider: &'static str,
-    configured: bool,
+    pub provider: &'static str,
+    pub configured: bool,
 }
 
 pub fn validate_provider(provider: &str) -> io::Result<&str> {
@@ -224,23 +224,97 @@ pub fn sync_runtime_provider_secret(
         None => ("DELETE", Vec::new()),
     };
     let body = zeroize::Zeroizing::new(body);
+    send_runtime_secret_request(
+        port,
+        token,
+        secret_sync_token,
+        method,
+        &format!("/v1/secrets/providers/{provider}"),
+        &body,
+    )
+}
+
+pub fn sync_runtime_custom_provider(
+    port: u16,
+    token: &str,
+    secret_sync_token: &str,
+    slug: &str,
+    base_url: &str,
+    api_key: Option<&str>,
+    failover_eligible: bool,
+) -> io::Result<()> {
+    validate_session_token(token)?;
+    validate_session_token(secret_sync_token)?;
+    validate_custom_slug(slug)?;
+    let (method, path, body) = match api_key {
+        Some(value) if !value.trim().is_empty() => (
+            "POST",
+            "/v1/providers/custom".to_owned(),
+            serde_json::to_vec(&serde_json::json!({
+                "slug": slug,
+                "base_url": base_url.trim(),
+                "api_key": value,
+                "failover_eligible": failover_eligible,
+            }))
+            .map_err(io::Error::other)?,
+        ),
+        Some(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "api key must not be empty",
+            ));
+        }
+        None => ("DELETE", format!("/v1/providers/custom/{slug}"), Vec::new()),
+    };
+    let body = zeroize::Zeroizing::new(body);
+    send_runtime_secret_request(port, token, secret_sync_token, method, &path, &body)
+}
+
+fn send_runtime_secret_request(
+    port: u16,
+    token: &str,
+    secret_sync_token: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> io::Result<()> {
     let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(2))?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let headers = zeroize::Zeroizing::new(format!(
-        "{method} /v1/secrets/providers/{provider} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nX-Codinal-Secret-Sync: {secret_sync_token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nX-Codinal-Secret-Sync: {secret_sync_token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     ));
-    stream.write_all(headers.as_bytes())?;
-    stream.write_all(&body)?;
-    stream.flush()?;
+    stream
+        .write_all(headers.as_bytes())
+        .and_then(|()| stream.write_all(body))
+        .and_then(|()| stream.flush())
+        .map_err(indeterminate_secret_sync)?;
     let mut status_line = String::new();
-    BufReader::new(stream).read_line(&mut status_line)?;
+    let read = BufReader::new(stream)
+        .read_line(&mut status_line)
+        .map_err(indeterminate_secret_sync)?;
+    if read == 0 {
+        return Err(indeterminate_secret_sync(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "missing runtime response",
+        )));
+    }
     if status_line.split_whitespace().nth(1) != Some("200") {
-        return Err(io::Error::other("runtime rejected provider secret update"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "runtime rejected provider secret update",
+        ));
     }
     Ok(())
+}
+
+fn indeterminate_secret_sync(_error: io::Error) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::ConnectionAborted,
+        "runtime provider secret update is indeterminate; restart required",
+    )
 }
 
 pub fn update_provider_secret(
@@ -293,6 +367,11 @@ pub fn update_provider_secret(
     }
 
     let mut previous = vault.get(provider)?;
+    let previous_base_url = if accepts_base_url {
+        vault.get_base_url(provider)?
+    } else {
+        None
+    };
     let mutation = match api_key {
         Some(value) => vault.set(provider, value),
         None => vault.delete(provider).map(|_| ()),
@@ -314,10 +393,13 @@ pub fn update_provider_secret(
             vault.set_base_url(provider, None)
         };
         if let Err(error) = base_result {
-            let rollback = match previous.as_deref() {
-                Some(value) => vault.set(provider, value),
-                None => vault.delete(provider).map(|_| ()),
-            };
+            let rollback = restore_provider_secret(
+                vault,
+                provider,
+                previous.as_deref(),
+                previous_base_url.as_deref(),
+                accepts_base_url,
+            );
             if let Some(value) = previous.as_mut() {
                 value.zeroize();
             }
@@ -329,10 +411,19 @@ pub fn update_provider_secret(
     }
 
     if let Err(sync_error) = sync_runtime() {
-        let rollback = match previous.as_deref() {
-            Some(value) => vault.set(provider, value),
-            None => vault.delete(provider).map(|_| ()),
-        };
+        if sync_error.kind() == io::ErrorKind::ConnectionAborted {
+            if let Some(value) = previous.as_mut() {
+                value.zeroize();
+            }
+            return Err(sync_error);
+        }
+        let rollback = restore_provider_secret(
+            vault,
+            provider,
+            previous.as_deref(),
+            previous_base_url.as_deref(),
+            accepts_base_url,
+        );
         if let Some(value) = previous.as_mut() {
             value.zeroize();
         }
@@ -346,6 +437,25 @@ pub fn update_provider_secret(
         value.zeroize();
     }
     Ok(api_key.is_some())
+}
+
+fn restore_provider_secret(
+    vault: &impl SecretVault,
+    provider: &str,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+    manages_base_url: bool,
+) -> io::Result<()> {
+    match api_key {
+        Some(value) => vault.set(provider, value)?,
+        None => {
+            vault.delete(provider)?;
+        }
+    }
+    if manages_base_url {
+        vault.set_base_url(provider, base_url)?;
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -406,18 +516,64 @@ pub fn set_custom_provider(
         ));
     }
     let provider = format!("custom:{slug}");
+    let mut previous_key = vault.get(&provider)?;
+    let previous_url = vault.get_base_url(&provider)?;
+    let previous_flag = vault.get_failover_flag(&provider)?;
+    let was_registered = vault.list_custom_slugs()?.iter().any(|value| value == slug);
     vault.set(&provider, api_key)?;
     let url_result = vault.set_base_url(&provider, Some(trimmed_url));
     let flag_result = vault.set_failover_flag(&provider, Some(failover_eligible));
     let index_result = vault.set_custom_slug_registered(slug, true);
     // Roll back the api_key if any of the metadata writes failed.
     if url_result.is_err() || flag_result.is_err() || index_result.is_err() {
-        let _ = vault.delete(&provider);
-        let _ = vault.set_base_url(&provider, None);
-        let _ = vault.set_failover_flag(&provider, None);
-        return Err(io::Error::other("custom provider metadata write failed"));
+        let rollback = restore_custom_provider(
+            vault,
+            slug,
+            previous_key.as_deref(),
+            previous_url.as_deref(),
+            previous_flag,
+            was_registered,
+        );
+        if let Some(value) = previous_key.as_mut() {
+            value.zeroize();
+        }
+        return if rollback.is_ok() {
+            Err(io::Error::other("custom provider metadata write failed"))
+        } else {
+            Err(io::Error::other(
+                "custom provider update failed and rollback failed",
+            ))
+        };
     }
-    sync_runtime()?;
+    if let Err(error) = sync_runtime() {
+        if error.kind() == io::ErrorKind::ConnectionAborted {
+            if let Some(value) = previous_key.as_mut() {
+                value.zeroize();
+            }
+            return Err(error);
+        }
+        let rollback = restore_custom_provider(
+            vault,
+            slug,
+            previous_key.as_deref(),
+            previous_url.as_deref(),
+            previous_flag,
+            was_registered,
+        );
+        if let Some(value) = previous_key.as_mut() {
+            value.zeroize();
+        }
+        return if rollback.is_ok() {
+            Err(error)
+        } else {
+            Err(io::Error::other(
+                "custom provider update failed and rollback failed",
+            ))
+        };
+    }
+    if let Some(value) = previous_key.as_mut() {
+        value.zeroize();
+    }
     Ok(())
 }
 
@@ -428,12 +584,64 @@ pub fn delete_custom_provider(
 ) -> io::Result<bool> {
     validate_custom_slug(slug)?;
     let provider = format!("custom:{slug}");
+    let mut previous_key = vault.get(&provider)?;
+    let previous_url = vault.get_base_url(&provider)?;
+    let previous_flag = vault.get_failover_flag(&provider)?;
+    let was_registered = vault.list_custom_slugs()?.iter().any(|value| value == slug);
     let _ = vault.set_custom_slug_registered(slug, false);
     let _ = vault.set_base_url(&provider, None);
     let _ = vault.set_failover_flag(&provider, None);
     let existed = vault.delete(&provider)?;
-    sync_runtime()?;
+    if let Err(error) = sync_runtime() {
+        if error.kind() == io::ErrorKind::ConnectionAborted {
+            if let Some(value) = previous_key.as_mut() {
+                value.zeroize();
+            }
+            return Err(error);
+        }
+        let rollback = restore_custom_provider(
+            vault,
+            slug,
+            previous_key.as_deref(),
+            previous_url.as_deref(),
+            previous_flag,
+            was_registered,
+        );
+        if let Some(value) = previous_key.as_mut() {
+            value.zeroize();
+        }
+        return if rollback.is_ok() {
+            Err(error)
+        } else {
+            Err(io::Error::other(
+                "custom provider delete failed and rollback failed",
+            ))
+        };
+    }
+    if let Some(value) = previous_key.as_mut() {
+        value.zeroize();
+    }
     Ok(existed)
+}
+
+fn restore_custom_provider(
+    vault: &impl SecretVault,
+    slug: &str,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+    failover_eligible: Option<bool>,
+    registered: bool,
+) -> io::Result<()> {
+    let provider = format!("custom:{slug}");
+    match api_key {
+        Some(value) => vault.set(&provider, value)?,
+        None => {
+            vault.delete(&provider)?;
+        }
+    }
+    vault.set_base_url(&provider, base_url)?;
+    vault.set_failover_flag(&provider, failover_eligible)?;
+    vault.set_custom_slug_registered(slug, registered)
 }
 
 #[cfg(target_os = "macos")]
@@ -693,11 +901,90 @@ impl SecretVault for PlatformSecretVault {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_secret_bootstrap, validate_provider_account, SecretVault};
+    use super::{
+        delete_custom_provider, encode_secret_bootstrap, set_custom_provider,
+        update_provider_secret, validate_provider_account, SecretVault,
+    };
     use codinal_providers::{ProviderId, ProviderSecrets};
+    use std::collections::{BTreeMap, BTreeSet};
     use std::io;
+    use std::sync::Mutex;
 
     struct CustomVault;
+
+    #[derive(Default)]
+    struct MemoryVault {
+        keys: Mutex<BTreeMap<String, String>>,
+        urls: Mutex<BTreeMap<String, String>>,
+        flags: Mutex<BTreeMap<String, bool>>,
+        slugs: Mutex<BTreeSet<String>>,
+    }
+
+    impl SecretVault for MemoryVault {
+        fn get(&self, provider: &str) -> io::Result<Option<String>> {
+            Ok(self.keys.lock().expect("keys").get(provider).cloned())
+        }
+
+        fn set(&self, provider: &str, value: &str) -> io::Result<()> {
+            self.keys
+                .lock()
+                .expect("keys")
+                .insert(provider.to_owned(), value.to_owned());
+            Ok(())
+        }
+
+        fn delete(&self, provider: &str) -> io::Result<bool> {
+            Ok(self.keys.lock().expect("keys").remove(provider).is_some())
+        }
+
+        fn get_base_url(&self, provider: &str) -> io::Result<Option<String>> {
+            Ok(self.urls.lock().expect("urls").get(provider).cloned())
+        }
+
+        fn set_base_url(&self, provider: &str, value: Option<&str>) -> io::Result<()> {
+            let mut urls = self.urls.lock().expect("urls");
+            match value {
+                Some(value) => {
+                    urls.insert(provider.to_owned(), value.to_owned());
+                }
+                None => {
+                    urls.remove(provider);
+                }
+            }
+            Ok(())
+        }
+
+        fn get_failover_flag(&self, provider: &str) -> io::Result<Option<bool>> {
+            Ok(self.flags.lock().expect("flags").get(provider).copied())
+        }
+
+        fn set_failover_flag(&self, provider: &str, value: Option<bool>) -> io::Result<()> {
+            let mut flags = self.flags.lock().expect("flags");
+            match value {
+                Some(value) => {
+                    flags.insert(provider.to_owned(), value);
+                }
+                None => {
+                    flags.remove(provider);
+                }
+            }
+            Ok(())
+        }
+
+        fn list_custom_slugs(&self) -> io::Result<Vec<String>> {
+            Ok(self.slugs.lock().expect("slugs").iter().cloned().collect())
+        }
+
+        fn set_custom_slug_registered(&self, slug: &str, registered: bool) -> io::Result<()> {
+            let mut slugs = self.slugs.lock().expect("slugs");
+            if registered {
+                slugs.insert(slug.to_owned());
+            } else {
+                slugs.remove(slug);
+            }
+            Ok(())
+        }
+    }
 
     impl SecretVault for CustomVault {
         fn get(&self, provider: &str) -> io::Result<Option<String>> {
@@ -734,5 +1021,59 @@ mod tests {
         let provider = ProviderId::Custom("Local".to_owned());
         assert_eq!(parsed.api_key(&provider), Some("custom-secret"));
         assert_eq!(parsed.base_url(&provider), Some("localhost:8080"));
+    }
+
+    #[test]
+    fn indeterminate_custom_sync_keeps_keychain_as_restart_source_of_truth() {
+        let vault = MemoryVault::default();
+        let indeterminate = || {
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "response lost after commit",
+            ))
+        };
+        assert!(set_custom_provider(
+            &vault,
+            "local",
+            "http://127.0.0.1:1234/v1",
+            "new-secret",
+            true,
+            indeterminate,
+        )
+        .is_err());
+        assert_eq!(
+            vault.get("custom:local").expect("key"),
+            Some("new-secret".to_owned())
+        );
+        assert_eq!(vault.list_custom_slugs().expect("slugs"), vec!["local"]);
+
+        assert!(delete_custom_provider(&vault, "local", indeterminate).is_err());
+        assert_eq!(vault.get("custom:local").expect("key"), None);
+        assert!(vault.list_custom_slugs().expect("slugs").is_empty());
+    }
+
+    #[test]
+    fn definite_omniroute_rejection_restores_key_and_base_url() {
+        let vault = MemoryVault::default();
+        vault.set("omniroute", "old-key").expect("old key");
+        vault
+            .set_base_url("omniroute", Some("https://old.example/v1"))
+            .expect("old URL");
+        let result = update_provider_secret(
+            &vault,
+            "omniroute",
+            Some("new-key"),
+            Some("https://new.example/v1"),
+            || Err(io::Error::new(io::ErrorKind::InvalidData, "rejected")),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            vault.get("omniroute").expect("key"),
+            Some("old-key".to_owned())
+        );
+        assert_eq!(
+            vault.get_base_url("omniroute").expect("URL"),
+            Some("https://old.example/v1".to_owned())
+        );
     }
 }

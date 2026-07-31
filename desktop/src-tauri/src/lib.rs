@@ -27,8 +27,8 @@ use host::{
 };
 use oauth::parse_oauth_deep_link;
 use secrets::{
-    encode_secret_bootstrap, provider_secret_status, sync_runtime_provider_secret,
-    update_provider_secret, PlatformSecretVault,
+    encode_secret_bootstrap, provider_secret_status, sync_runtime_custom_provider,
+    sync_runtime_provider_secret, update_provider_secret, PlatformSecretVault,
 };
 use workspace::choose_workspace;
 
@@ -186,7 +186,7 @@ fn set_custom_provider(
         &api_key,
         failover_eligible,
         || {
-            control_client::sync_custom_provider(
+            sync_runtime_custom_provider(
                 state.port,
                 &state.token,
                 &state.secret_sync_token,
@@ -204,7 +204,7 @@ fn set_custom_provider(
 fn delete_custom_provider(slug: String, state: State<'_, DesktopState>) -> Result<bool, String> {
     let slug_for_sync = slug.clone();
     secrets::delete_custom_provider(&state.vault, &slug, || {
-        control_client::sync_custom_provider(
+        sync_runtime_custom_provider(
             state.port,
             &state.token,
             &state.secret_sync_token,

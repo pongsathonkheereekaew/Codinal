@@ -4,7 +4,7 @@ use std::thread;
 
 use codinal_desktop::control_client::relay_oauth_callback;
 use codinal_desktop::oauth::parse_oauth_deep_link;
-use codinal_native_host::secrets::sync_runtime_provider_secret;
+use codinal_native_host::secrets::{sync_runtime_custom_provider, sync_runtime_provider_secret};
 use url::Url;
 
 fn capture_request(status: &str) -> (u16, thread::JoinHandle<String>) {
@@ -87,6 +87,27 @@ fn provider_secret_sync_errors_never_echo_secret() {
     request.join().expect("server thread");
 
     assert!(!error.to_string().contains("must-not-echo"));
+}
+
+#[test]
+fn custom_provider_sync_uses_the_shared_native_transport() {
+    let (port, request) = capture_request("200 OK");
+    sync_runtime_custom_provider(
+        port,
+        "test-session-token-with-at-least-32-characters",
+        "test-secret-sync-token-with-at-least-32-chars",
+        "local",
+        "http://127.0.0.1:1234/v1",
+        Some("custom-secret"),
+        true,
+    )
+    .expect("sync succeeds");
+    let request = request.join().expect("server thread");
+    assert!(request.starts_with("POST /v1/providers/custom HTTP/1.1\r\n"));
+    assert!(request.ends_with(
+        r#"{"api_key":"custom-secret","base_url":"http://127.0.0.1:1234/v1","failover_eligible":true,"slug":"local"}"#
+    ));
+    assert!(!request.starts_with("POST /v1/providers/custom?"));
 }
 
 #[test]

@@ -642,6 +642,176 @@ fn serve_stream(mut stream: TcpStream, config: &RuntimeConfig) -> io::Result<()>
             };
         }
     }
+    if request.method == "POST" && request.path == "/v1/providers/custom"
+        || request.method == "DELETE" && request.path.starts_with("/v1/providers/custom/")
+    {
+        let sync_tokens = request
+            .headers
+            .iter()
+            .filter(|(name, _)| name == "x-codinal-secret-sync")
+            .map(|(_, value)| value.as_str())
+            .collect::<Vec<_>>();
+        let mut secrets = config
+            .provider_secrets
+            .write()
+            .map_err(|_| io::Error::other("provider secret lock poisoned"))?;
+        if sync_tokens.len() != 1 || !secrets.sync_token_matches(sync_tokens[0]) {
+            return write_response(
+                &mut stream,
+                "401 Unauthorized",
+                "{\"detail\":\"unauthorized secret sync\"}",
+                None,
+            );
+        }
+        let (provider, api_key, base_url, failover_eligible) = if request.method == "POST" {
+            let mut document: serde_json::Value = match serde_json::from_slice(&request.body) {
+                Ok(document) => document,
+                Err(_) => {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid custom provider update\"}",
+                        None,
+                    );
+                }
+            };
+            let Some(object) = document.as_object_mut() else {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid custom provider update\"}",
+                    None,
+                );
+            };
+            let slug = match object.remove("slug") {
+                Some(serde_json::Value::String(value)) => value,
+                _ => {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid custom provider update\"}",
+                        None,
+                    );
+                }
+            };
+            let api_key = match object.remove("api_key") {
+                Some(serde_json::Value::String(value)) => Zeroizing::new(value),
+                _ => {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid custom provider update\"}",
+                        None,
+                    );
+                }
+            };
+            let base_url = match object.remove("base_url") {
+                Some(serde_json::Value::String(value)) => value,
+                _ => {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid custom provider update\"}",
+                        None,
+                    );
+                }
+            };
+            let failover = match object.remove("failover_eligible") {
+                Some(serde_json::Value::Bool(value)) => value,
+                _ => {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid custom provider update\"}",
+                        None,
+                    );
+                }
+            };
+            if !object.is_empty() {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid custom provider update\"}",
+                    None,
+                );
+            }
+            (
+                format!("custom:{slug}"),
+                Some(api_key),
+                Some(base_url),
+                Some(failover),
+            )
+        } else {
+            let slug = request
+                .path
+                .strip_prefix("/v1/providers/custom/")
+                .unwrap_or_default();
+            if !request.body.is_empty() {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid custom provider update\"}",
+                    None,
+                );
+            }
+            (format!("custom:{slug}"), None, None, None)
+        };
+        if secrets
+            .validate_update(
+                &provider,
+                api_key.as_deref().map(String::as_str),
+                base_url.as_deref(),
+                failover_eligible,
+            )
+            .is_err()
+        {
+            return write_response(
+                &mut stream,
+                "400 Bad Request",
+                "{\"detail\":\"invalid custom provider update\"}",
+                None,
+            );
+        }
+        let Some(audit) = config.audit_ledger.as_ref() else {
+            return write_response(
+                &mut stream,
+                "503 Service Unavailable",
+                "{\"detail\":\"custom provider update could not be audited\"}",
+                None,
+            );
+        };
+        if audit
+            .record(codinal_policy::AuditLedgerInput {
+                domain: "provider_secret".to_owned(),
+                action: if api_key.is_some() {
+                    "configured"
+                } else {
+                    "deleted"
+                }
+                .to_owned(),
+                actor: "system".to_owned(),
+                subject: provider.clone(),
+                payload: serde_json::json!({}),
+            })
+            .is_err()
+            || secrets
+                .update(
+                    &provider,
+                    api_key.as_deref().map(String::as_str),
+                    base_url.as_deref(),
+                    failover_eligible,
+                )
+                .is_err()
+        {
+            return write_response(
+                &mut stream,
+                "503 Service Unavailable",
+                "{\"detail\":\"custom provider update failed\"}",
+                None,
+            );
+        }
+        return write_response(&mut stream, "200 OK", "{\"ok\":true}", None);
+    }
     if matches!(request.method.as_str(), "PUT" | "DELETE") {
         if let Some(provider) = request.path.strip_prefix("/v1/secrets/providers/") {
             if !matches!(
@@ -1729,6 +1899,7 @@ mod tests {
         let port = listener.local_addr().expect("address").port();
         let server = thread::spawn(move || {
             serve_one(&listener, &config)?;
+            serve_one(&listener, &config)?;
             serve_one(&listener, &config)
         });
         let body = r#"{"api_key":"live-provider-secret"}"#;
@@ -1747,18 +1918,37 @@ mod tests {
             stream.read_to_string(&mut response).expect("response");
             assert!(response.starts_with(&format!("HTTP/1.1 {expected}\r\n")));
         }
+        let custom_body = r#"{"slug":"local","base_url":"http://127.0.0.1:1234/v1","api_key":"custom-provider-secret","failover_eligible":true}"#;
+        let mut custom_stream = TcpStream::connect(("127.0.0.1", port)).expect("custom connect");
+        write!(
+            custom_stream,
+            "POST /v1/providers/custom HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nX-Codinal-Secret-Sync: abcdef0123456789abcdef0123456789\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{custom_body}",
+            custom_body.len()
+        )
+        .expect("custom request");
+        let mut custom_response = String::new();
+        custom_stream
+            .read_to_string(&mut custom_response)
+            .expect("custom response");
+        assert!(custom_response.starts_with("HTTP/1.1 200 OK\r\n"));
         server.join().expect("server").expect("serve");
+        let secrets = provider_secrets.read().expect("provider secrets");
         assert_eq!(
-            provider_secrets
-                .read()
-                .expect("provider secrets")
-                .api_key(&ProviderId::OpenAi),
+            secrets.api_key(&ProviderId::OpenAi),
             Some("live-provider-secret")
         );
+        assert_eq!(
+            secrets.api_key(&ProviderId::Custom("local".to_owned())),
+            Some("custom-provider-secret")
+        );
+        drop(secrets);
         let bytes = fs::read(data_dir.join("audit.db")).expect("audit bytes");
         assert!(!bytes
             .windows("live-provider-secret".len())
             .any(|window| window == b"live-provider-secret"));
+        assert!(!bytes
+            .windows("custom-provider-secret".len())
+            .any(|window| window == b"custom-provider-secret"));
         fs::remove_dir_all(data_dir).expect("remove");
     }
 

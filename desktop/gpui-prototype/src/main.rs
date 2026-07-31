@@ -37,6 +37,7 @@ struct WorkspacePrototype {
     approvals: String,
     approval_prompt_detail: Option<String>,
     approval_review_status: String,
+    provider_settings: String,
 }
 
 impl WorkspacePrototype {
@@ -163,7 +164,14 @@ impl Render for WorkspacePrototype {
                     .border_t_1()
                     .border_color(rgb(0x30363d))
                     .p_3()
-                    .child("Terminal — 10,000-line scroll boundary"),
+                    .child(div().text_lg().child("Provider settings"))
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_sm()
+                            .text_color(rgb(0x8b949e))
+                            .child(self.provider_settings.clone()),
+                    ),
             )
     }
 }
@@ -339,6 +347,30 @@ fn main() -> io::Result<()> {
     let approvals = format_pending_approvals(&pending);
     let approval_id = pending.first().map(|approval| approval.approval_id.clone());
     let approval_prompt_detail = pending.first().map(format_approval_detail);
+    let vault = PlatformSecretVault;
+    let standard_status = codinal_native_host::secrets::provider_secret_status(&vault)?;
+    let custom_status = codinal_native_host::secrets::list_custom_providers(&vault)?;
+    let mut provider_settings = standard_status
+        .iter()
+        .map(|status| {
+            format!(
+                "{}: {}",
+                status.provider,
+                if status.configured {
+                    "configured"
+                } else {
+                    "not configured"
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    provider_settings.extend(custom_status.iter().map(|provider| {
+        format!(
+            "custom:{}: configured · {}",
+            provider.slug, provider.base_url
+        )
+    }));
+    let provider_settings = provider_settings.join(" · ");
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -358,6 +390,7 @@ fn main() -> io::Result<()> {
                     approvals,
                     approval_prompt_detail,
                     approval_review_status: "No approval action sent".to_owned(),
+                    provider_settings,
                 })
             },
         )
