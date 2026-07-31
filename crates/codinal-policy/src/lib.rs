@@ -2,6 +2,22 @@
 
 use std::collections::BTreeSet;
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct AuditEvent {
+    pub domain: String,
+    pub action: String,
+    pub subject: String,
+}
+
+impl AuditEvent {
+    pub fn new(domain: &str, action: &str, subject: &str) -> Option<Self> {
+        let valid = |value: &str| !value.is_empty() && value.len() <= 128 && !value.contains('\n');
+        (valid(domain) && valid(action) && subject.len() <= 128).then(|| Self {
+            domain: domain.to_owned(), action: action.to_owned(), subject: subject.to_owned(),
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Risk {
     Read,
@@ -47,7 +63,7 @@ fn valid_id(id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApprovalChokepoint, Risk};
+    use super::{ApprovalChokepoint, AuditEvent, Risk};
 
     const APPROVAL: &str = "approval-token-0123456789";
 
@@ -74,5 +90,14 @@ mod tests {
         let mut gate = ApprovalChokepoint::default();
         assert!(gate.authorize(Risk::Read, None));
         assert!(!gate.authorize(Risk::Read, Some(APPROVAL)));
+    }
+
+    #[test]
+    fn audit_events_are_bounded_metadata_not_secret_payloads() {
+        assert_eq!(
+            AuditEvent::new("policy", "approval_granted", "session-1").expect("event").action,
+            "approval_granted"
+        );
+        assert!(AuditEvent::new("policy\nsecret", "approval", "").is_none());
     }
 }
