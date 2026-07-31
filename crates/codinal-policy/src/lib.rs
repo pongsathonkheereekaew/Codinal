@@ -52,6 +52,17 @@ impl ApprovalChokepoint {
             .filter(|id| valid_id(id))
             .is_some_and(|id| self.approved.remove(id))
     }
+
+    pub fn authorize_with_audit(
+        &mut self,
+        risk: Risk,
+        approval_id: Option<&str>,
+        subject: &str,
+    ) -> (bool, Option<AuditEvent>) {
+        let granted = self.authorize(risk, approval_id);
+        let action = if granted { "approval_consumed" } else { "approval_denied" };
+        (granted, AuditEvent::new("policy", action, subject))
+    }
 }
 
 fn valid_id(id: &str) -> bool {
@@ -99,5 +110,16 @@ mod tests {
             "approval_granted"
         );
         assert!(AuditEvent::new("policy\nsecret", "approval", "").is_none());
+    }
+
+    #[test]
+    fn approval_outcome_has_secret_free_audit_metadata() {
+        let mut gate = ApprovalChokepoint::default();
+        assert!(gate.approve_once(APPROVAL));
+        let (granted, event) = gate.authorize_with_audit(
+            Risk::WriteLocal, Some(APPROVAL), "session-1"
+        );
+        assert!(granted);
+        assert_eq!(event.expect("event").action, "approval_consumed");
     }
 }
