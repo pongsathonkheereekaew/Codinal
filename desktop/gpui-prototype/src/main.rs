@@ -11,8 +11,8 @@ use codinal_native_host::{
     validate_runtime_layout, SidecarLaunch,
 };
 use gpui::{
-    div, px, rgb, size, App, AppContext, Bounds, Context, ParentElement, Render, Styled, Window,
-    WindowBounds, WindowOptions,
+    div, px, rgb, size, App, AppContext, Bounds, Context, InteractiveElement, ParentElement,
+    PromptLevel, Render, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
 };
 use std::io;
 use std::path::PathBuf;
@@ -35,10 +35,26 @@ struct WorkspacePrototype {
     session_labels: String,
     conversation: String,
     approvals: String,
+    approval_prompt_detail: Option<String>,
+}
+
+impl WorkspacePrototype {
+    fn show_approval_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(detail) = self.approval_prompt_detail.as_deref() else {
+            return;
+        };
+        let _ = window.prompt(
+            PromptLevel::Warning,
+            "Review pending approval",
+            Some(detail),
+            &["Cancel", "Review only"],
+            cx,
+        );
+    }
 }
 
 impl Render for WorkspacePrototype {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let sidecar = format!(
             "authenticated sidecar ready · {} sessions",
             self.session_count
@@ -56,7 +72,11 @@ impl Render for WorkspacePrototype {
                     .flex_1()
                     .child(session_pane(&self.session_labels))
                     .child(conversation_pane(&self.conversation))
-                    .child(approval_pane(&self.approvals)),
+                    .child(approval_pane(
+                        &self.approvals,
+                        self.approval_prompt_detail.is_some(),
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -116,8 +136,12 @@ fn conversation_pane(messages: &str) -> impl gpui::IntoElement {
         )
 }
 
-fn approval_pane(approvals: &str) -> impl gpui::IntoElement {
-    div()
+fn approval_pane(
+    approvals: &str,
+    has_pending_approval: bool,
+    cx: &mut Context<WorkspacePrototype>,
+) -> impl gpui::IntoElement {
+    let pane = div()
         .flex_1()
         .min_w(px(220.0))
         .border_r_1()
@@ -130,7 +154,23 @@ fn approval_pane(approvals: &str) -> impl gpui::IntoElement {
                 .text_sm()
                 .text_color(rgb(0x8b949e))
                 .child(approvals.to_owned()),
+        );
+    if has_pending_approval {
+        pane.child(
+            div()
+                .id("review-pending-approval")
+                .mt_3()
+                .px_2()
+                .py_1()
+                .bg(rgb(0x30363d))
+                .child("Review approval…")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_approval_prompt(window, cx);
+                })),
         )
+    } else {
+        pane
+    }
 }
 
 fn development_data_dir() -> io::Result<PathBuf> {
@@ -195,13 +235,13 @@ fn main() -> io::Result<()> {
             .join("\n\n"),
         None => "Select a session to view its conversation".to_owned(),
     };
-    let approvals = match sessions.first() {
+    let (approvals, approval_prompt_detail) = match sessions.first() {
         Some(session) => {
             let approvals = client.pending_approvals(&session.session_id)?;
             if approvals.is_empty() {
-                "No pending approvals".to_owned()
+                ("No pending approvals".to_owned(), None)
             } else {
-                approvals
+                let rendered = approvals
                     .iter()
                     .map(|approval| {
                         let command = approval
@@ -215,10 +255,21 @@ fn main() -> io::Result<()> {
                         )
                     })
                     .collect::<Vec<_>>()
-                    .join("\n\n")
+                    .join("\n\n");
+                let first = &approvals[0];
+                (
+                    rendered,
+                    Some(format!(
+                        "Risk: {}\nTool: {}\nReason: {}\nCommand: {}\n\nNo action is sent from this review prompt.",
+                        first.risk,
+                        first.tool_name,
+                        first.reason,
+                        first.command.as_deref().unwrap_or("(none)"),
+                    )),
+                )
             }
         }
-        None => "No pending approvals".to_owned(),
+        None => ("No pending approvals".to_owned(), None),
     };
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
@@ -234,6 +285,7 @@ fn main() -> io::Result<()> {
                     session_labels,
                     conversation,
                     approvals,
+                    approval_prompt_detail,
                 })
             },
         )
