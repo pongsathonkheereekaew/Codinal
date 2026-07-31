@@ -20,6 +20,12 @@ pub struct SessionSummary {
     pub messages: u64,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct MessageSummary {
+    pub role: String,
+    pub text: String,
+}
+
 impl ControlPlaneClient {
     pub fn new(port: u16, token: &str) -> io::Result<Self> {
         if port == 0
@@ -78,6 +84,35 @@ impl ControlPlaneClient {
         })?;
         sessions.iter().map(parse_session_summary).collect()
     }
+
+    pub fn session_messages(&self, session_id: &str) -> io::Result<Vec<MessageSummary>> {
+        validate_session_id(session_id)?;
+        let response = self.get_json(&format!("sessions/{session_id}/messages"))?;
+        let messages = response.as_array().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "messages response must be an array",
+            )
+        })?;
+        messages.iter().map(parse_message_summary).collect()
+    }
+}
+
+fn validate_session_id(session_id: &str) -> io::Result<()> {
+    let valid = !session_id.starts_with("__")
+        && !session_id.is_empty()
+        && session_id.len() <= 128
+        && session_id.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'_' | b'-'))
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid session id",
+        ))
+    }
 }
 
 fn parse_session_summary(value: &serde_json::Value) -> io::Result<SessionSummary> {
@@ -105,6 +140,29 @@ fn parse_session_summary(value: &serde_json::Value) -> io::Result<SessionSummary
             .ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidData, "invalid session response")
             })?,
+    })
+}
+
+fn parse_message_summary(value: &serde_json::Value) -> io::Result<MessageSummary> {
+    let object = value.as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "message response must be an object",
+        )
+    })?;
+    let role = object
+        .get("role")
+        .and_then(serde_json::Value::as_str)
+        .filter(|role| matches!(*role, "user" | "assistant" | "tool" | "notice"))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid message role"))?;
+    let text = object
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| object.get("text").and_then(serde_json::Value::as_str))
+        .unwrap_or("[structured content]");
+    Ok(MessageSummary {
+        role: role.to_owned(),
+        text: text.chars().take(4_000).collect(),
     })
 }
 
@@ -195,5 +253,12 @@ mod tests {
         assert_eq!(sessions[0].title, "Migration");
         assert_eq!(sessions[0].messages, 3);
         server.join().expect("server");
+    }
+
+    #[test]
+    fn refuses_an_unsafe_session_identifier() {
+        let client = ControlPlaneClient::new(1, TOKEN).expect("client");
+        assert!(client.session_messages("../secrets").is_err());
+        assert!(client.session_messages("__internal").is_err());
     }
 }

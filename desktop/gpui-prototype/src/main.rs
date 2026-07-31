@@ -33,6 +33,7 @@ struct WorkspacePrototype {
     _sidecar: SidecarProcess,
     session_count: usize,
     session_labels: String,
+    conversation: String,
 }
 
 impl Render for WorkspacePrototype {
@@ -53,7 +54,7 @@ impl Render for WorkspacePrototype {
                     .flex()
                     .flex_1()
                     .child(session_pane(&self.session_labels))
-                    .child(pane("Conversation", "streamed assistant events"))
+                    .child(conversation_pane(&self.conversation))
                     .child(pane("Review", "diff and explicit apply evidence")),
             )
             .child(
@@ -114,6 +115,23 @@ fn session_pane(labels: &str) -> impl gpui::IntoElement {
         )
 }
 
+fn conversation_pane(messages: &str) -> impl gpui::IntoElement {
+    div()
+        .flex_1()
+        .min_w(px(220.0))
+        .border_r_1()
+        .border_color(rgb(0x30363d))
+        .p_3()
+        .child(div().text_lg().child("Conversation"))
+        .child(
+            div()
+                .mt_2()
+                .text_sm()
+                .text_color(rgb(0x8b949e))
+                .child(messages.to_owned()),
+        )
+}
+
 fn development_data_dir() -> io::Result<PathBuf> {
     std::env::var_os("CODINAL_DATA_DIR")
         .map(PathBuf::from)
@@ -166,6 +184,16 @@ fn main() -> io::Result<()> {
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let conversation = match sessions.first() {
+        Some(session) => client
+            .session_messages(&session.session_id)?
+            .iter()
+            .take(50)
+            .map(|message| format!("{}: {}", message.role, message.text))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+        None => "Select a session to view its conversation".to_owned(),
+    };
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -178,6 +206,7 @@ fn main() -> io::Result<()> {
                     _sidecar: sidecar,
                     session_count,
                     session_labels,
+                    conversation,
                 })
             },
         )
