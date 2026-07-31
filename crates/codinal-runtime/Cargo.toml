@@ -1,0 +1,10 @@
+[package]
+name = "codinal-runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codinal-storage = { path = "../codinal-storage" }
+serde_json = "=1.0.149"
+zeroize = "=1.9.0"
