@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
+import re
 import secrets
 import time
 from dataclasses import dataclass
@@ -70,7 +70,8 @@ class RemoteLeaseAuthority:
         connection_fingerprint: str,
         ttl_seconds: int,
     ) -> RemoteLease:
-        if (not 1 <= ttl_seconds <= 3600 or len(revision) != 40
+        if (not 1 <= ttl_seconds <= 3600
+                or re.fullmatch(r"[0-9a-f]{40}", revision) is None
                 or len(connection_fingerprint) != 64):
             raise WorkerProtocolError("invalid remote lease")
         negotiate(WorkerHello(PROTOCOL_VERSION, "remote", capabilities))

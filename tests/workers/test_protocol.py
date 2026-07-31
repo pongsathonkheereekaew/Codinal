@@ -40,6 +40,13 @@ def test_remote_lease_is_bound_to_worker_revision_and_capabilities():
             connection_fingerprint="c" * 64,
             now=120,
         )
+
+    with pytest.raises(WorkerProtocolError):
+        authority.issue(
+            worker_id="worker-abc", revision="z" * 40,
+            capabilities=REQUIRED_CAPABILITIES, connection_fingerprint="c" * 64,
+            ttl_seconds=60,
+        )
     expired = authority.issue(
         worker_id="worker-abc", revision="a" * 40,
         capabilities=REQUIRED_CAPABILITIES, connection_fingerprint="c" * 64,
