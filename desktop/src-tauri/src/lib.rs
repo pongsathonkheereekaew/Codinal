@@ -1,4 +1,5 @@
 pub mod control_client;
+pub mod gpui_control_plane;
 pub mod host;
 #[cfg(target_os = "macos")]
 pub mod lsp;

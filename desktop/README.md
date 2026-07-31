@@ -19,6 +19,11 @@ Run the development app:
 cargo run --manifest-path desktop/src-tauri/Cargo.toml
 ```
 
+The GPUI migration starts with the native authenticated control-plane contract
+in `src-tauri/src/gpui_control_plane.rs`. `gpui` is development-only and is
+not selectable in a release build; Tauri remains the release shell until the
+GPUI parity gates are met.
+
 Run all acceptance gates from the repository root:
 
 ```bash
