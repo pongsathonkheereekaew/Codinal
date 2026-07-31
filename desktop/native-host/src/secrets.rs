@@ -66,6 +66,12 @@ struct ProviderSecret {
     failover_eligible: Option<bool>,
 }
 
+impl Drop for ProviderSecret {
+    fn drop(&mut self) {
+        self.api_key.zeroize();
+    }
+}
+
 #[derive(Serialize)]
 struct SecretBootstrap {
     sync_token: String,
@@ -89,7 +95,21 @@ pub fn validate_provider(provider: &str) -> io::Result<&str> {
     }
 }
 
-pub fn encode_secret_bootstrap(vault: &impl SecretVault, sync_token: &str) -> io::Result<Vec<u8>> {
+fn validate_provider_account(provider: &str) -> io::Result<&str> {
+    if validate_provider(provider).is_ok() || validate_custom_provider(provider).is_ok() {
+        Ok(provider)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unsupported provider account",
+        ))
+    }
+}
+
+pub fn encode_secret_bootstrap(
+    vault: &impl SecretVault,
+    sync_token: &str,
+) -> io::Result<zeroize::Zeroizing<Vec<u8>>> {
     validate_session_token(sync_token)?;
     let mut profiles: BTreeMap<String, ProviderSecret> = BTreeMap::new();
     for provider in SUPPORTED_PROVIDERS {
@@ -139,8 +159,9 @@ pub fn encode_secret_bootstrap(vault: &impl SecretVault, sync_token: &str) -> io
         sync_token: sync_token.to_owned(),
         profiles,
     };
-    let result =
-        serde_json::to_vec(&bootstrap).map_err(|error| io::Error::other(error.to_string()));
+    let result = serde_json::to_vec(&bootstrap)
+        .map(zeroize::Zeroizing::new)
+        .map_err(|error| io::Error::other(error.to_string()));
     bootstrap.sync_token.zeroize();
     for secret in bootstrap.profiles.values_mut() {
         secret.api_key.zeroize();
@@ -366,7 +387,7 @@ impl SecretVault for PlatformSecretVault {
         use security_framework::passwords::get_generic_password;
         use security_framework_sys::base::errSecItemNotFound;
 
-        let provider = validate_provider(provider)?;
+        let provider = validate_provider_account(provider)?;
         match get_generic_password(KEYCHAIN_SERVICE, provider) {
             Ok(mut value) => match std::str::from_utf8(&value) {
                 Ok(text) => {
@@ -390,7 +411,7 @@ impl SecretVault for PlatformSecretVault {
     fn set(&self, provider: &str, value: &str) -> io::Result<()> {
         use security_framework::passwords::set_generic_password;
 
-        let provider = validate_provider(provider)?;
+        let provider = validate_provider_account(provider)?;
         if value.trim().is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -417,7 +438,7 @@ impl SecretVault for PlatformSecretVault {
         use security_framework::passwords::delete_generic_password;
         use security_framework_sys::base::errSecItemNotFound;
 
-        let provider = validate_provider(provider)?;
+        let provider = validate_provider_account(provider)?;
         match delete_generic_password(KEYCHAIN_SERVICE, provider) {
             Ok(()) => Ok(true),
             Err(error) if error.code() == errSecItemNotFound => Ok(false),
@@ -429,7 +450,7 @@ impl SecretVault for PlatformSecretVault {
         use security_framework::passwords::get_generic_password;
         use security_framework_sys::base::errSecItemNotFound;
 
-        validate_provider(provider)?;
+        validate_provider_account(provider)?;
         let account = format!("{provider}:base_url");
         match get_generic_password(KEYCHAIN_SERVICE, &account) {
             Ok(bytes) => match String::from_utf8(bytes) {
@@ -455,7 +476,7 @@ impl SecretVault for PlatformSecretVault {
         use security_framework::passwords::{delete_generic_password, set_generic_password};
         use security_framework_sys::base::errSecItemNotFound;
 
-        validate_provider(provider)?;
+        validate_provider_account(provider)?;
         let account = format!("{provider}:base_url");
         match value.map(str::trim) {
             Some(text) if !text.is_empty() => {
@@ -591,7 +612,7 @@ fn validate_custom_provider(provider: &str) -> io::Result<()> {
 #[cfg(not(target_os = "macos"))]
 impl SecretVault for PlatformSecretVault {
     fn get(&self, provider: &str) -> io::Result<Option<String>> {
-        validate_provider(provider)?;
+        validate_provider_account(provider)?;
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "native secret vault is not available on this platform",
@@ -599,7 +620,7 @@ impl SecretVault for PlatformSecretVault {
     }
 
     fn set(&self, provider: &str, _value: &str) -> io::Result<()> {
-        validate_provider(provider)?;
+        validate_provider_account(provider)?;
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "native secret vault is not available on this platform",
@@ -607,10 +628,56 @@ impl SecretVault for PlatformSecretVault {
     }
 
     fn delete(&self, provider: &str) -> io::Result<bool> {
-        validate_provider(provider)?;
+        validate_provider_account(provider)?;
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "native secret vault is not available on this platform",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{encode_secret_bootstrap, validate_provider_account, SecretVault};
+    use codinal_providers::{ProviderId, ProviderSecrets};
+    use std::io;
+
+    struct CustomVault;
+
+    impl SecretVault for CustomVault {
+        fn get(&self, provider: &str) -> io::Result<Option<String>> {
+            Ok((provider == "custom:Local").then(|| "custom-secret".to_owned()))
+        }
+
+        fn set(&self, _provider: &str, _value: &str) -> io::Result<()> {
+            unreachable!()
+        }
+
+        fn delete(&self, _provider: &str) -> io::Result<bool> {
+            unreachable!()
+        }
+
+        fn get_base_url(&self, provider: &str) -> io::Result<Option<String>> {
+            Ok((provider == "custom:Local").then(|| "localhost:8080".to_owned()))
+        }
+
+        fn get_failover_flag(&self, provider: &str) -> io::Result<Option<bool>> {
+            Ok((provider == "custom:Local").then_some(true))
+        }
+
+        fn list_custom_slugs(&self) -> io::Result<Vec<String>> {
+            Ok(vec!["Local".to_owned()])
+        }
+    }
+
+    #[test]
+    fn encoder_and_native_parser_share_custom_provider_contract() {
+        assert!(validate_provider_account("custom:Local").is_ok());
+        let token = "0123456789abcdef0123456789abcdef";
+        let payload = encode_secret_bootstrap(&CustomVault, token).expect("encode");
+        let parsed = ProviderSecrets::from_bootstrap(&payload).expect("parse");
+        let provider = ProviderId::Custom("Local".to_owned());
+        assert_eq!(parsed.api_key(&provider), Some("custom-secret"));
+        assert_eq!(parsed.base_url(&provider), Some("localhost:8080"));
     }
 }

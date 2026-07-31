@@ -4,8 +4,9 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use codinal_native_host::{free_loopback_port, launch_shadow_runtime};
+use codinal_native_host::{free_loopback_port, launch_shadow_runtime_with_bootstrap};
 use rusqlite::Connection;
+use zeroize::Zeroizing;
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
@@ -15,12 +16,13 @@ fn native_host_runs_the_real_runtime_only_on_a_shadow_snapshot() {
     let source = fixture_data_dir();
     let snapshot = source.with_extension("shadow");
     let port = free_loopback_port().expect("port");
-    let mut shadow = launch_shadow_runtime(
+    let mut shadow = launch_shadow_runtime_with_bootstrap(
         env!("CARGO_BIN_EXE_codinal-runtime").into(),
         &source,
         &snapshot,
         port,
         TOKEN.to_owned(),
+        Zeroizing::new(br#"{"sync_token":"abcdef0123456789abcdef0123456789","profiles":{"provider:openai":{"api_key":"fixture-secret"}}}"#.to_vec()),
     )
     .expect("shadow runtime");
 

@@ -17,6 +17,7 @@ use zeroize::Zeroizing;
 use fs2::FileExt;
 
 pub use codinal_policy::{ApprovalBroker, ApprovalChokepoint, PermissionRequest, Risk};
+pub use codinal_providers::{ProviderId, ProviderSecrets};
 
 static NEXT_EVENT_HUB_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -219,6 +220,7 @@ impl Drop for RuntimeOwnerLock {
 /// the data directory before any writable store can be opened.
 pub struct RuntimeBootstrap {
     config: RuntimeConfig,
+    provider_secrets: ProviderSecrets,
     _owner_lock: RuntimeOwnerLock,
 }
 
@@ -228,6 +230,7 @@ impl RuntimeBootstrap {
         let owner_lock = RuntimeOwnerLock::acquire(config.data_dir())?;
         Ok(Self {
             config,
+            provider_secrets: ProviderSecrets::empty(),
             _owner_lock: owner_lock,
         })
     }
@@ -235,6 +238,11 @@ impl RuntimeBootstrap {
     /// Read launch values once and remove the bearer token before starting the
     /// listener, preventing later child processes from inheriting it.
     pub fn from_environment() -> io::Result<Self> {
+        let stdin = io::stdin();
+        Self::from_environment_reader(&mut stdin.lock())
+    }
+
+    pub fn from_environment_reader(reader: &mut impl Read) -> io::Result<Self> {
         let token = Zeroizing::new(std::env::var("CODINAL_SESSION_TOKEN").map_err(|_| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -250,11 +258,33 @@ impl RuntimeBootstrap {
         let data_dir = std::env::var_os("CODINAL_DATA_DIR").ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "CODINAL_DATA_DIR is required")
         })?;
-        Self::from_values(port, &token, Path::new(&data_dir))
+        let mut runtime = Self::from_values(port, &token, Path::new(&data_dir))?;
+        let channel = std::env::var("CODINAL_SECRET_BOOTSTRAP").unwrap_or_default();
+        // Safe at process startup before the runtime creates threads.
+        unsafe { std::env::remove_var("CODINAL_SECRET_BOOTSTRAP") };
+        runtime.provider_secrets = match channel.as_str() {
+            "" => ProviderSecrets::empty(),
+            "stdin-v1" => {
+                let mut payload = Zeroizing::new(Vec::new());
+                reader.take(128 * 1024 + 1).read_to_end(&mut payload)?;
+                ProviderSecrets::from_bootstrap(&payload)?
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "unsupported secret bootstrap channel",
+                ));
+            }
+        };
+        Ok(runtime)
     }
 
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
+    }
+
+    pub fn provider_secrets(&self) -> &ProviderSecrets {
+        &self.provider_secrets
     }
 
     pub fn serve_forever(&self) -> io::Result<()> {
@@ -737,6 +767,38 @@ mod tests {
         assert!(std::env::var("CODINAL_SESSION_TOKEN").is_err());
         assert_eq!(bootstrap.config().data_dir(), path);
         drop(bootstrap);
+        fs::remove_dir_all(path).expect("remove");
+    }
+
+    #[test]
+    fn runtime_bootstrap_consumes_one_shot_provider_secrets_from_stdin() {
+        let _guard = ENVIRONMENT_LOCK.lock().expect("environment lock");
+        let _restore = EnvironmentRestore::capture(&[
+            "CODINAL_SESSION_TOKEN",
+            "CODINAL_PORT",
+            "CODINAL_DATA_DIR",
+            "CODINAL_SECRET_BOOTSTRAP",
+        ]);
+        let path = data_dir();
+        unsafe {
+            std::env::set_var("CODINAL_SESSION_TOKEN", TOKEN);
+            std::env::set_var("CODINAL_PORT", "43123");
+            std::env::set_var("CODINAL_DATA_DIR", &path);
+            std::env::set_var("CODINAL_SECRET_BOOTSTRAP", "stdin-v1");
+        }
+        let payload = br#"{"sync_token":"0123456789abcdef0123456789abcdef","profiles":{"provider:openai":{"api_key":"provider-secret"}}}"#;
+        let mut input = std::io::Cursor::new(payload);
+        let runtime = RuntimeBootstrap::from_environment_reader(&mut input).expect("runtime");
+        assert_eq!(
+            runtime
+                .provider_secrets()
+                .api_key(&super::ProviderId::OpenAi),
+            Some("provider-secret")
+        );
+        assert!(std::env::var_os("CODINAL_SECRET_BOOTSTRAP").is_none());
+        assert!(format!("{:?}", runtime.provider_secrets()).contains("configured_profiles"));
+        assert!(!format!("{:?}", runtime.provider_secrets()).contains("provider-secret"));
+        drop(runtime);
         fs::remove_dir_all(path).expect("remove");
     }
 

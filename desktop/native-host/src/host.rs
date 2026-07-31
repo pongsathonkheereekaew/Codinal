@@ -103,6 +103,28 @@ impl NativeRuntimeLaunch {
     pub fn spawn(&self) -> io::Result<NativeRuntimeProcess> {
         Ok(NativeRuntimeProcess(self.command().spawn()?))
     }
+
+    pub fn spawn_with_bootstrap(
+        &self,
+        secret_bootstrap: Zeroizing<Vec<u8>>,
+    ) -> io::Result<NativeRuntimeProcess> {
+        let mut command = self.command();
+        command
+            .env("CODINAL_SECRET_BOOTSTRAP", "stdin-v1")
+            .stdin(Stdio::piped());
+        let mut child = command.spawn()?;
+        let result = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("native runtime stdin pipe is unavailable"))
+            .and_then(|mut stdin| stdin.write_all(&secret_bootstrap));
+        if let Err(error) = result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok(NativeRuntimeProcess(child))
+    }
 }
 
 impl Drop for NativeRuntimeLaunch {
@@ -178,6 +200,45 @@ pub fn launch_shadow_runtime(
             }
         };
     let mut process = match launch.spawn() {
+        Ok(process) => process,
+        Err(error) => {
+            let _ = remove_shadow_snapshot(snapshot_dir);
+            return Err(error);
+        }
+    };
+    if let Err(readiness_error) = wait_for_runtime_ready(port, &token, Duration::from_secs(2)) {
+        process
+            .shutdown()
+            .map_err(|_| io::Error::other("shadow runtime readiness and shutdown both failed"))?;
+        remove_shadow_snapshot(snapshot_dir)?;
+        return Err(readiness_error);
+    }
+    Ok(ShadowRuntime {
+        process,
+        snapshot_dir: snapshot_dir.to_owned(),
+    })
+}
+
+pub fn launch_shadow_runtime_with_bootstrap(
+    binary: PathBuf,
+    source_data_dir: &Path,
+    snapshot_dir: &Path,
+    port: u16,
+    token: String,
+    secret_bootstrap: Zeroizing<Vec<u8>>,
+) -> io::Result<ShadowRuntime> {
+    validate_shadow_destination(source_data_dir, snapshot_dir)?;
+    codinal_storage::create_v1_shadow_snapshot(source_data_dir, snapshot_dir)?;
+    let token = Zeroizing::new(token);
+    let launch =
+        match NativeRuntimeLaunch::new(binary, snapshot_dir.to_owned(), port, token.to_string()) {
+            Ok(launch) => launch,
+            Err(error) => {
+                let _ = remove_shadow_snapshot(snapshot_dir);
+                return Err(error);
+            }
+        };
+    let mut process = match launch.spawn_with_bootstrap(secret_bootstrap) {
         Ok(process) => process,
         Err(error) => {
             let _ = remove_shadow_snapshot(snapshot_dir);
@@ -302,8 +363,7 @@ impl SidecarLaunch {
         command
     }
 
-    pub fn spawn_with_bootstrap(&self, secret_bootstrap: Vec<u8>) -> io::Result<Child> {
-        let secret_bootstrap = Zeroizing::new(secret_bootstrap);
+    pub fn spawn_with_bootstrap(&self, secret_bootstrap: Zeroizing<Vec<u8>>) -> io::Result<Child> {
         let mut child = self.command().spawn()?;
         let result = child
             .stdin

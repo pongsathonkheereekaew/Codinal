@@ -8,7 +8,9 @@
 
 use codinal_control_plane_client::ControlPlaneClient;
 use codinal_native_host::{
-    free_loopback_port, launch_shadow_runtime, mint_session_token, ShadowRuntime,
+    free_loopback_port, launch_shadow_runtime_with_bootstrap, mint_session_token,
+    secrets::{encode_secret_bootstrap, PlatformSecretVault},
+    ShadowRuntime,
 };
 use gpui::{
     div, px, rgb, size, App, AppContext, Bounds, Context, InteractiveElement, ParentElement,
@@ -17,6 +19,7 @@ use gpui::{
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use zeroize::Zeroizing;
 
 static NEXT_SHADOW: AtomicU64 = AtomicU64::new(0);
 
@@ -212,18 +215,21 @@ fn native_runtime_binary() -> io::Result<PathBuf> {
 fn start_native_runtime() -> io::Result<(ControlPlaneClient, ShadowRuntime)> {
     let data_dir = development_data_dir()?;
     let token = mint_session_token()?;
+    let secret_sync_token = Zeroizing::new(mint_session_token()?);
+    let secret_bootstrap = encode_secret_bootstrap(&PlatformSecretVault, &secret_sync_token)?;
     let port = free_loopback_port()?;
     let snapshot = std::env::temp_dir().join(format!(
         "codinal-gpui-shadow-{}-{}",
         std::process::id(),
         NEXT_SHADOW.fetch_add(1, Ordering::Relaxed)
     ));
-    let runtime = launch_shadow_runtime(
+    let runtime = launch_shadow_runtime_with_bootstrap(
         native_runtime_binary()?,
         &data_dir,
         &snapshot,
         port,
         token.clone(),
+        secret_bootstrap,
     )?;
     let client = ControlPlaneClient::new(port, &token)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;

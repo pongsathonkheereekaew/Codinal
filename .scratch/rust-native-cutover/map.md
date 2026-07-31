@@ -18,11 +18,14 @@ Do not dual-write production SQLite data or expose bearer/provider secrets.
 - [Prove native runtime shadow launch](issues/05-prove-native-runtime-shadow-launch.md) — the native host now runs the real Rust binary only on a validated snapshot, verifies authenticated readiness, and cleans up after confirmed shutdown.
 - [Port read-only session routes](issues/06-port-read-only-session-routes.md) — the authenticated Rust runtime now serves public session metadata and ordered messages directly from its isolated SQLite snapshot.
 - [Wire GPUI to the native shadow runtime](issues/07-wire-gpui-to-native-shadow-runtime.md) — GPUI now owns Rust runtime launch, credentials, client reads, shutdown, and snapshot cleanup without a Tauri/Python startup path.
+- [Port native provider-secret bootstrap](issues/09-port-native-secret-bootstrap.md) — GPUI now transfers Keychain profiles directly to Rust through bounded one-shot stdin; tokens and API keys remain in redacted zeroizing memory.
 
 ## Not yet specified
 
 - The bounded Rust approval broker/read route lacks a real Rust turn-engine
   producer; static shadow state is not live approval parity.
+- Direct Rust provider adapters and turn ingestion must consume the native
+  secret store before approval production can become live.
 - GPUI production-pane design and performance/accessibility budgets need a
   concrete native runtime client surface before implementation can be scoped.
 - Release signing, notarization, updater migration, and final deletion evidence
