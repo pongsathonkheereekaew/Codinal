@@ -3310,6 +3310,7 @@ body.is-dragging .drop-hint {
 .mention-option:hover, .mention-option.is-selected { background: var(--surface-subtle); }
 
 .toast {
+  pointer-events: auto;
   padding: 10px 12px;
   border: 1px solid var(--line-strong);
   border-radius: 9px;

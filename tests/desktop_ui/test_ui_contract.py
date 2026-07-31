@@ -156,6 +156,13 @@ def test_desktop_ui_has_diagnostics_and_audit_surface():
     assert "secrets redacted" in script
 
 
+def test_desktop_ui_toasts_are_interactive_and_announce_errors():
+    css = (UI / "app.css").read_text(encoding="utf-8")
+    script = (UI / "startup.js").read_text(encoding="utf-8")
+    assert ".toast {\n  pointer-events: auto;" in css
+    assert 'item.setAttribute("role", "alert")' in script
+
+
 def test_desktop_ui_defers_editor_bundle_until_a_file_is_opened():
     """Keep the 1.2MB CodeMirror bundle off the initial startup critical path."""
     html = (UI / "index.html").read_text(encoding="utf-8")

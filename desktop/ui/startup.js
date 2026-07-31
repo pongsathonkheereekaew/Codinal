@@ -375,6 +375,9 @@ async function api(path, options = {}) {
 
 function toast(message, kind = "") {
   const item = node("div", `toast ${kind}`.trim(), message);
+  if (kind === "error") {
+    item.setAttribute("role", "alert");
+  }
   let timer = window.setTimeout(() => item.remove(), 6000);
   // Hover-to-pause: SR users and pointer users get more time to read.
   item.addEventListener("mouseenter", () => window.clearTimeout(timer));
