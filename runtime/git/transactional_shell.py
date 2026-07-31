@@ -162,6 +162,7 @@ class TransactionalShell:
                 transaction,
                 runner=self._run_helper,
             )
+            result = replace(result, changed_paths=tuple(changed))
             if self._cancelled.is_set():
                 return _interrupted(result)
             if not changed:
@@ -239,7 +240,7 @@ class TransactionalShell:
                     result,
                     "shell transaction conflicts with current files",
                 )
-            return replace(result, changed_paths=tuple(changed))
+            return result
         except _TransactionInterrupted:
             return _interrupted(result)
         except Exception:
@@ -248,6 +249,7 @@ class TransactionalShell:
                 stdout="",
                 stderr="shell transaction unavailable",
                 profile="build",
+                executed=False,
             )
 
     def interrupt(self) -> None:
@@ -618,6 +620,7 @@ def _interrupted(result: SandboxResult | None) -> SandboxResult:
             stderr="",
             interrupted=True,
             profile="build",
+            executed=False,
         )
     return replace(result, interrupted=True)
 

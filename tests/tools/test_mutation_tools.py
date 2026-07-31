@@ -598,6 +598,7 @@ def test_run_shell_returns_bounded_executor_result(tmp_path: Path) -> None:
             "argv_digest": "",
             "duration_ms": 0,
             "changed_paths": [],
+            "executed": True,
         }
 
 

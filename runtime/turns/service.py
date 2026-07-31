@@ -553,8 +553,7 @@ class TurnCoordinator:
         source: dict[str, Any] | None,
         code_checkpoint_id: str | None,
     ) -> None:
-        prior_context = dict(engine.audit_context)
-        engine.audit_context = {**prior_context, "turn_id": turn_id}
+        prior_context = _set_turn_audit_context(engine, turn_id)
         try:
             await self._drive(
                 session_id,
@@ -564,7 +563,7 @@ class TurnCoordinator:
                 code_checkpoint_id=code_checkpoint_id,
             )
         finally:
-            engine.audit_context = prior_context
+            _restore_turn_audit_context(engine, prior_context)
 
     async def _resume(
         self,
@@ -575,15 +574,19 @@ class TurnCoordinator:
         active_tool_call_ids: list[str],
         code_checkpoint_id: str | None,
     ) -> None:
-        await self._drive(
-            session_id,
-            turn_id,
-            engine,
-            engine.resume_after_crash(
-                active_tool_call_ids=active_tool_call_ids
-            ),
-            code_checkpoint_id=code_checkpoint_id,
-        )
+        prior_context = _set_turn_audit_context(engine, turn_id)
+        try:
+            await self._drive(
+                session_id,
+                turn_id,
+                engine,
+                engine.resume_after_crash(
+                    active_tool_call_ids=active_tool_call_ids
+                ),
+                code_checkpoint_id=code_checkpoint_id,
+            )
+        finally:
+            _restore_turn_audit_context(engine, prior_context)
 
     async def _drive(
         self,
@@ -933,6 +936,23 @@ def _wire_event(event: Event) -> dict[str, Any]:
 def _engine_is_quiescent(engine: Any) -> bool:
     checker = getattr(engine, "is_quiescent", None)
     return True if checker is None else bool(checker())
+
+
+def _set_turn_audit_context(engine: Any, turn_id: str) -> dict[str, Any] | None:
+    context = getattr(engine, "audit_context", None)
+    if not isinstance(context, dict):
+        return None
+    prior_context = dict(context)
+    engine.audit_context = {**prior_context, "turn_id": turn_id}
+    return prior_context
+
+
+def _restore_turn_audit_context(
+    engine: Any,
+    prior_context: dict[str, Any] | None,
+) -> None:
+    if prior_context is not None:
+        engine.audit_context = prior_context
 
 
 def _prepare_engine_turn(engine: Any) -> None:

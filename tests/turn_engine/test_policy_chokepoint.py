@@ -277,6 +277,7 @@ def test_shell_execution_audit_contains_only_bounded_hashed_evidence(tmp_path) -
             "argv_digest": "sha256:argv",
             "duration_ms": 37,
             "changed_paths": ["runtime/owned.py"],
+            "executed": True,
         }
 
     async def approve(_request):
@@ -324,6 +325,7 @@ def test_shell_execution_audit_contains_only_bounded_hashed_evidence(tmp_path) -
             "profile": "test",
             "turn_id": "",
             "argv_digest": "sha256:argv",
+            "executed": True,
             "exit_code": 0,
             "duration_ms": 37,
             "timed_out": False,
@@ -335,6 +337,8 @@ def test_shell_execution_audit_contains_only_bounded_hashed_evidence(tmp_path) -
             "stderr_digest": "sha256:a0f3158ecf8fb5189f71dd407fa95acf984a722826ea7332c2285432049f6cd9",
             "changed_path_count": 1,
             "changed_paths_digest": "sha256:ae30e632848669921169e35bea7d53c59da1ae4ebbce6027bd9f393b5c9c99b9",
+            "changed_paths": ["runtime/owned.py"],
+            "changed_paths_truncated": False,
         }
     ]
 
@@ -408,6 +412,7 @@ def test_shell_execution_evidence_failure_is_visible(tmp_path) -> None:
             "argv_digest": "sha256:argv",
             "duration_ms": 1,
             "changed_paths": [],
+            "executed": True,
         }
 
     async def approve(_request):

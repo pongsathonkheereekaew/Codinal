@@ -104,6 +104,7 @@ class SandboxResult:
     argv_digest: str = ""
     duration_ms: int = 0
     changed_paths: tuple[str, ...] = ()
+    executed: bool = True
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -117,6 +118,7 @@ class SandboxResult:
             "argv_digest": self.argv_digest,
             "duration_ms": self.duration_ms,
             "changed_paths": list(self.changed_paths),
+            "executed": self.executed,
         }
 
 
@@ -280,6 +282,7 @@ class SandboxedShell:
                     stderr="",
                     interrupted=True,
                     profile=self.profile,
+                    executed=False,
                 )
             process = subprocess.Popen(
                 argv,

@@ -916,6 +916,7 @@ class TurnEngine:
             "argv_digest",
             "duration_ms",
             "changed_paths",
+            "executed",
         }
         if not required_fields.issubset(result):
             return None
@@ -927,6 +928,14 @@ class TurnEngine:
             isinstance(path, str) for path in changed_paths
         ):
             return None
+        visible_paths: list[str] = []
+        visible_bytes = 0
+        for path in changed_paths:
+            encoded = path.encode("utf-8")
+            if len(visible_paths) >= 100 or visible_bytes + len(encoded) > 8192:
+                break
+            visible_paths.append(path)
+            visible_bytes += len(encoded)
         changed_digest = _sha256_digest(
             json.dumps(changed_paths, separators=(",", ":")).encode("utf-8")
         )
@@ -938,6 +947,7 @@ class TurnEngine:
             "turn_id": self.audit_context.get("turn_id", ""),
             "profile": profile,
             "argv_digest": result["argv_digest"],
+            "executed": bool(result["executed"]),
             "exit_code": result.get("exit_code"),
             "duration_ms": result["duration_ms"],
             "timed_out": bool(result.get("timed_out", False)),
@@ -949,6 +959,8 @@ class TurnEngine:
             "stderr_digest": _sha256_digest(stderr_bytes),
             "changed_path_count": len(changed_paths),
             "changed_paths_digest": changed_digest,
+            "changed_paths": visible_paths,
+            "changed_paths_truncated": len(visible_paths) != len(changed_paths),
         }
         try:
             self.execution_evidence_sink(payload)
