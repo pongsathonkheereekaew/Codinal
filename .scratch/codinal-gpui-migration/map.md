@@ -15,11 +15,10 @@ verification before each completed implementation ticket.
 ## Decisions so far
 
 - [G0 authenticated native contract](issues/01-g0-authenticated-native-contract.md) — native client owns bearer credentials; REST and WebSocket descriptors are versioned and no token enters a URL.
+- [G1 GPUI compatibility and native shell](issues/02-g1-gpui-compatibility-and-native-shell.md) — pin GPUI 0.2.2 in a standalone development shell; keep Tauri's release graph intact.
 
 ## Not yet specified
 
-- Exact GPUI crate revision and supported toolchain after an upstream
-  compatibility spike.
 - Native preview renderer choice after its loopback navigation contract is
   exercised in a packaged app.
 - Quantitative parity thresholds relative to the current Tauri baseline.
