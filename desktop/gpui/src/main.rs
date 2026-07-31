@@ -41,7 +41,8 @@ mod secure_prompt {
 }
 
 use codinal_control_plane_client::{
-    ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient, PendingApproval,
+    ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient, MessageSummary, PendingApproval,
+    SessionSummary,
 };
 use codinal_native_host::control_client::OAuthRelayController;
 #[cfg(target_os = "macos")]
@@ -99,13 +100,25 @@ fn enqueue_oauth_urls(
     }
 }
 
+fn approval_completion_is_current(
+    current_generation: u64,
+    current_session_id: Option<&str>,
+    expected_generation: u64,
+    expected_session_id: Option<&str>,
+) -> bool {
+    current_generation == expected_generation && current_session_id == expected_session_id
+}
+
 struct WorkspacePrototype {
     _runtime: DesktopRuntime,
     client: Arc<ControlPlaneClient>,
     approval_session_id: Option<String>,
     approval_id: Option<String>,
     session_count: usize,
-    session_labels: String,
+    sessions: Vec<SessionSummary>,
+    selected_session_id: Option<String>,
+    session_status: String,
+    session_load_generation: u64,
     conversation: String,
     approvals: String,
     approval_prompt_detail: Option<String>,
@@ -559,6 +572,51 @@ fn should_request_terminal_resize(
 }
 
 impl WorkspacePrototype {
+    fn select_session(&mut self, session_id: String, cx: &mut Context<Self>) {
+        if !self
+            .sessions
+            .iter()
+            .any(|session| session.session_id == session_id)
+        {
+            return;
+        }
+        self.session_load_generation = self.session_load_generation.wrapping_add(1);
+        let generation = self.session_load_generation;
+        self.session_status = "Loading session…".to_owned();
+        let client = Arc::clone(&self.client);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let requested_id = session_id.clone();
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let messages = client.session_messages(&session_id)?;
+                    let approvals = client.pending_approvals(&session_id)?;
+                    Ok::<_, io::Error>((messages, approvals))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.session_load_generation != generation {
+                    return;
+                }
+                match outcome {
+                    Ok((messages, approvals)) => {
+                        this.selected_session_id = Some(requested_id.clone());
+                        this.approval_session_id = Some(requested_id);
+                        this.conversation = format_conversation(&messages);
+                        this.set_pending_approvals(approvals);
+                        this.session_status = "Session loaded from Rust runtime".to_owned();
+                    }
+                    Err(error) => {
+                        this.session_status = format!("Session load failed: {error}");
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn restart_after_update(&mut self, cx: &mut Context<Self>) {
         if !self.updater_restart_required || self.updater_operation_in_flight {
             return;
@@ -1129,7 +1187,9 @@ impl WorkspacePrototype {
         );
         let client = Arc::clone(&self.client);
         let session_id = self.approval_session_id.clone();
+        let target_session_id = session_id.clone();
         let approval_id = self.approval_id.clone();
+        let session_generation = self.session_load_generation;
         cx.spawn(async move |this, cx| {
             let choice = response.await.unwrap_or(0);
             let (status, pending) = if choice == 1 {
@@ -1163,6 +1223,14 @@ impl WorkspacePrototype {
                 ("Approval review cancelled — no action sent", None)
             };
             let _ = this.update(cx, |this, cx| {
+                if !approval_completion_is_current(
+                    this.session_load_generation,
+                    this.approval_session_id.as_deref(),
+                    session_generation,
+                    target_session_id.as_deref(),
+                ) {
+                    return;
+                }
                 this.approval_review_status = status.to_owned();
                 if let Some(pending) = pending {
                     this.set_pending_approvals(pending);
@@ -1616,7 +1684,12 @@ impl Render for WorkspacePrototype {
                 div()
                     .flex()
                     .flex_1()
-                    .child(session_pane(&self.session_labels))
+                    .child(session_pane(
+                        &self.sessions,
+                        self.selected_session_id.as_deref(),
+                        &self.session_status,
+                        cx,
+                    ))
                     .child(conversation_pane(&self.conversation))
                     .child(approval_pane(
                         &self.approvals,
@@ -1976,11 +2049,36 @@ fn header(runtime: String) -> impl gpui::IntoElement {
         .px_3()
         .border_b_1()
         .border_color(rgb(0x30363d))
-        .child(format!("Codinal GPUI prototype — {runtime}"))
+        .child(format!("Codinal — {runtime}"))
         .child("⌘K command palette · ⌘. cancel")
 }
 
-fn session_pane(labels: &str) -> impl gpui::IntoElement {
+fn session_pane(
+    sessions: &[SessionSummary],
+    selected_session_id: Option<&str>,
+    status: &str,
+    cx: &mut Context<WorkspacePrototype>,
+) -> impl gpui::IntoElement {
+    let mut list = div().flex().flex_col();
+    for (index, session) in sessions.iter().enumerate() {
+        let session_id = session.session_id.clone();
+        let selected = selected_session_id == Some(session.session_id.as_str());
+        list = list.child(
+            div()
+                .id(("session-row", index))
+                .mt_1()
+                .px_2()
+                .py_1()
+                .bg(rgb(if selected { 0x245c35 } else { 0x20252b }))
+                .child(format!("{} · {} messages", session.title, session.messages))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.select_session(session_id.clone(), cx);
+                })),
+        );
+    }
+    if sessions.is_empty() {
+        list = list.child("No sessions yet");
+    }
     div()
         .flex_1()
         .min_w(px(220.0))
@@ -1990,11 +2088,24 @@ fn session_pane(labels: &str) -> impl gpui::IntoElement {
         .child(div().text_lg().child("Sessions"))
         .child(
             div()
-                .mt_2()
+                .mt_1()
                 .text_sm()
                 .text_color(rgb(0x8b949e))
-                .child(labels.to_owned()),
+                .child(status.to_owned()),
         )
+        .child(list)
+}
+
+fn format_conversation(messages: &[MessageSummary]) -> String {
+    if messages.is_empty() {
+        return "This session has no messages".to_owned();
+    }
+    messages
+        .iter()
+        .take(50)
+        .map(|message| format!("{}: {}", message.role, message.text))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn conversation_pane(messages: &str) -> impl gpui::IntoElement {
@@ -2211,24 +2322,8 @@ fn main() -> io::Result<()> {
     let (terminal_registry, terminal_session_id, terminal_workspace) = prepare_native_terminal()?;
     let sessions = client.list_sessions()?;
     let session_count = sessions.len();
-    let session_labels = if sessions.is_empty() {
-        "No sessions yet".to_owned()
-    } else {
-        sessions
-            .iter()
-            .take(10)
-            .map(|session| format!("{} · {} messages", session.title, session.messages))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
     let conversation = match sessions.first() {
-        Some(session) => client
-            .session_messages(&session.session_id)?
-            .iter()
-            .take(50)
-            .map(|message| format!("{}: {}", message.role, message.text))
-            .collect::<Vec<_>>()
-            .join("\n\n"),
+        Some(session) => format_conversation(&client.session_messages(&session.session_id)?),
         None => "Select a session to view its conversation".to_owned(),
     };
     let client = Arc::new(client);
@@ -2269,7 +2364,10 @@ fn main() -> io::Result<()> {
                     approval_session_id,
                     approval_id,
                     session_count,
-                    session_labels,
+                    selected_session_id: sessions.first().map(|session| session.session_id.clone()),
+                    sessions,
+                    session_status: "Session list loaded from Rust runtime".to_owned(),
+                    session_load_generation: 0,
                     conversation,
                     approvals,
                     approval_prompt_detail,
@@ -2338,14 +2436,52 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        begin_provider_operation, classify_provider_delete_result, classify_provider_edit_result,
-        custom_provider_edit_targets, CustomProviderRecord, ProviderDeleteOutcome,
-        ProviderEditOutcome,
+        approval_completion_is_current, begin_provider_operation, classify_provider_delete_result,
+        classify_provider_edit_result, custom_provider_edit_targets, format_conversation,
+        CustomProviderRecord, ProviderDeleteOutcome, ProviderEditOutcome,
     };
+    use codinal_control_plane_client::MessageSummary;
     #[cfg(target_os = "macos")]
     use codinal_native_host::pty::PtyOutputDelta;
     use gpui::{KeyDownEvent, Keystroke, Modifiers};
     use std::io;
+
+    #[test]
+    fn conversation_format_is_bounded_and_handles_empty_sessions() {
+        assert_eq!(format_conversation(&[]), "This session has no messages");
+        let messages = (0..55)
+            .map(|index| MessageSummary {
+                role: "assistant".to_owned(),
+                text: format!("message-{index}"),
+            })
+            .collect::<Vec<_>>();
+        let formatted = format_conversation(&messages);
+        assert!(formatted.contains("message-0"));
+        assert!(formatted.contains("message-49"));
+        assert!(!formatted.contains("message-50"));
+    }
+
+    #[test]
+    fn approval_completion_must_match_session_and_selection_generation() {
+        assert!(approval_completion_is_current(
+            4,
+            Some("session-a"),
+            4,
+            Some("session-a")
+        ));
+        assert!(!approval_completion_is_current(
+            5,
+            Some("session-a"),
+            4,
+            Some("session-a")
+        ));
+        assert!(!approval_completion_is_current(
+            4,
+            Some("session-b"),
+            4,
+            Some("session-a")
+        ));
+    }
 
     #[test]
     fn duplicate_provider_operation_is_rejected_until_completion() {

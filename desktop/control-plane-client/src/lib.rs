@@ -12,7 +12,7 @@ pub struct ControlPlaneClient {
     token: Zeroizing<String>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionSummary {
     pub session_id: String,
     pub title: String,
@@ -20,7 +20,7 @@ pub struct SessionSummary {
     pub messages: u64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MessageSummary {
     pub role: String,
     pub text: String,
