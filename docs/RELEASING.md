@@ -68,6 +68,17 @@ old credential profile after its password has been exposed or revoked.
 
 ## Local smoke and validation helpers
 
+Before any GPUI dogfood run, execute the non-publishing migration gate:
+
+```bash
+bash scripts/verify-gpui-migration.sh
+```
+
+It runs the full product verifier, Rust control-plane/native-host checks, the
+GPUI compile gate, and packaged Tauri smoke. It intentionally keeps GPUI
+opt-in and never publishes, notarizes, or changes the release shell. Add
+`CODINAL_REQUIRE_NOTARIZATION=1` only when validating a notarized candidate.
+
 For local checks without signing/notarization, use:
 
 ```bash
