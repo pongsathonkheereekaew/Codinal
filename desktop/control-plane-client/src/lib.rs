@@ -54,6 +54,52 @@ impl ApprovalOutcome {
     }
 }
 
+/// Native confirmation reducer. A transport request cannot be obtained until
+/// the UI has explicitly moved this exact pending approval to `Confirmed`.
+pub struct ApprovalConfirmation {
+    session_id: String,
+    approval_id: String,
+    outcome: ApprovalOutcome,
+    confirmed: bool,
+    cancelled: bool,
+}
+
+impl ApprovalConfirmation {
+    pub fn new(session_id: &str, approval_id: &str, outcome: ApprovalOutcome) -> io::Result<Self> {
+        validate_session_id(session_id)?;
+        validate_approval_id(approval_id)?;
+        Ok(Self {
+            session_id: session_id.to_owned(),
+            approval_id: approval_id.to_owned(),
+            outcome,
+            confirmed: false,
+            cancelled: false,
+        })
+    }
+
+    pub fn confirm(&mut self) -> bool {
+        if self.cancelled {
+            false
+        } else {
+            self.confirmed = true;
+            true
+        }
+    }
+
+    pub fn cancel(&mut self) {
+        self.cancelled = true;
+        self.confirmed = false;
+    }
+
+    pub fn submission(&self) -> Option<(&str, &str, ApprovalOutcome)> {
+        self.confirmed.then_some((
+            self.session_id.as_str(),
+            self.approval_id.as_str(),
+            self.outcome,
+        ))
+    }
+}
+
 impl ControlPlaneClient {
     pub fn new(port: u16, token: &str) -> io::Result<Self> {
         if port == 0
@@ -336,7 +382,9 @@ impl Request {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_pending_approval, ApprovalOutcome, ControlPlaneClient};
+    use super::{
+        parse_pending_approval, ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient,
+    };
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -431,5 +479,38 @@ mod tests {
             )
             .expect("approval result");
         server.join().expect("server");
+    }
+
+    #[test]
+    fn confirmation_defaults_to_cancel_and_cannot_be_revived() {
+        let mut confirmation = ApprovalConfirmation::new(
+            "session-1",
+            "0123456789abcdef0123456789abcdef",
+            ApprovalOutcome::Once,
+        )
+        .expect("confirmation");
+        assert_eq!(confirmation.submission(), None);
+        confirmation.cancel();
+        assert!(!confirmation.confirm());
+        assert_eq!(confirmation.submission(), None);
+    }
+
+    #[test]
+    fn confirmed_reducer_exposes_only_its_original_payload() {
+        let mut confirmation = ApprovalConfirmation::new(
+            "session-1",
+            "0123456789abcdef0123456789abcdef",
+            ApprovalOutcome::Deny,
+        )
+        .expect("confirmation");
+        assert!(confirmation.confirm());
+        assert_eq!(
+            confirmation.submission(),
+            Some((
+                "session-1",
+                "0123456789abcdef0123456789abcdef",
+                ApprovalOutcome::Deny,
+            ))
+        );
     }
 }
