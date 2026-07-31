@@ -19,6 +19,7 @@ def test_remote_lease_is_bound_to_worker_revision_and_capabilities():
         worker_id="worker-abc",
         revision="a" * 40,
         capabilities=REQUIRED_CAPABILITIES,
+        connection_fingerprint="c" * 64,
         ttl_seconds=60,
     )
 
@@ -27,22 +28,30 @@ def test_remote_lease_is_bound_to_worker_revision_and_capabilities():
         worker_id="worker-abc",
         revision="a" * 40,
         capabilities=REQUIRED_CAPABILITIES,
+        connection_fingerprint="c" * 64,
         now=120,
     ) == lease
     with pytest.raises(WorkerProtocolError):
         authority.attest(
             lease.token,
             worker_id="worker-abc",
-            revision="b" * 40,
-            capabilities=REQUIRED_CAPABILITIES,
-            now=120,
-        )
-    with pytest.raises(WorkerProtocolError):
-        authority.attest(
-            lease.token,
-            worker_id="worker-abc",
             revision="a" * 40,
             capabilities=REQUIRED_CAPABILITIES,
+            connection_fingerprint="c" * 64,
+            now=120,
+        )
+    expired = authority.issue(
+        worker_id="worker-abc", revision="a" * 40,
+        capabilities=REQUIRED_CAPABILITIES, connection_fingerprint="c" * 64,
+        ttl_seconds=60,
+    )
+    with pytest.raises(WorkerProtocolError):
+        authority.attest(
+            expired.token,
+            worker_id="worker-abc",
+            revision="b" * 40,
+            capabilities=REQUIRED_CAPABILITIES,
+            connection_fingerprint="c" * 64,
             now=161,
         )
 
