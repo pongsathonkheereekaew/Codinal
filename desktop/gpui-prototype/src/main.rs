@@ -1,18 +1,35 @@
 //! PROTOTYPE — delete or absorb after G2 resolves.
 //!
 //! Run: `cargo run --manifest-path desktop/gpui-prototype/Cargo.toml`
-//! This intentionally has no persistence or sidecar access. It tests whether
-//! GPUI's layout model can express Codinal's workspace panes before any
-//! production shell work begins.
+//! This development shell boots the same authenticated Python sidecar as the
+//! Tauri shell, while its UI remains an opt-in prototype.
 
+use codinal_control_plane_client::ControlPlaneClient;
+use codinal_native_host::{
+    development_runtime_root, free_loopback_port, mint_session_token, runtime_layout,
+    secrets::{encode_secret_bootstrap, PlatformSecretVault},
+    validate_runtime_layout, SidecarLaunch,
+};
 use gpui::{
     div, px, rgb, size, App, AppContext, Bounds, Context, ParentElement, Render, Styled, Window,
     WindowBounds, WindowOptions,
 };
-use codinal_control_plane_client::ControlPlaneClient;
+use std::io;
+use std::path::PathBuf;
+use std::process::Child;
+
+struct SidecarProcess(Child);
+
+impl Drop for SidecarProcess {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 struct WorkspacePrototype {
     client: ControlPlaneClient,
+    _sidecar: SidecarProcess,
 }
 
 impl Render for WorkspacePrototype {
@@ -69,16 +86,48 @@ fn pane(title: &'static str, state: &'static str) -> impl gpui::IntoElement {
         .border_color(rgb(0x30363d))
         .p_3()
         .child(div().text_lg().child(title))
-        .child(div().mt_2().text_sm().text_color(rgb(0x8b949e)).child(state))
+        .child(
+            div()
+                .mt_2()
+                .text_sm()
+                .text_color(rgb(0x8b949e))
+                .child(state),
+        )
 }
 
-fn main() {
-    let port = std::env::var("CODINAL_PORT")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(1);
-    let token = std::env::var("CODINAL_SESSION_TOKEN").unwrap_or_else(|_| "development-shell-token-with-at-least-32-characters".to_owned());
-    let client = ControlPlaneClient::new(port, &token).expect("valid native control-plane bootstrap");
+fn development_data_dir() -> io::Result<PathBuf> {
+    std::env::var_os("CODINAL_DATA_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "CODINAL_DATA_DIR is required for the GPUI development shell",
+            )
+        })
+}
+
+fn start_sidecar() -> io::Result<(ControlPlaneClient, SidecarProcess)> {
+    let layout = runtime_layout(&development_runtime_root(), true);
+    validate_runtime_layout(&layout)?;
+    let token = mint_session_token()?;
+    let secret_sync_token = mint_session_token()?;
+    let port = free_loopback_port()?;
+    let secret_bootstrap = encode_secret_bootstrap(&PlatformSecretVault, &secret_sync_token)?;
+    let launch = SidecarLaunch::new(
+        layout.python,
+        layout.runtime_root,
+        development_data_dir()?,
+        port,
+        token.clone(),
+    )?;
+    let sidecar = SidecarProcess(launch.spawn_with_bootstrap(secret_bootstrap)?);
+    let client = ControlPlaneClient::new(port, &token)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
+    Ok((client, sidecar))
+}
+
+fn main() -> io::Result<()> {
+    let (client, sidecar) = start_sidecar()?;
     gpui_platform::application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -86,9 +135,15 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| WorkspacePrototype { client }),
+            |_, cx| {
+                cx.new(|_| WorkspacePrototype {
+                    client,
+                    _sidecar: sidecar,
+                })
+            },
         )
         .expect("open GPUI prototype window");
         cx.activate(true);
     });
+    Ok(())
 }
