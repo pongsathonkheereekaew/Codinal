@@ -17,8 +17,8 @@ use serde::Serialize;
 use tauri::{Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_updater::UpdaterExt;
-use zeroize::{Zeroize, Zeroizing};
 use url::Url;
+use zeroize::{Zeroize, Zeroizing};
 
 use control_client::{relay_oauth_callback, sync_provider_secret};
 use host::{
@@ -48,7 +48,10 @@ fn allows_preview_navigation(url: &Url) -> bool {
         return true;
     }
     matches!(url.scheme(), "http" | "https")
-        && matches!(url.host_str(), Some("127.0.0.1") | Some("[::1]") | Some("::1"))
+        && matches!(
+            url.host_str(),
+            Some("127.0.0.1") | Some("[::1]") | Some("::1")
+        )
         && url.port().is_some()
 }
 
@@ -838,7 +841,7 @@ pub fn run() {
                     .inner_size(1180.0, 760.0)
                     .min_inner_size(760.0, 520.0)
                     .initialization_script(initialization_script(port, &token))
-                    .on_navigation(|url| allows_preview_navigation(url));
+                    .on_navigation(allows_preview_navigation);
             #[cfg(target_os = "macos")]
             let window = window
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
@@ -864,9 +867,15 @@ mod tests {
 
     #[test]
     fn preview_navigation_allows_only_loopback_or_app_urls() {
-        assert!(allows_preview_navigation(&Url::parse("tauri://localhost/").unwrap()));
-        assert!(allows_preview_navigation(&Url::parse("http://127.0.0.1:3000/").unwrap()));
-        assert!(!allows_preview_navigation(&Url::parse("https://example.com/").unwrap()));
+        assert!(allows_preview_navigation(
+            &Url::parse("tauri://localhost/").unwrap()
+        ));
+        assert!(allows_preview_navigation(
+            &Url::parse("http://127.0.0.1:3000/").unwrap()
+        ));
+        assert!(!allows_preview_navigation(
+            &Url::parse("https://example.com/").unwrap()
+        ));
     }
 
     #[test]
