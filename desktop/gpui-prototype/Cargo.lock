@@ -555,6 +555,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b25655df2c3cdd83c5e5b293b88acd880332b2ddadd7c30ac43144fdc0033da9"
+
+[[package]]
 name = "bindgen"
 version = "0.71.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -955,8 +961,19 @@ name = "codinal-gpui-prototype"
 version = "0.0.0"
 dependencies = [
  "codinal-control-plane-client",
+ "codinal-native-host",
  "gpui",
  "gpui_platform",
+]
+
+[[package]]
+name = "codinal-native-host"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.0",
+ "getrandom 0.4.3",
+ "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -5734,7 +5751,7 @@ version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e419dff010bb12512b0ae9e3d2f318dfbdf0167fde7eb05465134d4e8756076f"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "data-url",
  "flate2",
  "fontdb",
