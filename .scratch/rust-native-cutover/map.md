@@ -13,11 +13,12 @@ Do not dual-write production SQLite data or expose bearer/provider secrets.
 ## Decisions so far
 
 - [Decouple native host from Tauri](issues/01-decouple-native-host-from-tauri.md) — native host now owns token, secure launch, and Keychain bootstrap; Tauri consumes the crate unchanged as fallback.
+- [Define native runtime launch contract](issues/02-define-native-runtime-launch-contract.md) — the runtime must consume environment credentials, own a data-directory lock, prove authenticated health, and use stdin for future provider-secret bootstrap.
 
 ## Not yet specified
 
-- The exact capability order after the native-host seam is decoupled depends
-  on the native runtime's authenticated v1 route and storage parity.
+- The exact capability order after bootstrap and data-directory ownership is
+  proven depends on authenticated v1 route and storage parity.
 - GPUI production-pane design and performance/accessibility budgets need a
   concrete native runtime client surface before implementation can be scoped.
 - Release signing, notarization, updater migration, and final deletion evidence
