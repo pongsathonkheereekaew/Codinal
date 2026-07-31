@@ -18,6 +18,7 @@ verification before each completed implementation ticket.
 - [G1 GPUI compatibility and native shell](issues/02-g1-gpui-compatibility-and-native-shell.md) — pin GPUI 0.2.2 in a standalone development shell; keep Tauri's release graph intact.
 - [G2 coding workspace parity](issues/03-g2-coding-workspace-parity.md) — an isolated native four-pane prototype compiles; production panes need decoded-event reducers and virtualization.
 - [G3 safety surfaces](issues/04-g3-safety-surfaces.md) — GPUI stays read-only until every mutation follows explicit confirmation and sidecar-state reload.
+- [G4 WebView-dependent bridges](issues/05-g4-webview-dependent-bridges.md) — OAuth keeps the native deep-link relay; preview remains evidence-only until a constrained native renderer passes packaged tests.
 
 ## Not yet specified
 
