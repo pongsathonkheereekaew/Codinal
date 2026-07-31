@@ -4,6 +4,10 @@
   "redaction": {
     "forbidden_value_markers": ["sk-", "AIza", "ghp_"]
   },
+  "all_v1_http_routes": {
+    "unauthenticated_status": 401,
+    "www_authenticate": "Bearer"
+  },
   "http": [
     {
       "id": "health-without-bearer-is-rejected",

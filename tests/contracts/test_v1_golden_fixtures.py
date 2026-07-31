@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,12 +13,14 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from runtime.control_plane import create_control_plane_app
+from runtime.control_plane.server import ServerConfig, build_services
 from runtime.events import EventHub
 from runtime.secrets import ProviderSecretService
 
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "contracts" / "v1" / "control-plane.json"
+STORAGE_FIXTURE_PATH = ROOT / "contracts" / "v1" / "storage.json"
 TOKEN = "fixture-session-token-with-at-least-32-characters"
 
 
@@ -28,6 +31,10 @@ class _Settings:
 
 def _fixture() -> dict[str, object]:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+def _storage_fixture() -> dict[str, object]:
+    return json.loads(STORAGE_FIXTURE_PATH.read_text(encoding="utf-8"))
 
 
 def test_golden_control_plane_fixture_is_versioned_and_secret_free() -> None:
@@ -63,6 +70,45 @@ def test_reference_http_behavior_matches_golden_fixture() -> None:
         assert response.json() == expected["json"], case["id"]
         for name, value in expected.get("headers", {}).items():
             assert response.headers[name] == value, case["id"]
+
+
+def test_every_reference_v1_route_matches_golden_auth_negative_case(
+    tmp_path: Path,
+) -> None:
+    services = build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=3000,
+            data_dir=tmp_path,
+            default_model="fixture/model",
+        )
+    )
+    app = create_control_plane_app(token=TOKEN, services=services)
+    client = TestClient(app)
+    expected = _fixture()["all_v1_http_routes"]
+    routes = [
+        route
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/v1/")
+    ]
+    assert routes
+    for route in routes:
+        path = route.path.replace("{session_id}", "fixture-session")
+        path = path.replace("{approval_id}", "0" * 32)
+        path = path.replace("{package_id}", "fixture-package")
+        path = path.replace("{goal_id}", "fixture-goal")
+        path = path.replace("{build_id}", "fixture-build")
+        path = path.replace("{worker_id}", "fixture-worker")
+        path = path.replace("{interaction_id}", "fixture-interaction")
+        path = path.replace("{server_name}", "fixture-server")
+        path = path.replace("{checkpoint_id}", "fixture-checkpoint")
+        path = path.replace("{slug}", "fixture")
+        method = next(iter(route.methods - {"HEAD", "OPTIONS"}))
+        response = client.request(method, path)
+        assert response.status_code == expected["unauthenticated_status"], path
+        assert response.headers["www-authenticate"] == expected[
+            "www_authenticate"
+        ], path
 
 
 def test_reference_websocket_behavior_matches_golden_fixture() -> None:
@@ -110,3 +156,42 @@ def test_reference_event_order_matches_golden_fixture() -> None:
         return received
 
     assert asyncio.run(collect()) == _fixture()["events"][0]["sequence"]
+
+
+def test_build_services_sqlite_inventory_matches_golden_fixture(tmp_path: Path) -> None:
+    build_services(
+        ServerConfig(
+            token=TOKEN,
+            port=3000,
+            data_dir=tmp_path,
+            default_model="fixture/model",
+        )
+    )
+    actual = []
+    for path in sorted(tmp_path.glob("*.db")):
+        connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+        try:
+            tables = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+                    "ORDER BY name"
+                )
+            ]
+            actual.append(
+                {
+                    "file": path.name,
+                    "user_version": connection.execute(
+                        "PRAGMA user_version"
+                    ).fetchone()[0],
+                    "tables": tables,
+                }
+            )
+        finally:
+            connection.close()
+
+    fixture = _storage_fixture()
+    assert fixture["fixture_version"] == 1
+    assert fixture["contract"] == "codinal.sqlite.v1"
+    assert actual == fixture["databases"]

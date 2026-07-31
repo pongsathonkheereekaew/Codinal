@@ -424,6 +424,21 @@ mod tests {
     }
 
     #[test]
+    fn golden_storage_fixture_pins_every_reference_database() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/v1/storage.json"
+        ))
+        .expect("valid storage fixture");
+        assert_eq!(fixture["fixture_version"], 1);
+        assert_eq!(fixture["contract"], "codinal.sqlite.v1");
+        assert_eq!(
+            fixture["databases"].as_array().expect("databases").len(),
+            9,
+            "new durable stores require an explicit fixture update"
+        );
+    }
+
+    #[test]
     fn gets_authenticated_json_from_loopback() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         let port = listener.local_addr().expect("address").port();
