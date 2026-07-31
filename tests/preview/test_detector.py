@@ -13,7 +13,7 @@ def test_detects_localhost_urls():
     urls = detect_devserver_urls(output)
 
     assert len(urls) == 1
-    assert urls[0]["url"] == "http://localhost:5173/"
+    assert urls[0]["url"] == "http://127.0.0.1:5173/"
     assert urls[0]["port"] == 5173
 
 
@@ -62,4 +62,4 @@ def test_strips_trailing_punctuation():
 
     urls = detect_devserver_urls(output)
 
-    assert urls[0]["url"] == "http://localhost:4000"
+    assert urls[0]["url"] == "http://127.0.0.1:4000"

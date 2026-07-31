@@ -5608,12 +5608,22 @@ function renderDevserverChips() {
   }
 }
 
-function openPreview() {
+async function openPreview() {
   const url = el["preview-url"].value.trim();
   if (!url) return;
-  state.previewUrl = url;
-  el["preview-frame"].src = url;
-  showPreviewPanel();
+  if (!state.sessionId) return;
+  try {
+    const verified = await api(
+      `/v1/sessions/${encodeURIComponent(state.sessionId)}/preview/verify-origin`,
+      { method: "POST", body: JSON.stringify({ url }) }
+    );
+    state.previewUrl = verified.url;
+    el["preview-url"].value = verified.url;
+    el["preview-frame"].src = verified.url;
+    showPreviewPanel();
+  } catch (error) {
+    toast(error.message, "error");
+  }
 }
 
 async function loadPreviewEvidence() {

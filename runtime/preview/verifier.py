@@ -13,7 +13,7 @@ class PreviewVerificationError(ValueError):
     """A requested preview origin is outside the local verifier boundary."""
 
 
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 
 def verify_origin(raw_url: str) -> str:

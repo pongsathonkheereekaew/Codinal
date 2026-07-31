@@ -38,7 +38,11 @@ from runtime.policy import ApprovalOutcome, ApprovalPersistenceError
 from runtime.policy import PermissionRequest
 from runtime.sandbox import InvalidCommandError, SandboxUnavailableError
 from runtime.path_scope import scopes_overlap
-from runtime.preview import detect_devserver_urls
+from runtime.preview import (
+    PreviewVerificationError,
+    detect_devserver_urls,
+    verify_origin,
+)
 from runtime.artifacts import check_stirling_health
 from runtime.providers.ollama import discover_ollama_models
 from runtime.sessions.context import make_project_context_item
@@ -3022,6 +3026,22 @@ def create_control_plane_app(
                 status_code=400,
                 detail=str(error),
             ) from None
+
+    @app.post("/v1/sessions/{session_id}/preview/verify-origin")
+    async def verify_preview_origin(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, str]:
+        _validate_public_session_id(session_id)
+        try:
+            body = await request.json()
+            origin = verify_origin(body.get("url"))
+        except (AttributeError, json.JSONDecodeError, PreviewVerificationError):
+            raise HTTPException(
+                status_code=400,
+                detail="preview verification requires a loopback origin",
+            ) from None
+        return {"url": origin}
 
     @app.get("/v1/sessions/{session_id}/preview/evidence")
     async def list_preview_evidence(session_id: str) -> list[dict[str, Any]]:

@@ -2427,6 +2427,25 @@ def test_preview_evidence_rejects_invalid_kind():
     assert response.status_code == 400
 
 
+def test_preview_origin_requires_loopback_ip_literal():
+    client = _preview_client(_FakePreview())
+
+    with client:
+        blocked = client.post(
+            "/v1/sessions/session-1/preview/verify-origin",
+            headers=AUTH,
+            json={"url": "https://example.com"},
+        )
+        accepted = client.post(
+            "/v1/sessions/session-1/preview/verify-origin",
+            headers=AUTH,
+            json={"url": "http://127.0.0.1:3000/app"},
+        )
+
+    assert blocked.status_code == 400
+    assert accepted.json() == {"url": "http://127.0.0.1:3000/app"}
+
+
 def test_preview_evidence_503_when_unavailable():
     client = _preview_client(None)
 

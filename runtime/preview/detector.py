@@ -34,6 +34,11 @@ def detect_devserver_urls(output: str) -> list[dict[str, Any]]:
             raw = raw[:_MAX_URL_LEN]
         # Strip trailing punctuation that's not part of the URL.
         url = raw.rstrip(".,;)]}>'\"")
+        url = re.sub(
+            r"^(https?://)localhost(?=[:/]|$)",
+            r"\g<1>127.0.0.1",
+            url,
+        )
         if url in seen:
             continue
         seen.add(url)
