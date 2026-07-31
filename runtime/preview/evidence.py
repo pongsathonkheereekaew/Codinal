@@ -84,8 +84,8 @@ class PreviewEvidenceStore:
         kind: str,
         content: Any,
     ) -> dict[str, Any]:
-        if kind not in ("console", "annotation"):
-            raise ValueError("kind must be console or annotation")
+        if kind not in ("console", "annotation", "verification"):
+            raise ValueError("kind must be console, annotation or verification")
         if isinstance(content, (dict, list)):
             encoded = json.dumps(content, separators=(",", ":"))
         elif isinstance(content, str):

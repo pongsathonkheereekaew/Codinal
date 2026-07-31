@@ -41,6 +41,7 @@ from runtime.path_scope import scopes_overlap
 from runtime.preview import (
     PreviewVerificationError,
     detect_devserver_urls,
+    verify_http,
     verify_origin,
 )
 from runtime.artifacts import check_stirling_health
@@ -3048,6 +3049,28 @@ def create_control_plane_app(
                 detail="preview verification requires a loopback origin",
             ) from None
         return {"url": origin}
+
+    @app.post("/v1/sessions/{session_id}/preview/verify")
+    async def run_preview_verification(
+        session_id: str,
+        request: Request,
+    ) -> dict[str, Any]:
+        _validate_public_session_id(session_id)
+        preview = getattr(services, "preview", None)
+        if preview is None:
+            raise HTTPException(status_code=503, detail="preview unavailable")
+        body = await _read_bounded_object(
+            request, limit=4096, detail="invalid preview verification"
+        )
+        try:
+            if set(body) != {"url"}:
+                raise PreviewVerificationError("invalid preview origin")
+            result = await asyncio.to_thread(verify_http, body["url"])
+            return await asyncio.to_thread(
+                preview.add_evidence, session_id, "verification", result
+            )
+        except PreviewVerificationError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from None
 
     @app.get("/v1/sessions/{session_id}/preview/evidence")
     async def list_preview_evidence(session_id: str) -> list[dict[str, Any]]:

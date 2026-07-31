@@ -143,7 +143,7 @@ const el = Object.fromEntries(
     "run-security-scan", "security-scan-status", "security-scan-findings",
     "terminal-panel", "terminal-status",
     "terminal-restart", "terminal-clear", "terminal-host",
-    "preview-panel", "preview-url", "preview-open", "preview-annotate",
+    "preview-panel", "preview-url", "preview-open", "preview-verify", "preview-annotate",
     "preview-attach-console", "preview-frame", "annotation-overlay",
     "devserver-chips", "preview-evidence",
     "refresh-diff", "diff-view", "apply-changes", "settings-dialog",
@@ -5620,7 +5620,26 @@ async function openPreview() {
     state.previewUrl = verified.url;
     el["preview-url"].value = verified.url;
     el["preview-frame"].src = verified.url;
+    updatePreviewControls();
     showPreviewPanel();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+function updatePreviewControls() {
+  el["preview-open"].disabled = !el["preview-url"].value.trim();
+  el["preview-verify"].disabled = !state.previewUrl;
+}
+
+async function verifyPreview() {
+  if (!state.sessionId || !state.previewUrl) return;
+  try {
+    await api(`/v1/sessions/${encodeURIComponent(state.sessionId)}/preview/verify`, {
+      method: "POST", body: JSON.stringify({ url: state.previewUrl }),
+    });
+    toast("Preview verification recorded");
+    await loadPreviewEvidence();
   } catch (error) {
     toast(error.message, "error");
   }
@@ -6469,12 +6488,14 @@ function wireEvents() {
     createPullRequest().catch((error) => toast(error.message, "error"));
   });
   el["preview-open"].addEventListener("click", openPreview);
+  el["preview-verify"].addEventListener("click", verifyPreview);
   el["preview-url"].addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       openPreview();
     }
   });
+  el["preview-url"].addEventListener("input", updatePreviewControls);
   el["preview-annotate"].addEventListener("click", toggleAnnotation);
   el["preview-attach-console"].addEventListener("click", () => {
     attachConsoleEvidence().catch((error) => toast(error.message, "error"));
