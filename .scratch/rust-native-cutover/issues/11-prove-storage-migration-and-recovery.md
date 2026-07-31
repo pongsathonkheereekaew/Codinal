@@ -30,9 +30,13 @@ dual-writing Python-owned data or weakening the existing read contract.
   valid backup, and replays the remaining forward-only chain.
 - Future versions fail before a destination is created and the Python-owned
   source is never opened for writing.
+- The same staged migration/recovery engine now covers `git-worktrees.db`
+  through v5 and `workers.db` through v2, including retained checkpoint and
+  worker comparison metadata across every released boundary.
 
 Still required before resolving this ticket: equivalent corpus/ownership proof
-for the remaining durable databases and an atomic whole-data-directory cutover.
+for the six single-version durable databases and an atomic whole-data-directory
+cutover.
 
 ## Out of scope
 

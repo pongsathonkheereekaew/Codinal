@@ -7,6 +7,31 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const CONVERSATION_SCHEMA_VERSION: i64 = 8;
+pub const GIT_WORKTREE_SCHEMA_VERSION: i64 = 5;
+pub const WORKER_SCHEMA_VERSION: i64 = 2;
+
+#[derive(Clone, Copy)]
+struct MigrationPlan {
+    file: &'static str,
+    target: i64,
+    apply: fn(&Transaction<'_>, i64) -> io::Result<()>,
+}
+
+const CONVERSATION_PLAN: MigrationPlan = MigrationPlan {
+    file: "codinal.db",
+    target: CONVERSATION_SCHEMA_VERSION,
+    apply: apply_conversation_migration,
+};
+const GIT_WORKTREE_PLAN: MigrationPlan = MigrationPlan {
+    file: "git-worktrees.db",
+    target: GIT_WORKTREE_SCHEMA_VERSION,
+    apply: apply_git_worktree_migration,
+};
+const WORKER_PLAN: MigrationPlan = MigrationPlan {
+    file: "workers.db",
+    target: WORKER_SCHEMA_VERSION,
+    apply: apply_worker_migration,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConversationMigrationReport {
@@ -20,7 +45,29 @@ pub fn migrate_conversation_snapshot(
     source_database: &Path,
     destination: &Path,
 ) -> io::Result<ConversationMigrationReport> {
-    validate_source(source_database)?;
+    migrate_snapshot(source_database, destination, CONVERSATION_PLAN)
+}
+
+pub fn migrate_git_worktree_snapshot(
+    source_database: &Path,
+    destination: &Path,
+) -> io::Result<ConversationMigrationReport> {
+    migrate_snapshot(source_database, destination, GIT_WORKTREE_PLAN)
+}
+
+pub fn migrate_worker_snapshot(
+    source_database: &Path,
+    destination: &Path,
+) -> io::Result<ConversationMigrationReport> {
+    migrate_snapshot(source_database, destination, WORKER_PLAN)
+}
+
+fn migrate_snapshot(
+    source_database: &Path,
+    destination: &Path,
+    plan: MigrationPlan,
+) -> io::Result<ConversationMigrationReport> {
+    validate_source(source_database, plan.target)?;
     if destination.exists() {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
@@ -47,10 +94,10 @@ pub fn migrate_conversation_snapshot(
     fs::create_dir(&staging)?;
     fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
     let result = (|| {
-        let database = staging.join("codinal.db");
+        let database = staging.join(plan.file);
         copy_sqlite(source_database, &database)?;
         secure_file(&database)?;
-        let report = migrate_owned_database(&staging, None, true)?;
+        let report = migrate_owned_database(&staging, None, true, plan)?;
         fs::rename(&staging, destination)?;
         sync_directory(parent)?;
         Ok(remap_report(report, &staging, destination))
@@ -64,28 +111,46 @@ pub fn migrate_conversation_snapshot(
 pub fn recover_conversation_snapshot(
     destination: &Path,
 ) -> io::Result<ConversationMigrationReport> {
+    recover_snapshot(destination, CONVERSATION_PLAN)
+}
+
+pub fn recover_git_worktree_snapshot(
+    destination: &Path,
+) -> io::Result<ConversationMigrationReport> {
+    recover_snapshot(destination, GIT_WORKTREE_PLAN)
+}
+
+pub fn recover_worker_snapshot(destination: &Path) -> io::Result<ConversationMigrationReport> {
+    recover_snapshot(destination, WORKER_PLAN)
+}
+
+fn recover_snapshot(
+    destination: &Path,
+    plan: MigrationPlan,
+) -> io::Result<ConversationMigrationReport> {
     validate_owned_directory(destination)?;
-    let database = destination.join("codinal.db");
+    let database = destination.join(plan.file);
     if let Ok((version, integrity)) = inspect_database(&database) {
         if integrity == "ok" {
-            validate_version(version)?;
-            return migrate_owned_database(destination, None, true);
+            validate_version(version, plan.target)?;
+            return migrate_owned_database(destination, None, true, plan);
         }
     }
-    let backup = latest_valid_backup(destination)?
+    let backup = latest_valid_backup(destination, plan)?
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no valid migration backup"))?;
     let staging = destination.join(format!(
-        ".codinal-recovery-{}-{}",
+        ".{}-recovery-{}-{}",
+        plan.file,
         std::process::id(),
         timestamp()
     ));
     fs::create_dir(&staging)?;
     fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
-    let staged_database = staging.join("codinal.db");
+    let staged_database = staging.join(plan.file);
     let staged = (|| {
         copy_sqlite(&backup, &staged_database)?;
         secure_file(&staged_database)?;
-        migrate_owned_database(&staging, Some(backup.clone()), false)
+        migrate_owned_database(&staging, Some(backup.clone()), false, plan)
     })();
     let report = match staged {
         Ok(report) => report,
@@ -97,7 +162,7 @@ pub fn recover_conversation_snapshot(
 
     let recovery = destination.join("recovery");
     secure_directory(&recovery)?;
-    let preserved = recovery.join(format!("codinal.db.corrupt-{}.preserved", timestamp()));
+    let preserved = recovery.join(format!("{}.corrupt-{}.preserved", plan.file, timestamp()));
     if database.exists() {
         copy_private_file(&database, &preserved)?;
     }
@@ -121,9 +186,10 @@ fn migrate_owned_database(
     destination: &Path,
     recovered_from: Option<PathBuf>,
     create_pre_migration_backup: bool,
+    plan: MigrationPlan,
 ) -> io::Result<ConversationMigrationReport> {
     validate_owned_directory(destination)?;
-    let database = destination.join("codinal.db");
+    let database = destination.join(plan.file);
     let (from_version, integrity) = inspect_database(&database)?;
     if integrity != "ok" {
         return Err(io::Error::new(
@@ -131,9 +197,14 @@ fn migrate_owned_database(
             "conversation database failed integrity check",
         ));
     }
-    validate_version(from_version)?;
-    let backup = if create_pre_migration_backup && from_version < CONVERSATION_SCHEMA_VERSION {
-        Some(create_backup(destination, &database, from_version)?)
+    validate_version(from_version, plan.target)?;
+    let backup = if create_pre_migration_backup && from_version < plan.target {
+        Some(create_backup(
+            destination,
+            &database,
+            from_version,
+            plan.target,
+        )?)
     } else {
         recovered_from.clone()
     };
@@ -148,8 +219,8 @@ fn migrate_owned_database(
         )
         .map_err(sqlite_error)?;
     let transaction = connection.transaction().map_err(sqlite_error)?;
-    for version in (from_version + 1)..=CONVERSATION_SCHEMA_VERSION {
-        apply_migration(&transaction, version)?;
+    for version in (from_version + 1)..=plan.target {
+        (plan.apply)(&transaction, version)?;
         transaction
             .pragma_update(None, "user_version", version)
             .map_err(sqlite_error)?;
@@ -163,7 +234,7 @@ fn migrate_owned_database(
     sync_file(&database)?;
     sync_directory(destination)?;
     let (to_version, integrity) = inspect_database(&database)?;
-    if to_version != CONVERSATION_SCHEMA_VERSION || integrity != "ok" {
+    if to_version != plan.target || integrity != "ok" {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "migrated conversation database failed verification",
@@ -209,7 +280,7 @@ fn copy_private_file(source: &Path, destination: &Path) -> io::Result<()> {
     sync_file(destination)
 }
 
-fn apply_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+fn apply_conversation_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
     match version {
         1 => transaction.execute_batch(V1_SCHEMA).map_err(sqlite_error)?,
         2 => add_column(transaction, "sessions", "source_workspace", "TEXT")?,
@@ -252,6 +323,79 @@ fn apply_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()
     Ok(())
 }
 
+fn apply_git_worktree_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    match version {
+        1 => transaction
+            .execute_batch(GIT_V1_SCHEMA)
+            .map_err(sqlite_error)?,
+        2 => transaction
+            .execute_batch(GIT_V2_SCHEMA)
+            .map_err(sqlite_error)?,
+        3 => {
+            add_column(
+                transaction,
+                "code_checkpoints",
+                "capture_mode",
+                "TEXT NOT NULL DEFAULT 'whole_tree'",
+            )?;
+            transaction
+                .execute_batch(GIT_V3_SCHEMA)
+                .map_err(sqlite_error)?;
+        }
+        4 => transaction
+            .execute_batch(GIT_V4_SCHEMA)
+            .map_err(sqlite_error)?,
+        5 => transaction
+            .execute_batch(GIT_V5_SCHEMA)
+            .map_err(sqlite_error)?,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Git worktree migration chain has a gap",
+            ))
+        }
+    }
+    Ok(())
+}
+
+fn apply_worker_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    match version {
+        1 => transaction
+            .execute_batch(WORKER_V1_SCHEMA)
+            .map_err(sqlite_error)?,
+        2 => {
+            add_column(
+                transaction,
+                "workers",
+                "build_id",
+                "TEXT NOT NULL DEFAULT ''",
+            )?;
+            add_column(
+                transaction,
+                "workers",
+                "plan_task_id",
+                "TEXT NOT NULL DEFAULT ''",
+            )?;
+            add_column(
+                transaction,
+                "workers",
+                "candidate_index",
+                "INTEGER NOT NULL DEFAULT -1",
+            )?;
+            transaction
+                .execute_batch(WORKER_V2_SCHEMA)
+                .map_err(sqlite_error)?;
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "worker migration chain has a gap",
+            ))
+        }
+    }
+    Ok(())
+}
+
 fn add_column(
     transaction: &Transaction<'_>,
     table: &str,
@@ -277,7 +421,7 @@ fn add_column(
     Ok(())
 }
 
-fn validate_source(path: &Path) -> io::Result<()> {
+fn validate_source(path: &Path, target: i64) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(io::Error::new(
@@ -286,7 +430,7 @@ fn validate_source(path: &Path) -> io::Result<()> {
         ));
     }
     let (version, integrity) = inspect_database(path)?;
-    validate_version(version)?;
+    validate_version(version, target)?;
     if integrity != "ok" {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -296,8 +440,8 @@ fn validate_source(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn validate_version(version: i64) -> io::Result<()> {
-    if !(0..=CONVERSATION_SCHEMA_VERSION).contains(&version) {
+fn validate_version(version: i64, target: i64) -> io::Result<()> {
+    if !(0..=target).contains(&version) {
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "unsupported conversation schema version",
@@ -318,11 +462,20 @@ fn validate_owned_directory(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn create_backup(destination: &Path, database: &Path, version: i64) -> io::Result<PathBuf> {
+fn create_backup(
+    destination: &Path,
+    database: &Path,
+    version: i64,
+    target: i64,
+) -> io::Result<PathBuf> {
     let backups = destination.join("backups");
     secure_directory(&backups)?;
     let backup = backups.join(format!(
-        "codinal.db.pre-v{version}-to-v{CONVERSATION_SCHEMA_VERSION}-{}.bak",
+        "{}.pre-v{version}-to-v{target}-{}.bak",
+        database
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("database.db"),
         timestamp()
     ));
     copy_sqlite(database, &backup)?;
@@ -332,7 +485,7 @@ fn create_backup(destination: &Path, database: &Path, version: i64) -> io::Resul
     Ok(backup)
 }
 
-fn latest_valid_backup(destination: &Path) -> io::Result<Option<PathBuf>> {
+fn latest_valid_backup(destination: &Path, plan: MigrationPlan) -> io::Result<Option<PathBuf>> {
     let backups = destination.join("backups");
     if !backups.is_dir() {
         return Ok(None);
@@ -343,14 +496,16 @@ fn latest_valid_backup(destination: &Path) -> io::Result<Option<PathBuf>> {
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("codinal.db.pre-v") && name.ends_with(".bak"))
+                .is_some_and(|name| {
+                    name.starts_with(&format!("{}.pre-v", plan.file)) && name.ends_with(".bak")
+                })
         })
         .collect::<Vec<_>>();
     candidates.sort_by_key(|path| std::cmp::Reverse(backup_timestamp(path)));
     for candidate in candidates {
-        if inspect_database(&candidate).is_ok_and(|(version, integrity)| {
-            version <= CONVERSATION_SCHEMA_VERSION && integrity == "ok"
-        }) {
+        if inspect_database(&candidate)
+            .is_ok_and(|(version, integrity)| version <= plan.target && integrity == "ok")
+        {
             return Ok(Some(candidate));
         }
     }
@@ -502,11 +657,86 @@ CREATE INDEX IF NOT EXISTS turn_receipts_session_created
 ON turn_receipts(session_id, created_at, turn_id);
 "#;
 
+const GIT_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS git_worktrees (
+  session_id TEXT PRIMARY KEY, source_root TEXT NOT NULL, git_common_dir TEXT NOT NULL,
+  source_branch TEXT NOT NULL, base_commit TEXT NOT NULL, worktree_path TEXT NOT NULL UNIQUE,
+  session_branch TEXT NOT NULL, source_dirty INTEGER NOT NULL, state TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+"#;
+
+const GIT_V2_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS code_checkpoints (
+  checkpoint_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, before_tree TEXT NOT NULL,
+  after_tree TEXT NOT NULL DEFAULT '', before_message_count INTEGER NOT NULL,
+  after_message_count INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  FOREIGN KEY (session_id) REFERENCES git_worktrees(session_id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_pending_checkpoint_per_session
+ON code_checkpoints(session_id) WHERE state = 'pending';
+"#;
+
+const GIT_V3_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS checkpoint_files (
+  checkpoint_id TEXT NOT NULL, path TEXT NOT NULL, before_blob TEXT NOT NULL DEFAULT '',
+  after_blob TEXT NOT NULL DEFAULT '', before_mode INTEGER NOT NULL DEFAULT 0,
+  after_mode INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (checkpoint_id, path),
+  FOREIGN KEY (checkpoint_id) REFERENCES code_checkpoints(checkpoint_id) ON DELETE CASCADE
+);
+"#;
+
+const GIT_V4_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS checkpoint_restores (
+  operation_id TEXT PRIMARY KEY, checkpoint_id TEXT NOT NULL, session_id TEXT NOT NULL UNIQUE,
+  scope TEXT NOT NULL, state TEXT NOT NULL, message_count INTEGER NOT NULL,
+  code_before_tree TEXT NOT NULL DEFAULT '', code_after_tree TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  FOREIGN KEY (session_id) REFERENCES git_worktrees(session_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS checkpoint_restore_history (
+  operation_id TEXT NOT NULL, checkpoint_id TEXT NOT NULL, position INTEGER NOT NULL,
+  PRIMARY KEY (operation_id, checkpoint_id), UNIQUE (operation_id, position),
+  FOREIGN KEY (operation_id) REFERENCES checkpoint_restores(operation_id) ON DELETE CASCADE
+);
+"#;
+
+const GIT_V5_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS plain_workspaces (
+  session_id TEXT PRIMARY KEY, workspace_path TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES git_worktrees(session_id) ON DELETE CASCADE
+);
+"#;
+
+const WORKER_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS workers (
+  worker_id TEXT PRIMARY KEY, parent_session_id TEXT NOT NULL,
+  child_session_id TEXT NOT NULL UNIQUE, task TEXT NOT NULL, ownership TEXT NOT NULL,
+  dependencies TEXT NOT NULL, model TEXT NOT NULL, state TEXT NOT NULL,
+  worker_kind TEXT NOT NULL, protocol_version TEXT NOT NULL, capabilities TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', commit_hash TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS workers_parent_created
+ON workers(parent_session_id, created_at, worker_id);
+"#;
+
+const WORKER_V2_SCHEMA: &str = r#"
+CREATE INDEX IF NOT EXISTS workers_build
+ON workers(build_id, plan_task_id, candidate_index);
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_migration, migrate_conversation_snapshot, recover_conversation_snapshot,
-        CONVERSATION_SCHEMA_VERSION,
+        apply_conversation_migration, apply_git_worktree_migration, apply_worker_migration,
+        migrate_conversation_snapshot, migrate_git_worktree_snapshot, migrate_worker_snapshot,
+        recover_conversation_snapshot, CONVERSATION_SCHEMA_VERSION,
     };
     use rusqlite::Connection;
     use std::fs;
@@ -559,7 +789,7 @@ mod tests {
         let mut connection = Connection::open(path).expect("source");
         let transaction = connection.transaction().expect("transaction");
         for migration in 1..=version.max(1) {
-            apply_migration(&transaction, migration).expect("migration fixture");
+            apply_conversation_migration(&transaction, migration).expect("migration fixture");
             transaction
                 .pragma_update(None, "user_version", migration)
                 .expect("fixture version");
@@ -800,6 +1030,126 @@ mod tests {
         assert!(recover_conversation_snapshot(&destination).is_err());
         assert_eq!(fs::read(&active).expect("active remains"), corrupt);
         assert!(recover_conversation_snapshot(&destination).is_err());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn git_worktree_corpus_migrates_v0_through_v4_and_preserves_records() {
+        let root = directory();
+        for version in 0_i64..=4 {
+            let source = root.join(format!("git-v{version}.db"));
+            let destination = root.join(format!("git-cutover-v{version}"));
+            let mut connection = Connection::open(&source).expect("source");
+            let transaction = connection.transaction().expect("transaction");
+            for migration in 1..=version.max(1) {
+                apply_git_worktree_migration(&transaction, migration).expect("fixture migration");
+                transaction
+                    .pragma_update(None, "user_version", migration)
+                    .expect("fixture version");
+            }
+            transaction.commit().expect("fixture commit");
+            if version == 0 {
+                connection
+                    .pragma_update(None, "user_version", 0)
+                    .expect("legacy version");
+            }
+            connection
+                .execute(
+                    "INSERT INTO git_worktrees (
+                       session_id, source_root, git_common_dir, source_branch, base_commit,
+                       worktree_path, session_branch, source_dirty, state
+                     ) VALUES (?1, '/source', '/source/.git', 'main', ?2, ?3,
+                               'codinal/test', 0, 'active')",
+                    rusqlite::params![
+                        format!("git-v{version}"),
+                        "a".repeat(40),
+                        format!("/worktree-{version}")
+                    ],
+                )
+                .expect("worktree");
+            if version >= 2 {
+                connection
+                    .execute(
+                        "INSERT INTO code_checkpoints (
+                           checkpoint_id, session_id, before_tree, before_message_count, state
+                         ) VALUES (?1, ?2, ?3, 0, 'completed')",
+                        rusqlite::params![
+                            format!("checkpoint-{version}"),
+                            format!("git-v{version}"),
+                            "b".repeat(40)
+                        ],
+                    )
+                    .expect("checkpoint");
+            }
+            drop(connection);
+
+            let report = migrate_git_worktree_snapshot(&source, &destination).expect("migration");
+            assert_eq!((report.from_version, report.to_version), (version, 5));
+            let migrated =
+                Connection::open(destination.join("git-worktrees.db")).expect("migrated");
+            assert_eq!(
+                migrated
+                    .query_row("SELECT base_commit FROM git_worktrees", [], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .expect("retained worktree"),
+                "a".repeat(40)
+            );
+            if version >= 2 {
+                assert_eq!(
+                    migrated
+                        .query_row("SELECT capture_mode FROM code_checkpoints", [], |row| {
+                            row.get::<_, String>(0)
+                        })
+                        .expect("capture mode"),
+                    "whole_tree"
+                );
+            }
+        }
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn worker_v1_migration_adds_comparison_metadata_without_losing_record() {
+        let root = directory();
+        let source = root.join("workers-v1.db");
+        let destination = root.join("workers-cutover");
+        let mut connection = Connection::open(&source).expect("source");
+        let transaction = connection.transaction().expect("transaction");
+        apply_worker_migration(&transaction, 1).expect("v1 schema");
+        transaction
+            .pragma_update(None, "user_version", 1)
+            .expect("version");
+        transaction.commit().expect("commit");
+        connection
+            .execute(
+                "INSERT INTO workers (
+                   worker_id, parent_session_id, child_session_id, task, ownership,
+                   dependencies, model, state, worker_kind, protocol_version, capabilities
+                 ) VALUES ('worker-1', 'parent-1', 'child-1', 'migrate', '[]', '[]',
+                           'ollama:qwen3', 'queued', 'implementation', '1', '[]')",
+                [],
+            )
+            .expect("worker");
+        drop(connection);
+
+        let report = migrate_worker_snapshot(&source, &destination).expect("migration");
+        assert_eq!((report.from_version, report.to_version), (1, 2));
+        let migrated = Connection::open(destination.join("workers.db")).expect("migrated");
+        let metadata = migrated
+            .query_row(
+                "SELECT build_id, plan_task_id, candidate_index FROM workers",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .expect("metadata");
+        assert_eq!(metadata, (String::new(), String::new(), -1));
         fs::remove_dir_all(root).expect("cleanup");
     }
 }
