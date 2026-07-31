@@ -31,6 +31,14 @@ if [ "${CODINAL_SKIP_APP_LAUNCH:-0}" != "1" ]; then
   APP_PID=$!
   cleanup() {
     kill "$APP_PID" >/dev/null 2>&1 || true
+    for _ in $(seq 1 10); do
+      if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+        wait "$APP_PID" >/dev/null 2>&1 || true
+        return
+      fi
+      sleep 1
+    done
+    kill -KILL "$APP_PID" >/dev/null 2>&1 || true
     wait "$APP_PID" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT
