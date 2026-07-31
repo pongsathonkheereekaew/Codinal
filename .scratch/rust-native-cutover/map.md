@@ -20,6 +20,7 @@ Do not dual-write production SQLite data or expose bearer/provider secrets.
 - [Wire GPUI to the native shadow runtime](issues/07-wire-gpui-to-native-shadow-runtime.md) — GPUI now owns Rust runtime launch, credentials, client reads, shutdown, and snapshot cleanup without a Tauri/Python startup path.
 - [Port native provider-secret bootstrap](issues/09-port-native-secret-bootstrap.md) — GPUI now transfers Keychain profiles directly to Rust through bounded one-shot stdin; tokens and API keys remain in redacted zeroizing memory.
 - [Port native PTY terminal](issues/14-port-native-pty-terminal.md) — PTY ownership and tests are moving out of Tauri into the shared native host before GPUI terminal wiring.
+- [Port native LSP client](issues/15-port-native-lsp.md) — subprocess lifecycle and JSON-RPC now live in the shared native host; GPUI document integration remains.
 
 ## Not yet specified
 

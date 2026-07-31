@@ -392,6 +392,7 @@ dependencies = [
  "security-framework-sys",
  "serde",
  "serde_json",
+ "url",
  "zeroize",
 ]
 

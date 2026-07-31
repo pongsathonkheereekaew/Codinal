@@ -4,6 +4,8 @@
 //! shell depends on the same implementation without importing Tauri sources.
 pub mod host;
 #[cfg(target_os = "macos")]
+pub mod lsp;
+#[cfg(target_os = "macos")]
 pub mod pty;
 pub mod secrets;
 
