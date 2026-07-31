@@ -47,10 +47,16 @@ pub fn inspect_v1_data_dir(data_dir: &Path) -> Result<Vec<StorageMismatch>, io::
         ));
     }
     let fixture = load_v1_fixture().map_err(|error| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("invalid storage fixture: {error}"))
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid storage fixture: {error}"),
+        )
     })?;
     if fixture.fixture_version != 1 || fixture.contract != "codinal.sqlite.v1" {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported storage fixture"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported storage fixture",
+        ));
     }
 
     let mismatches = fixture
@@ -60,6 +66,55 @@ pub fn inspect_v1_data_dir(data_dir: &Path) -> Result<Vec<StorageMismatch>, io::
         .filter_map(Result::err)
         .collect();
     Ok(mismatches)
+}
+
+/// Create a consistent, isolated SQLite copy for Rust shadow validation.
+///
+/// The source is opened read-only and never modified. The destination must
+/// not exist; this prevents an accidental dual-writer or overwrite of a prior
+/// validation artifact.
+pub fn create_v1_shadow_snapshot(source: &Path, destination: &Path) -> io::Result<()> {
+    if destination.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "shadow snapshot destination already exists",
+        ));
+    }
+    let mismatches = inspect_v1_data_dir(source)?;
+    if !mismatches.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "source does not match the v1 storage fixture",
+        ));
+    }
+    fs::create_dir(destination)?;
+    let result = (|| {
+        for database in load_v1_fixture()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+            .databases
+        {
+            let source_path = safe_database_path(source, &database.file)
+                .map_err(|detail| io::Error::new(io::ErrorKind::InvalidInput, detail))?;
+            let destination_path = destination.join(&database.file);
+            let reader =
+                Connection::open_with_flags(&source_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                    .map_err(sqlite_error)?;
+            reader
+                .backup(rusqlite::DatabaseName::Main, &destination_path, None)
+                .map_err(sqlite_error)?;
+        }
+        if !inspect_v1_data_dir(destination)?.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "shadow snapshot verification failed",
+            ));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(destination);
+    }
+    result
 }
 
 fn inspect_database(data_dir: &Path, expected: &DatabaseFixture) -> Result<(), StorageMismatch> {
@@ -77,11 +132,25 @@ fn inspect_database(data_dir: &Path, expected: &DatabaseFixture) -> Result<(), S
             detail: "database must be a regular non-symlink file".to_owned(),
         });
     }
-    let connection = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+    let connection =
+        Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|_| {
+            StorageMismatch {
+                file: expected.file.clone(),
+                detail: "database cannot be opened read-only".to_owned(),
+            }
+        })?;
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(|_| StorageMismatch {
             file: expected.file.clone(),
-            detail: "database cannot be opened read-only".to_owned(),
+            detail: "database integrity cannot be checked".to_owned(),
         })?;
+    if integrity != "ok" {
+        return Err(StorageMismatch {
+            file: expected.file.clone(),
+            detail: "database integrity check failed".to_owned(),
+        });
+    }
     let actual_version: u32 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|_| StorageMismatch {
@@ -91,7 +160,10 @@ fn inspect_database(data_dir: &Path, expected: &DatabaseFixture) -> Result<(), S
     if actual_version != expected.user_version {
         return Err(StorageMismatch {
             file: expected.file.clone(),
-            detail: format!("user_version is {actual_version}, expected {}", expected.user_version),
+            detail: format!(
+                "user_version is {actual_version}, expected {}",
+                expected.user_version
+            ),
         });
     }
     let actual_tables = tables(&connection).map_err(|_| StorageMismatch {
@@ -108,9 +180,17 @@ fn inspect_database(data_dir: &Path, expected: &DatabaseFixture) -> Result<(), S
     Ok(())
 }
 
+fn sqlite_error(error: rusqlite::Error) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, error)
+}
+
 fn safe_database_path(data_dir: &Path, file: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(file);
-    if candidate.components().count() != 1 || candidate.extension().is_none_or(|extension| extension != "db") {
+    if candidate.components().count() != 1
+        || candidate
+            .extension()
+            .is_none_or(|extension| extension != "db")
+    {
         return Err("fixture database name is unsafe".to_owned());
     }
     Ok(data_dir.join(candidate))
@@ -128,7 +208,7 @@ fn tables(connection: &Connection) -> rusqlite::Result<BTreeSet<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{inspect_v1_data_dir, load_v1_fixture};
+    use super::{create_v1_shadow_snapshot, inspect_v1_data_dir, load_v1_fixture};
     use rusqlite::Connection;
     use std::fs;
     use std::path::Path;
@@ -184,5 +264,19 @@ mod tests {
         create_fixture_databases(&dir);
         assert!(inspect_v1_data_dir(&dir).expect("inspect").is_empty());
         fs::remove_dir_all(&dir).expect("remove");
+    }
+
+    #[test]
+    fn creates_an_isolated_verified_shadow_snapshot() {
+        let source = fresh_dir();
+        create_fixture_databases(&source);
+        let destination = source.with_extension("shadow");
+        create_v1_shadow_snapshot(&source, &destination).expect("snapshot");
+        assert!(inspect_v1_data_dir(&destination)
+            .expect("inspect")
+            .is_empty());
+        assert!(create_v1_shadow_snapshot(&source, &destination).is_err());
+        fs::remove_dir_all(source).expect("remove source");
+        fs::remove_dir_all(destination).expect("remove destination");
     }
 }

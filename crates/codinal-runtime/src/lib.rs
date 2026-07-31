@@ -55,6 +55,12 @@ impl RuntimeConfig {
     pub fn inspect_storage(&self) -> io::Result<Vec<codinal_storage::StorageMismatch>> {
         codinal_storage::inspect_v1_data_dir(&self.data_dir)
     }
+
+    /// Materialize a separately owned, validated copy for shadow reads. The
+    /// configured production directory is never opened for writing.
+    pub fn create_storage_shadow_snapshot(&self, destination: &Path) -> io::Result<()> {
+        codinal_storage::create_v1_shadow_snapshot(&self.data_dir, destination)
+    }
 }
 
 pub fn validate_session_token(token: &str) -> io::Result<()> {
