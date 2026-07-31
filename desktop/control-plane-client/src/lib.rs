@@ -30,6 +30,7 @@ pub struct MessageSummary {
 pub struct PendingApproval {
     pub approval_id: String,
     pub tool_name: String,
+    pub arguments: serde_json::Value,
     pub reason: String,
     pub risk: String,
     pub command: Option<String>,
@@ -333,6 +334,13 @@ fn parse_pending_approval(value: &serde_json::Value) -> io::Result<PendingApprov
     Ok(PendingApproval {
         approval_id,
         tool_name: required("tool_name")?,
+        arguments: object
+            .get("arguments")
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid approval response")
+            })?,
         reason: required("reason")?,
         risk: required("risk")?,
         command: object
@@ -403,14 +411,16 @@ mod tests {
 
     #[test]
     fn golden_v1_fixture_stays_versioned_and_secret_free() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../contracts/v1/control-plane.json"
-        ))
-        .expect("valid golden fixture");
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/v1/control-plane.json"))
+                .expect("valid golden fixture");
         assert_eq!(fixture["fixture_version"], 1);
         assert_eq!(fixture["contract"], "codinal.control-plane.v1");
         let mut payload = fixture.clone();
-        payload.as_object_mut().expect("fixture object").remove("redaction");
+        payload
+            .as_object_mut()
+            .expect("fixture object")
+            .remove("redaction");
         let serialized = payload.to_string().to_ascii_lowercase();
         for marker in fixture["redaction"]["forbidden_value_markers"]
             .as_array()
@@ -425,22 +435,29 @@ mod tests {
 
     #[test]
     fn golden_v1_event_fixtures_pin_order_and_reconnect_contracts() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../contracts/v1/control-plane.json"
-        ))
-        .expect("valid golden fixture");
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/v1/control-plane.json"))
+                .expect("valid golden fixture");
         let events = fixture["events"].as_array().expect("event fixtures");
-        assert_eq!(events[0]["sequence"], serde_json::json!(["turn_started", "tool_proposed", "turn_completed"]));
-        assert_eq!(events[1]["before_reconnect"], serde_json::json!(["turn_started"]));
-        assert_eq!(events[1]["after_reconnect"], serde_json::json!(["turn_completed"]));
+        assert_eq!(
+            events[0]["sequence"],
+            serde_json::json!(["turn_started", "tool_proposed", "turn_completed"])
+        );
+        assert_eq!(
+            events[1]["before_reconnect"],
+            serde_json::json!(["turn_started"])
+        );
+        assert_eq!(
+            events[1]["after_reconnect"],
+            serde_json::json!(["turn_completed"])
+        );
     }
 
     #[test]
     fn golden_storage_fixture_pins_every_reference_database() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../contracts/v1/storage.json"
-        ))
-        .expect("valid storage fixture");
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../contracts/v1/storage.json"))
+                .expect("valid storage fixture");
         assert_eq!(fixture["fixture_version"], 1);
         assert_eq!(fixture["contract"], "codinal.sqlite.v1");
         assert_eq!(
@@ -491,10 +508,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_pending_approval_without_arguments() {
+    fn parses_pending_approval_with_review_arguments() {
         let approval = parse_pending_approval(&serde_json::json!({
             "approval_id": "0123456789abcdef0123456789abcdef",
             "tool_name": "shell",
+            "arguments": {"path": "README.md"},
             "reason": "writes a local file",
             "risk": "write_local",
             "command": ""
@@ -502,6 +520,7 @@ mod tests {
         .expect("approval");
         assert_eq!(approval.risk, "write_local");
         assert_eq!(approval.command, None);
+        assert_eq!(approval.arguments["path"], "README.md");
     }
 
     #[test]

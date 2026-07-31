@@ -11,11 +11,12 @@ use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
 use fs2::FileExt;
 
-pub use codinal_policy::{ApprovalChokepoint, Risk};
+pub use codinal_policy::{ApprovalBroker, ApprovalChokepoint, PermissionRequest, Risk};
 
 static NEXT_EVENT_HUB_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -186,6 +187,7 @@ pub struct RuntimeConfig {
     port: u16,
     token: Zeroizing<String>,
     data_dir: PathBuf,
+    approval_broker: Arc<Mutex<ApprovalBroker>>,
 }
 
 /// Owns a native runtime's exclusive data-directory lock for its lifetime.
@@ -293,6 +295,7 @@ impl RuntimeConfig {
             port,
             token: Zeroizing::new(token.to_owned()),
             data_dir: data_dir.to_owned(),
+            approval_broker: Arc::new(Mutex::new(ApprovalBroker::default())),
         })
     }
 
@@ -302,6 +305,10 @@ impl RuntimeConfig {
 
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    pub fn approval_broker(&self) -> Arc<Mutex<ApprovalBroker>> {
+        Arc::clone(&self.approval_broker)
     }
 
     /// Compare an immutable or copied Python data directory to the v1 storage
@@ -390,6 +397,26 @@ fn serve_stream(mut stream: TcpStream, config: &RuntimeConfig) -> io::Result<()>
         }
     }
     if request.method == "GET" {
+        if let Some(session_id) = request
+            .path
+            .strip_prefix("/v1/sessions/")
+            .and_then(|path| path.strip_suffix("/approvals"))
+        {
+            if !codinal_storage::public_session_exists(config.data_dir(), session_id)? {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid session id\"}",
+                    None,
+                );
+            }
+            let approvals = config
+                .approval_broker
+                .lock()
+                .map_err(|_| io::Error::other("approval broker lock poisoned"))?
+                .pending(session_id);
+            return write_json_response(&mut stream, "200 OK", &approvals);
+        }
         if let Some(session_id) = request
             .path
             .strip_prefix("/v1/sessions/")
@@ -622,6 +649,37 @@ mod tests {
         ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir(&path).expect("data directory");
+        path
+    }
+
+    fn fixture_data_dir() -> std::path::PathBuf {
+        let path = data_dir();
+        for database in codinal_storage::load_v1_fixture()
+            .expect("fixture")
+            .databases
+        {
+            let connection = rusqlite::Connection::open(path.join(&database.file)).expect("db");
+            connection
+                .execute_batch(&format!("PRAGMA user_version = {};", database.user_version))
+                .expect("version");
+            for table in database.tables {
+                connection
+                    .execute_batch(&format!("CREATE TABLE {table} (id INTEGER);"))
+                    .expect("table");
+            }
+            if database.file == "codinal.db" {
+                connection
+                    .execute_batch(
+                        "DROP TABLE sessions;
+                         CREATE TABLE sessions (
+                           session_id TEXT PRIMARY KEY, origin TEXT
+                         );
+                         INSERT INTO sessions VALUES ('session-1', NULL);
+                         INSERT INTO sessions VALUES ('worker-1', 'worker');",
+                    )
+                    .expect("sessions");
+            }
+        }
         path
     }
 
@@ -918,5 +976,57 @@ mod tests {
         assert!(response.ends_with(expected["json"].to_string().as_str()));
         server.join().expect("server").expect("serve");
         fs::remove_dir(data_dir).expect("remove");
+    }
+
+    #[test]
+    fn pending_approval_route_is_authenticated_and_public_session_scoped() {
+        let data_dir = fixture_data_dir();
+        let config = RuntimeConfig::new(free_loopback_port(), TOKEN, &data_dir).expect("config");
+        config
+            .approval_broker()
+            .lock()
+            .expect("broker")
+            .request(
+                "session-1",
+                super::PermissionRequest {
+                    tool_call_id: "call-1".to_owned(),
+                    tool_name: "write_file".to_owned(),
+                    arguments: serde_json::json!({"path": "README.md"}),
+                    reason: "write workspace file".to_owned(),
+                    risk: "write_local".to_owned(),
+                    command: None,
+                },
+            )
+            .expect("approval");
+        let listener = config.bind().expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || serve_one(&listener, &config));
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream
+            .write_all(format!("GET /v1/sessions/session-1/approvals HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n\r\n").as_bytes())
+            .expect("request");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("response");
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("\"tool_name\":\"write_file\""));
+        assert!(!response.contains("call-1"));
+        server.join().expect("server").expect("serve");
+
+        let worker_config =
+            RuntimeConfig::new(free_loopback_port(), TOKEN, &data_dir).expect("config");
+        let worker_listener = worker_config.bind().expect("listener");
+        let worker_port = worker_listener.local_addr().expect("address").port();
+        let worker_server = thread::spawn(move || serve_one(&worker_listener, &worker_config));
+        let mut worker_stream = TcpStream::connect(("127.0.0.1", worker_port)).expect("connect");
+        worker_stream
+            .write_all(format!("GET /v1/sessions/worker-1/approvals HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n\r\n").as_bytes())
+            .expect("request");
+        let mut worker_response = String::new();
+        worker_stream
+            .read_to_string(&mut worker_response)
+            .expect("response");
+        assert!(worker_response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
+        worker_server.join().expect("server").expect("serve");
+        fs::remove_dir_all(data_dir).expect("remove");
     }
 }

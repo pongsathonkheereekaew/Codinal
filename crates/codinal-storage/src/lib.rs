@@ -100,13 +100,7 @@ pub fn read_session_messages(
     data_dir: &Path,
     session_id: &str,
 ) -> io::Result<Vec<serde_json::Value>> {
-    if session_id.is_empty()
-        || session_id.len() > 128
-        || session_id.starts_with("__")
-        || !session_id.bytes().enumerate().all(|(index, byte)| {
-            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'-' | b'_'))
-        })
-    {
+    if !valid_public_session_id(session_id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid public session id",
@@ -132,6 +126,34 @@ pub fn read_session_messages(
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     })
     .collect()
+}
+
+pub fn public_session_exists(data_dir: &Path, session_id: &str) -> io::Result<bool> {
+    if !valid_public_session_id(session_id) {
+        return Ok(false);
+    }
+    let connection = open_conversation_database(data_dir)?;
+    connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM sessions
+               WHERE session_id = ?1
+                 AND substr(session_id, 1, 2) != '__'
+                 AND COALESCE(origin, '') != 'worker'
+             )",
+            [session_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(sqlite_error)
+}
+
+fn valid_public_session_id(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id.len() <= 128
+        && !session_id.starts_with("__")
+        && session_id.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphanumeric() || (index > 0 && matches!(byte, b'-' | b'_'))
+        })
 }
 
 fn open_conversation_database(data_dir: &Path) -> io::Result<Connection> {

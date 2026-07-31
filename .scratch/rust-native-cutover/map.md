@@ -21,8 +21,8 @@ Do not dual-write production SQLite data or expose bearer/provider secrets.
 
 ## Not yet specified
 
-- Safety-surface reads and mutation authorization remain Python-owned and must
-  move behind Rust policy/audit routes before GPUI can leave shadow mode.
+- The bounded Rust approval broker/read route lacks a real Rust turn-engine
+  producer; static shadow state is not live approval parity.
 - GPUI production-pane design and performance/accessibility budgets need a
   concrete native runtime client surface before implementation can be scoped.
 - Release signing, notarization, updater migration, and final deletion evidence

@@ -254,7 +254,8 @@ fn main() -> io::Result<()> {
             .join("\n\n"),
         None => "Select a session to view its conversation".to_owned(),
     };
-    let approvals = "Pending approvals are unavailable in read-only shadow mode".to_owned();
+    let approvals =
+        "Approval producer is not yet connected to the Rust runtime — review disabled".to_owned();
     let approval_prompt_detail = None;
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
