@@ -19,6 +19,7 @@ verification before each completed implementation ticket.
 - [G2 coding workspace parity](issues/03-g2-coding-workspace-parity.md) — an isolated native four-pane prototype compiles; production panes need decoded-event reducers and virtualization.
 - [G3 safety surfaces](issues/04-g3-safety-surfaces.md) — GPUI stays read-only until every mutation follows explicit confirmation and sidecar-state reload.
 - [G4 WebView-dependent bridges](issues/05-g4-webview-dependent-bridges.md) — OAuth keeps the native deep-link relay; preview remains evidence-only until a constrained native renderer passes packaged tests.
+- [G5 parity and rollback](issues/06-g5-parity-and-rollback.md) — GPUI is opt-in, collects contract/performance evidence, and can restart under Tauri without state migration.
 
 ## Not yet specified
 

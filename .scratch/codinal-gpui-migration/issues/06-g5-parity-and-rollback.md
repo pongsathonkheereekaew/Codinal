@@ -1,4 +1,4 @@
-Status: open
+Status: resolved
 Type: task
 Blocked by: 03, 04, 05
 
@@ -6,3 +6,11 @@ Blocked by: 03, 04, 05
 
 How will replay/live parity, non-secret preference migration, opt-in dogfood,
 and one-click Tauri rollback be measured and operated?
+
+## Answer
+
+GPUI remains opt-in. Only the non-secret `desktop_shell` preference is
+migratable; each replay/live run records contract and performance metrics.
+Any GPUI launch or contract failure restarts the same session under Tauri
+without changing sidecar state or evidence. The full metric/rollback contract
+is in `desktop/gpui-prototype/PARITY.md`.
