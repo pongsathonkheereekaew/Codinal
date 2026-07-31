@@ -55,6 +55,7 @@ use codinal_native_host::{
         encode_secret_bootstrap, CustomProviderRecord, PlatformSecretVault, ProviderSecretStatus,
         ProviderSettingsController,
     },
+    updater::{AvailableUpdate, NativeUpdater},
     NativeRuntime, ShadowRuntime,
 };
 use gpui::Task;
@@ -117,6 +118,11 @@ struct WorkspacePrototype {
     oauth_status: String,
     oauth_dropped: Arc<AtomicU64>,
     oauth_poll: Option<Task<()>>,
+    updater: Option<Arc<NativeUpdater>>,
+    available_update: Option<AvailableUpdate>,
+    updater_status: String,
+    updater_operation_in_flight: bool,
+    updater_restart_required: bool,
     terminal_parser: vt100::Parser,
     terminal_display: String,
     terminal_status: String,
@@ -551,6 +557,170 @@ fn should_request_terminal_resize(
 }
 
 impl WorkspacePrototype {
+    fn check_for_update(&mut self, cx: &mut Context<Self>) {
+        if self.updater_operation_in_flight || self.updater_restart_required {
+            return;
+        }
+        let Some(updater) = self.updater.clone() else {
+            self.updater_status = "Updates are available in packaged release builds".to_owned();
+            cx.notify();
+            return;
+        };
+        self.updater_operation_in_flight = true;
+        self.updater_status = "Checking for updates…".to_owned();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { updater.check().map_err(|error| error.to_string()) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.updater_operation_in_flight = false;
+                match outcome {
+                    Ok(Some(update)) => {
+                        this.updater_status = format!("Version {} is available", update.version);
+                        this.available_update = Some(update);
+                    }
+                    Ok(None) => {
+                        this.updater_status = "Codinal is up to date".to_owned();
+                        this.available_update = None;
+                    }
+                    Err(error) => {
+                        this.updater_status = format!("Update check failed: {error}");
+                        this.available_update = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn show_update_install_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.updater_operation_in_flight || self.updater_restart_required {
+            return;
+        }
+        let Some(update) = self.available_update.as_ref() else {
+            return;
+        };
+        let detail = match update.notes.as_deref() {
+            Some(notes) if !notes.trim().is_empty() => {
+                format!("Install signed version {}?\n\n{}", update.version, notes)
+            }
+            _ => format!("Install signed version {}?", update.version),
+        };
+        let response = window.prompt(
+            PromptLevel::Warning,
+            "Install Codinal update",
+            Some(&detail),
+            &["Cancel", "Install update"],
+            cx,
+        );
+        let update = update.clone();
+        self.updater_operation_in_flight = true;
+        self.updater_status = format!("Awaiting confirmation for version {}", update.version);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            if response.await.unwrap_or(0) == 1 {
+                let _ = this.update(cx, |this, cx| this.install_update(update, cx));
+            } else {
+                let _ = this.update(cx, |this, cx| {
+                    this.updater_operation_in_flight = false;
+                    this.updater_status = "Update installation cancelled".to_owned();
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn install_update(&mut self, update: AvailableUpdate, cx: &mut Context<Self>) {
+        let Some(updater) = self.updater.clone() else {
+            self.updater_operation_in_flight = false;
+            return;
+        };
+        self.updater_status = format!("Downloading version {}…", update.version);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let version = update.version.clone();
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let archive = updater.download(&update)?;
+                    updater.install(&update, &archive)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.updater_operation_in_flight = false;
+                match outcome {
+                    Ok(()) => {
+                        this.updater_status =
+                            format!("Version {version} installed — restart Codinal to apply");
+                        this.available_update = None;
+                        this.updater_restart_required = true;
+                    }
+                    Err(error) => {
+                        this.updater_status = format!("Update install failed: {error}");
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn show_update_rollback_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.updater_operation_in_flight || self.updater.is_none() {
+            return;
+        }
+        let response = window.prompt(
+            PromptLevel::Critical,
+            "Restore previous Codinal version",
+            Some("This replaces the installed app bundle with its signed backup. Restart is required."),
+            &["Cancel", "Restore previous version"],
+            cx,
+        );
+        self.updater_operation_in_flight = true;
+        self.updater_status = "Awaiting rollback confirmation".to_owned();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            if response.await.unwrap_or(0) == 1 {
+                let _ = this.update(cx, |this, cx| this.rollback_update(cx));
+            } else {
+                let _ = this.update(cx, |this, cx| {
+                    this.updater_operation_in_flight = false;
+                    this.updater_status = "Update rollback cancelled".to_owned();
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn rollback_update(&mut self, cx: &mut Context<Self>) {
+        let Some(updater) = self.updater.clone() else {
+            self.updater_operation_in_flight = false;
+            return;
+        };
+        self.updater_status = "Restoring the previous signed app…".to_owned();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { updater.rollback() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.updater_operation_in_flight = false;
+                this.updater_status = match outcome {
+                    Ok(()) => "Previous version restored — restart Codinal to apply".to_owned(),
+                    Err(error) => format!("Update rollback failed: {error}"),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn start_oauth_poll(&mut self, receiver: Receiver<Zeroizing<String>>, cx: &mut Context<Self>) {
         let relay = Arc::clone(&self.oauth_relay);
         let dropped = Arc::clone(&self.oauth_dropped);
@@ -1445,6 +1615,14 @@ impl Render for WorkspacePrototype {
                 !self.provider_operation_in_flight,
                 cx,
             ))
+            .child(updater_pane(
+                &self.updater_status,
+                self.updater.is_some(),
+                self.available_update.is_some(),
+                !self.updater_operation_in_flight,
+                self.updater_restart_required,
+                cx,
+            ))
             .child(terminal_pane(
                 &self.terminal_display,
                 &self.terminal_status,
@@ -1455,6 +1633,67 @@ impl Render for WorkspacePrototype {
                 cx,
             ))
     }
+}
+
+fn updater_pane(
+    status: &str,
+    configured: bool,
+    update_available: bool,
+    idle: bool,
+    restart_required: bool,
+    cx: &mut Context<WorkspacePrototype>,
+) -> impl gpui::IntoElement {
+    let mut actions = div().flex().flex_row().flex_wrap();
+    if configured && idle && !restart_required {
+        actions = actions.child(
+            div()
+                .id("update-check")
+                .mr_2()
+                .px_2()
+                .py_1()
+                .bg(rgb(0x30363d))
+                .child("Check for updates")
+                .on_click(cx.listener(|this, _, _, cx| this.check_for_update(cx))),
+        );
+        if update_available {
+            actions = actions.child(
+                div()
+                    .id("update-install")
+                    .mr_2()
+                    .px_2()
+                    .py_1()
+                    .bg(rgb(0x245c35))
+                    .child("Install signed update")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.show_update_install_prompt(window, cx);
+                    })),
+            );
+        }
+    }
+    if configured && idle {
+        actions = actions.child(
+            div()
+                .id("update-rollback")
+                .px_2()
+                .py_1()
+                .bg(rgb(0x5a1d1d))
+                .child("Restore previous version")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_update_rollback_prompt(window, cx);
+                })),
+        );
+    }
+    div()
+        .id("native-updater-pane")
+        .role(gpui::Role::Region)
+        .aria_label("Native signed updater")
+        .aria_description(status.to_owned())
+        .border_t_1()
+        .border_color(rgb(0x30363d))
+        .p_3()
+        .child(div().text_lg().child("Native updater"))
+        .child(div().mt_1().text_sm().child(status.to_owned()))
+        .child(actions)
 }
 
 fn terminal_pane(
@@ -1838,6 +2077,25 @@ fn native_runtime_binary() -> io::Result<PathBuf> {
     Ok(contents.join("Resources/codinal-runtime"))
 }
 
+fn release_updater() -> io::Result<Option<Arc<NativeUpdater>>> {
+    if cfg!(debug_assertions) {
+        return Ok(None);
+    }
+    let executable = std::env::current_exe()?;
+    let contents = executable
+        .parent()
+        .and_then(|path| path.parent())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "invalid app bundle layout"))?;
+    let app_bundle = contents
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "invalid app bundle layout"))?;
+    NativeUpdater::for_release_bundle(env!("CARGO_PKG_VERSION"), app_bundle)
+        .map(Arc::new)
+        .map(Some)
+        .map_err(io::Error::other)
+}
+
 fn start_native_runtime() -> io::Result<(
     ControlPlaneClient,
     DesktopRuntime,
@@ -1914,6 +2172,7 @@ fn prepare_native_terminal() -> io::Result<(Arc<PtyRegistry>, String, String)> {
 
 fn main() -> io::Result<()> {
     let (client, runtime, provider_settings_controller, oauth_relay) = start_native_runtime()?;
+    let updater = release_updater()?;
     #[cfg(target_os = "macos")]
     let (terminal_registry, terminal_session_id, terminal_workspace) = prepare_native_terminal()?;
     let sessions = client.list_sessions()?;
@@ -1991,6 +2250,15 @@ fn main() -> io::Result<()> {
                     oauth_status: "OAuth idle".to_owned(),
                     oauth_dropped,
                     oauth_poll: None,
+                    updater,
+                    available_update: None,
+                    updater_status: if cfg!(debug_assertions) {
+                        "Updates are disabled in development builds".to_owned()
+                    } else {
+                        "Ready to check the signed release channel".to_owned()
+                    },
+                    updater_operation_in_flight: false,
+                    updater_restart_required: false,
                     terminal_parser: vt100::Parser::new(30, 100, 1_000),
                     terminal_display: String::new(),
                     terminal_status: "Terminal closed".to_owned(),

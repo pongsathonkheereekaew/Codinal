@@ -87,6 +87,22 @@ pub struct NativeUpdater {
 }
 
 impl NativeUpdater {
+    pub fn for_release_bundle(
+        current_version: &str,
+        app_bundle: PathBuf,
+    ) -> Result<Self, UpdateError> {
+        let endpoint = Url::parse(DEFAULT_UPDATE_ENDPOINT)
+            .map_err(|error| UpdateError::InvalidConfig(error.to_string()))?;
+        let current_version = Version::parse(current_version.trim_start_matches('v'))
+            .map_err(|error| UpdateError::InvalidConfig(error.to_string()))?;
+        Self::new(
+            endpoint,
+            DEFAULT_UPDATE_PUBLIC_KEY,
+            current_version,
+            app_bundle,
+        )
+    }
+
     pub fn new(
         endpoint: Url,
         public_key: impl Into<String>,
@@ -519,6 +535,17 @@ mod tests {
         let error =
             require_https(&Url::parse("http://example.com/latest.json").unwrap()).unwrap_err();
         assert!(error.to_string().contains("HTTPS"));
+    }
+
+    #[test]
+    fn release_bundle_constructor_rejects_invalid_versions() {
+        let error = NativeUpdater::for_release_bundle(
+            "not-a-version",
+            PathBuf::from("/Applications/Codinal.app"),
+        )
+        .err()
+        .expect("invalid version must be rejected");
+        assert!(matches!(error, UpdateError::InvalidConfig(_)));
     }
 
     #[test]
