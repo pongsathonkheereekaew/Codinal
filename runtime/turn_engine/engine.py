@@ -17,6 +17,7 @@ engine says `needs_user`, the engine emits `PERMISSION_REQUIRED` and awaits the 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +54,10 @@ _ATTACHMENT_TIMEOUT_SECONDS = 15
 _MAX_OUTBOUND_MESSAGES = 2000
 
 
+def _sha256_digest(value: bytes) -> str:
+    return f"sha256:{hashlib.sha256(value).hexdigest()}"
+
+
 class TurnEngine:
     def __init__(
         self,
@@ -67,6 +72,7 @@ class TurnEngine:
         model_settings: Optional[dict[str, Any]] = None,
         messages: Optional[list[dict[str, Any]]] = None,
         audit_sink: Optional[Callable[[dict[str, Any]], None]] = None,
+        execution_evidence_sink: Optional[Callable[[dict[str, Any]], None]] = None,
         approval_id_factory: Optional[Callable[[ToolCall], str]] = None,
         context_provider: Optional[Callable[[], str]] = None,
         directory_requester: Optional[
@@ -101,6 +107,7 @@ class TurnEngine:
         self.model_settings = dict(model_settings or {})
         self.messages: list[dict[str, Any]] = list(messages or [])
         self.audit_sink = audit_sink
+        self.execution_evidence_sink = execution_evidence_sink
         self.approval_id_factory = approval_id_factory
         # Returns an ephemeral `<system-context>` block appended to the LAST user message at
         # send-time only (never persisted). We can't reliably inject system messages mid-thread
@@ -870,6 +877,7 @@ class TurnEngine:
             result=result,
             result_preview=_preview(result),
         )
+        self._record_execution_evidence(tool_call, result)
         rule = self._standing_notes.pop(tool_call.id, "")
         return Event(
             EventType.TOOL_FINISHED,
@@ -882,6 +890,38 @@ class TurnEngine:
                 **({"standing_rule": rule} if rule else {}),
             },
         )
+
+    def _record_execution_evidence(self, tool_call: ToolCall, result: Any) -> None:
+        """Persist shell evidence without retaining commands or captured output."""
+        if self.execution_evidence_sink is None or tool_call.name != "run_shell":
+            return
+        if not isinstance(result, dict):
+            return
+
+        command = tool_call.arguments.get("command", "")
+        command_bytes = str(command).encode("utf-8")
+        stdout_bytes = str(result.get("stdout", "")).encode("utf-8")
+        stderr_bytes = str(result.get("stderr", "")).encode("utf-8")
+        profile = result.get("profile", "build")
+        if profile not in {"read", "test", "build"}:
+            profile = "unknown"
+        payload = {
+            "tool_call_id": tool_call.id,
+            "profile": profile,
+            "command_digest": _sha256_digest(command_bytes),
+            "exit_code": result.get("exit_code"),
+            "timed_out": bool(result.get("timed_out", False)),
+            "interrupted": bool(result.get("interrupted", False)),
+            "output_truncated": bool(result.get("output_truncated", False)),
+            "stdout_bytes": len(stdout_bytes),
+            "stdout_digest": _sha256_digest(stdout_bytes),
+            "stderr_bytes": len(stderr_bytes),
+            "stderr_digest": _sha256_digest(stderr_bytes),
+        }
+        try:
+            self.execution_evidence_sink(payload)
+        except Exception:
+            pass
 
     def _audit(self, tool_call: ToolCall, **event: Any) -> None:
         if self.audit_sink is None:

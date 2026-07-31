@@ -373,6 +373,13 @@ def build_services(
                 )
             ),
             messages=context.request.messages,
+            execution_evidence_sink=lambda payload: audit_ledger.record(
+                "execution",
+                "shell",
+                actor="agent",
+                subject=context.request.session_id,
+                payload=payload,
+            ),
             interrupt_hooks=[
                 shell.interrupt,
                 lambda: git_service.interrupt(

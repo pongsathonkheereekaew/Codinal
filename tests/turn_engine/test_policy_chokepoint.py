@@ -261,6 +261,77 @@ def test_manifest_declared_write_executes_after_explicit_approval(
     assert finished.data["status"] == "ok"
 
 
+def test_shell_execution_audit_contains_only_bounded_hashed_evidence(tmp_path) -> None:
+    evidence = []
+
+    def run_shell(command):
+        assert command == "pytest -q"
+        return {
+            "exit_code": 0,
+            "stdout": "private test output",
+            "stderr": "private stderr",
+            "timed_out": False,
+            "interrupted": False,
+            "output_truncated": False,
+            "profile": "test",
+        }
+
+    async def approve(_request):
+        return ApprovalOutcome.ONCE
+
+    registry = ToolRegistry(ToolManifest())
+    registry.register(
+        run_shell,
+        schema={
+            "type": "function",
+            "function": {
+                "name": "run_shell",
+                "description": "Run a command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+    )
+    provider = SequenceProvider(
+        [
+            AssistantTurn(
+                tool_calls=[ToolCall("call_1", "run_shell", {"command": "pytest -q"})]
+            ),
+            AssistantTurn(text="done"),
+        ]
+    )
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=PermissionEngine(tmp_path, mode=Mode.INTERACTIVE),
+        model="openai:gpt-test",
+        approver=approve,
+        execution_evidence_sink=evidence.append,
+    )
+
+    asyncio.run(collect(engine))
+
+    assert evidence == [
+        {
+            "tool_call_id": "call_1",
+            "profile": "test",
+            "command_digest": "sha256:c3b206874e8a7a233c1954889847b7d584a619e7ae1a29c44cfa2f1b06214867",
+            "exit_code": 0,
+            "timed_out": False,
+            "interrupted": False,
+            "output_truncated": False,
+            "stdout_bytes": 19,
+            "stdout_digest": "sha256:f2254fd30f0840a3523cb779e3da39a95a81c0410d1437fe3614ff52b9207f4e",
+            "stderr_bytes": 14,
+            "stderr_digest": "sha256:a0f3158ecf8fb5189f71dd407fa95acf984a722826ea7332c2285432049f6cd9",
+        }
+    ]
+
+
 def test_unregistered_control_tool_cannot_invoke_callback(tmp_path) -> None:
     questions = []
 
