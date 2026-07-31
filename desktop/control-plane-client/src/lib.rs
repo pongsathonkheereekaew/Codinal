@@ -152,6 +152,16 @@ impl ControlPlaneClient {
         Ok(())
     }
 
+    /// Resolve only after the native confirmation reducer has been explicitly
+    /// confirmed. Pending or cancelled reducers make no network request.
+    pub fn resolve_confirmation(&self, confirmation: &ApprovalConfirmation) -> io::Result<bool> {
+        let Some((session_id, approval_id, outcome)) = confirmation.submission() else {
+            return Ok(false);
+        };
+        self.resolve_approval(session_id, approval_id, outcome)?;
+        Ok(true)
+    }
+
     fn send_json(
         &self,
         method: &str,
@@ -512,5 +522,19 @@ mod tests {
                 ApprovalOutcome::Deny,
             ))
         );
+    }
+
+    #[test]
+    fn unconfirmed_reducer_never_attempts_transport() {
+        let client = ControlPlaneClient::new(1, TOKEN).expect("client");
+        let confirmation = ApprovalConfirmation::new(
+            "session-1",
+            "0123456789abcdef0123456789abcdef",
+            ApprovalOutcome::Once,
+        )
+        .expect("confirmation");
+        assert!(!client
+            .resolve_confirmation(&confirmation)
+            .expect("no transport"));
     }
 }
