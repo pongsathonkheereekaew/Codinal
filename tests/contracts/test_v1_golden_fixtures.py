@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from runtime.control_plane import create_control_plane_app
+from runtime.control_plane.contracts import v1_route_surface
 from runtime.control_plane.server import ServerConfig, build_services
 from runtime.events import EventHub
 from runtime.secrets import ProviderSecretService
@@ -92,6 +93,12 @@ def test_every_reference_v1_route_matches_golden_auth_negative_case(
         if getattr(route, "path", "").startswith("/v1/")
     ]
     assert routes
+    surface = v1_route_surface(app)
+    assert len(surface) == len(routes) + 2
+    assert surface == sorted(
+        surface,
+        key=lambda item: (item["path"], item["kind"], item["methods"]),
+    )
     for route in routes:
         path = route.path.replace("{session_id}", "fixture-session")
         path = path.replace("{approval_id}", "0" * 32)
