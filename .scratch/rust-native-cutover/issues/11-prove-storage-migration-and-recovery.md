@@ -20,6 +20,20 @@ dual-writing Python-owned data or weakening the existing read contract.
 - One exclusive writer throughout cutover; directory replacement fails closed.
 - Existing Rust read fixtures and Python compatibility fixtures remain green.
 
+## Progress
+
+- Rust can migrate an immutable `codinal.db` snapshot into a newly created,
+  private destination through the released v0/v1/v2/v3/v6/v7 boundaries to v8.
+- The destination receives a private, fsynced SQLite backup before mutation;
+  the migration commits in one transaction and must pass `integrity_check`.
+- Recovery preserves corrupt main/journal/WAL/SHM files, restores the newest
+  valid backup, and replays the remaining forward-only chain.
+- Future versions fail before a destination is created and the Python-owned
+  source is never opened for writing.
+
+Still required before resolving this ticket: equivalent corpus/ownership proof
+for the remaining durable databases and an atomic whole-data-directory cutover.
+
 ## Out of scope
 
 - Deleting Python or Tauri before the remaining R2–R5 gates pass.

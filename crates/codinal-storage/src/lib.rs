@@ -11,6 +11,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod migration;
+
+pub use migration::{
+    migrate_conversation_snapshot, recover_conversation_snapshot, ConversationMigrationReport,
+    CONVERSATION_SCHEMA_VERSION,
+};
+
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct StorageFixture {
     pub fixture_version: u32,
