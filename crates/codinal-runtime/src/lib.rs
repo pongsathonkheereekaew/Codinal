@@ -360,12 +360,101 @@ fn serve_stream(mut stream: TcpStream, config: &RuntimeConfig) -> io::Result<()>
     if request.method == "GET" && request.path == "/v1/health" {
         return write_response(&mut stream, "200 OK", "{\"status\":\"ok\"}", None);
     }
+    if request.method == "GET" && request.path.starts_with("/v1/sessions") {
+        if let Some(query) = request.path.strip_prefix("/v1/sessions") {
+            if query.is_empty() || query.starts_with('?') {
+                let workspace = match parse_workspace_query(query) {
+                    Ok(workspace) => workspace,
+                    Err(()) => {
+                        return write_response(
+                            &mut stream,
+                            "400 Bad Request",
+                            "{\"detail\":\"invalid workspace\"}",
+                            None,
+                        );
+                    }
+                };
+                return match codinal_storage::read_session_summaries(
+                    config.data_dir(),
+                    workspace.as_deref(),
+                ) {
+                    Ok(sessions) => write_json_response(&mut stream, "200 OK", &sessions),
+                    Err(_) => write_response(
+                        &mut stream,
+                        "500 Internal Server Error",
+                        "{\"detail\":\"session storage unavailable\"}",
+                        None,
+                    ),
+                };
+            }
+        }
+    }
+    if request.method == "GET" {
+        if let Some(session_id) = request
+            .path
+            .strip_prefix("/v1/sessions/")
+            .and_then(|path| path.strip_suffix("/messages"))
+        {
+            return match codinal_storage::read_session_messages(config.data_dir(), session_id) {
+                Ok(messages) => write_json_response(&mut stream, "200 OK", &messages),
+                Err(error) if error.kind() == io::ErrorKind::InvalidInput => write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid session id\"}",
+                    None,
+                ),
+                Err(_) => write_response(
+                    &mut stream,
+                    "500 Internal Server Error",
+                    "{\"detail\":\"session storage unavailable\"}",
+                    None,
+                ),
+            };
+        }
+    }
     write_response(
         &mut stream,
         "404 Not Found",
         "{\"detail\":\"not found\"}",
         None,
     )
+}
+
+fn parse_workspace_query(query: &str) -> Result<Option<String>, ()> {
+    if query.is_empty() {
+        return Ok(None);
+    }
+    let encoded = query.strip_prefix("?workspace=").ok_or(())?;
+    if encoded.is_empty() || encoded.contains('&') {
+        return Err(());
+    }
+    let bytes = percent_decode(encoded)?;
+    let workspace = String::from_utf8(bytes).map_err(|_| ())?;
+    if workspace.len() > 4096 || !Path::new(&workspace).is_absolute() {
+        return Err(());
+    }
+    Ok(Some(workspace))
+}
+
+fn percent_decode(value: &str) -> Result<Vec<u8>, ()> {
+    let bytes = value.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let pair = bytes.get(index + 1..index + 3).ok_or(())?;
+            let text = std::str::from_utf8(pair).map_err(|_| ())?;
+            decoded.push(u8::from_str_radix(text, 16).map_err(|_| ())?);
+            index += 3;
+        } else if bytes[index] == b'+' {
+            decoded.push(b' ');
+            index += 1;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Ok(decoded)
 }
 
 fn valid_bearer(value: &str, token: &[u8]) -> bool {
@@ -464,6 +553,16 @@ fn write_response(
     );
     stream.write_all(response.as_bytes())?;
     stream.flush()
+}
+
+fn write_json_response<T: serde::Serialize>(
+    stream: &mut TcpStream,
+    status: &str,
+    value: &T,
+) -> io::Result<()> {
+    let body = serde_json::to_string(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    write_response(stream, status, &body, None)
 }
 
 #[cfg(test)]

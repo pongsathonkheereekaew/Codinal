@@ -69,6 +69,7 @@ dependencies = [
  "codinal-storage",
  "fs2",
  "rusqlite",
+ "serde",
  "serde_json",
  "zeroize",
 ]

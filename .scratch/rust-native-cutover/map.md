@@ -16,11 +16,12 @@ Do not dual-write production SQLite data or expose bearer/provider secrets.
 - [Define native runtime launch contract](issues/02-define-native-runtime-launch-contract.md) — the runtime must consume environment credentials, own a data-directory lock, prove authenticated health, and use stdin for future provider-secret bootstrap.
 - [Implement native runtime bootstrap and owner lock](issues/04-implement-native-runtime-bootstrap-and-owner-lock.md) — executable startup now consumes credentials, holds an OS lock, and survives malformed loopback clients without releasing ownership.
 - [Prove native runtime shadow launch](issues/05-prove-native-runtime-shadow-launch.md) — the native host now runs the real Rust binary only on a validated snapshot, verifies authenticated readiness, and cleans up after confirmed shutdown.
+- [Port read-only session routes](issues/06-port-read-only-session-routes.md) — the authenticated Rust runtime now serves public session metadata and ordered messages directly from its isolated SQLite snapshot.
 
 ## Not yet specified
 
-- Read-only v1 session routes need storage-backed parity on shadow snapshots
-  before GPUI can use the Rust runtime for real user-visible data.
+- The GPUI control-plane client must be wired to a host-owned Rust shadow
+  runtime before the first user-visible native data pane can replace fallback UI.
 - GPUI production-pane design and performance/accessibility budgets need a
   concrete native runtime client surface before implementation can be scoped.
 - Release signing, notarization, updater migration, and final deletion evidence
