@@ -8,8 +8,8 @@
 //! interactive TUI apps (vim, htop, less).
 //!
 //! The PTY is a kernel object owned entirely by the Rust shell; the Python
-//! control plane never touches it. Output streams to the frontend via Tauri
-//! events (`pty-data` / `pty-exit`); input arrives via the `pty_input` command.
+//! control plane never touches it. Output streams through a shell-owned
+//! callback, keeping lifecycle and byte transport independent of the UI.
 
 #![cfg(target_os = "macos")]
 
@@ -29,7 +29,7 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{ForkResult, Pid};
 
 /// Callback the reader thread invokes per output chunk (`Some`) and once on
-/// EOF / child exit (`None`). Wired to a Tauri event emitter by the caller.
+/// EOF / child exit (`None`). Wired to the active desktop shell by the caller.
 pub type Emit = Arc<dyn Fn(&str, Option<&[u8]>) + Send + Sync>;
 
 /// Default winsize when the frontend has not measured yet. (Referenced from
@@ -127,8 +127,7 @@ impl AsRawFd for MasterFd {
 /// Spawns a child in a new PTY and returns the session.
 ///
 /// `emit` is called from the reader thread for each chunk of bytes read and
-/// again with `None` when the child exits. The caller wires it to a Tauri
-/// event emitter.
+/// again with `None` when the child exits.
 pub fn spawn(
     session_id: String,
     workspace: &str,
@@ -258,7 +257,7 @@ pub fn spawn(
     }
 }
 
-/// Registry of live PTY sessions, keyed by session id (owned by DesktopState).
+/// Registry of live PTY sessions, keyed by shell-owned session id.
 pub struct PtyRegistry {
     sessions: Mutex<HashMap<String, PtySession>>,
 }

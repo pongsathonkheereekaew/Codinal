@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use codinal_desktop::pty::{Emit, PtyRegistry};
+use codinal_native_host::pty::{Emit, PtyRegistry};
 
 /// Wait until `predicate` is true, polling every 10ms, up to `timeout`.
 /// Used to assert on async reader-thread output.

@@ -6,7 +6,7 @@ pub mod lsp;
 pub mod oauth;
 pub mod project_open;
 #[cfg(target_os = "macos")]
-pub mod pty;
+pub use codinal_native_host::pty;
 pub use codinal_native_host::secrets;
 pub mod workspace;
 
