@@ -1,14 +1,14 @@
 //! PROTOTYPE — delete or absorb after G2 resolves.
 //!
-//! Run: `cargo run --manifest-path desktop/gpui-prototype/Cargo.toml`
-//! This development shell boots the same authenticated Python sidecar as the
-//! Tauri shell, while its UI remains an opt-in prototype.
+//! Run:
+//! `cargo build --manifest-path crates/codinal-runtime/Cargo.toml`
+//! `CODINAL_NATIVE_RUNTIME=crates/codinal-runtime/target/debug/codinal-runtime CODINAL_DATA_DIR=/absolute/codinal/data cargo run --manifest-path desktop/gpui-prototype/Cargo.toml`
+//! This development shell boots the authenticated Rust runtime on an isolated
+//! snapshot, while its UI remains an opt-in prototype.
 
 use codinal_control_plane_client::ControlPlaneClient;
 use codinal_native_host::{
-    development_runtime_root, free_loopback_port, mint_session_token, runtime_layout,
-    secrets::{encode_secret_bootstrap, PlatformSecretVault},
-    validate_runtime_layout, SidecarLaunch,
+    free_loopback_port, launch_shadow_runtime, mint_session_token, ShadowRuntime,
 };
 use gpui::{
     div, px, rgb, size, App, AppContext, Bounds, Context, InteractiveElement, ParentElement,
@@ -16,21 +16,12 @@ use gpui::{
 };
 use std::io;
 use std::path::PathBuf;
-use std::process::Child;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-struct SidecarProcess(Child);
-
-impl Drop for SidecarProcess {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+static NEXT_SHADOW: AtomicU64 = AtomicU64::new(0);
 
 struct WorkspacePrototype {
-    _sidecar: SidecarProcess,
+    _runtime: ShadowRuntime,
     session_count: usize,
     session_labels: String,
     conversation: String,
@@ -69,8 +60,8 @@ impl WorkspacePrototype {
 
 impl Render for WorkspacePrototype {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        let sidecar = format!(
-            "authenticated sidecar ready · {} sessions",
+        let runtime = format!(
+            "authenticated Rust runtime ready · {} sessions",
             self.session_count
         );
         div()
@@ -79,7 +70,7 @@ impl Render for WorkspacePrototype {
             .flex_col()
             .bg(rgb(0x101214))
             .text_color(rgb(0xd8dee9))
-            .child(header(sidecar))
+            .child(header(runtime))
             .child(
                 div()
                     .flex()
@@ -104,7 +95,7 @@ impl Render for WorkspacePrototype {
     }
 }
 
-fn header(sidecar: String) -> impl gpui::IntoElement {
+fn header(runtime: String) -> impl gpui::IntoElement {
     div()
         .h(px(44.0))
         .flex()
@@ -113,7 +104,7 @@ fn header(sidecar: String) -> impl gpui::IntoElement {
         .px_3()
         .border_b_1()
         .border_color(rgb(0x30363d))
-        .child(format!("Codinal GPUI prototype — {sidecar}"))
+        .child(format!("Codinal GPUI prototype — {runtime}"))
         .child("⌘K command palette · ⌘. cancel")
 }
 
@@ -207,35 +198,40 @@ fn development_data_dir() -> io::Result<PathBuf> {
         })
 }
 
-fn start_sidecar() -> io::Result<(ControlPlaneClient, SidecarProcess)> {
-    let layout = runtime_layout(&development_runtime_root(), true);
-    validate_runtime_layout(&layout)?;
+fn native_runtime_binary() -> io::Result<PathBuf> {
+    std::env::var_os("CODINAL_NATIVE_RUNTIME")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "CODINAL_NATIVE_RUNTIME is required for the GPUI development shell",
+            )
+        })
+}
+
+fn start_native_runtime() -> io::Result<(ControlPlaneClient, ShadowRuntime)> {
+    let data_dir = development_data_dir()?;
     let token = mint_session_token()?;
-    let secret_sync_token = mint_session_token()?;
     let port = free_loopback_port()?;
-    let secret_bootstrap = encode_secret_bootstrap(&PlatformSecretVault, &secret_sync_token)?;
-    let launch = SidecarLaunch::new(
-        layout.python,
-        layout.runtime_root,
-        development_data_dir()?,
+    let snapshot = std::env::temp_dir().join(format!(
+        "codinal-gpui-shadow-{}-{}",
+        std::process::id(),
+        NEXT_SHADOW.fetch_add(1, Ordering::Relaxed)
+    ));
+    let runtime = launch_shadow_runtime(
+        native_runtime_binary()?,
+        &data_dir,
+        &snapshot,
         port,
         token.clone(),
     )?;
-    let sidecar = SidecarProcess(launch.spawn_with_bootstrap(secret_bootstrap)?);
     let client = ControlPlaneClient::new(port, &token)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        match client.get_json("sessions") {
-            Ok(_) => return Ok((client, sidecar)),
-            Err(error) if Instant::now() >= deadline => return Err(error),
-            Err(_) => thread::sleep(Duration::from_millis(50)),
-        }
-    }
+    Ok((client, runtime))
 }
 
 fn main() -> io::Result<()> {
-    let (client, sidecar) = start_sidecar()?;
+    let (client, runtime) = start_native_runtime()?;
     let sessions = client.list_sessions()?;
     let session_count = sessions.len();
     let session_labels = if sessions.is_empty() {
@@ -258,42 +254,8 @@ fn main() -> io::Result<()> {
             .join("\n\n"),
         None => "Select a session to view its conversation".to_owned(),
     };
-    let (approvals, approval_prompt_detail) = match sessions.first() {
-        Some(session) => {
-            let approvals = client.pending_approvals(&session.session_id)?;
-            if approvals.is_empty() {
-                ("No pending approvals".to_owned(), None)
-            } else {
-                let rendered = approvals
-                    .iter()
-                    .map(|approval| {
-                        let command = approval
-                            .command
-                            .as_deref()
-                            .map(|value| format!("\n{value}"))
-                            .unwrap_or_default();
-                        format!(
-                            "{} · {}\n{}{}\nRead-only until native confirmation UI ships",
-                            approval.risk, approval.tool_name, approval.reason, command
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let first = &approvals[0];
-                (
-                    rendered,
-                    Some(format!(
-                        "Risk: {}\nTool: {}\nReason: {}\nCommand: {}\n\nNo action is sent from this review prompt.",
-                        first.risk,
-                        first.tool_name,
-                        first.reason,
-                        first.command.as_deref().unwrap_or("(none)"),
-                    )),
-                )
-            }
-        }
-        None => ("No pending approvals".to_owned(), None),
-    };
+    let approvals = "Pending approvals are unavailable in read-only shadow mode".to_owned();
+    let approval_prompt_detail = None;
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -303,7 +265,7 @@ fn main() -> io::Result<()> {
             },
             |_, cx| {
                 cx.new(|_| WorkspacePrototype {
-                    _sidecar: sidecar,
+                    _runtime: runtime,
                     session_count,
                     session_labels,
                     conversation,

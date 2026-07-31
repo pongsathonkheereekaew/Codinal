@@ -137,8 +137,16 @@ pub struct ShadowRuntime {
 
 impl ShadowRuntime {
     pub fn shutdown(&mut self) -> io::Result<()> {
-        self.process.shutdown()?;
-        remove_shadow_snapshot(&self.snapshot_dir)
+        let process_result = self.process.shutdown();
+        let cleanup_result = remove_shadow_snapshot(&self.snapshot_dir);
+        match (process_result, cleanup_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(process_error), Ok(())) => Err(process_error),
+            (Ok(()), Err(cleanup_error)) => Err(cleanup_error),
+            (Err(_), Err(_)) => Err(io::Error::other(
+                "shadow runtime shutdown and snapshot cleanup both failed",
+            )),
+        }
     }
 }
 

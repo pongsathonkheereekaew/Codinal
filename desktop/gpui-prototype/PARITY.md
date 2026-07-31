@@ -7,9 +7,11 @@ OAuth values, approval decisions, or preview contents.
 Every GPUI replay/live run must record: fixture or session identifier, control
 plane version, event count, approval/cancel outcome, Git/evidence outcome,
 first-interactive-paint, P95 typing latency, terminal/tree/diff size, and RSS.
-The same run is executable with `desktop_shell=tauri`; failure to start GPUI or
-any contract mismatch automatically falls back to Tauri without changing the
-sidecar, session, or stored evidence.
+The same run is executable with `desktop_shell=tauri`. During dogfood, a GPUI
+startup or contract failure leaves production data unchanged and the operator
+can select the Tauri fallback on restart. Automatic fallback remains required
+before GPUI becomes the default. GPUI owns and removes only its isolated
+Rust-runtime snapshot.
 
 Rollback is one preference change plus process restart. It never migrates or
 deletes user data.
