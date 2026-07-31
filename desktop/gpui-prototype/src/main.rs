@@ -20,6 +20,24 @@ mod secure_prompt {
             "secure credential editing is currently available only on macOS",
         ))
     }
+
+    pub fn prompt_text(
+        _title: &str,
+        _detail: &str,
+        _initial_value: &str,
+    ) -> io::Result<Option<String>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native provider editing is currently available only on macOS",
+        ))
+    }
+
+    pub fn prompt_boolean(_title: &str, _detail: &str) -> io::Result<Option<bool>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "native provider editing is currently available only on macOS",
+        ))
+    }
 }
 
 use codinal_control_plane_client::{
@@ -58,8 +76,9 @@ struct WorkspacePrototype {
     approval_review_status: String,
     provider_settings: String,
     provider_settings_controller: Arc<ProviderSettingsController>,
-    provider_delete_target: Option<ProviderDeleteTarget>,
+    provider_delete_targets: Vec<ProviderDeleteTarget>,
     provider_edit_targets: Vec<String>,
+    custom_provider_edit_targets: Vec<CustomProviderEditTarget>,
     provider_operation_in_flight: bool,
 }
 
@@ -69,9 +88,17 @@ enum ProviderDeleteTarget {
     Custom(String),
 }
 
+#[derive(Clone)]
+struct CustomProviderEditTarget {
+    slug: String,
+    base_url: String,
+    failover_eligible: bool,
+}
+
 enum ProviderDeleteOutcome {
     Refreshed(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>),
     DeletedRefreshFailed,
+    SyncIndeterminate,
     DeleteFailed,
 }
 
@@ -105,6 +132,33 @@ fn classify_provider_edit_result(
         }
         Err(_) => ProviderEditOutcome::SaveFailed,
     }
+}
+
+fn classify_provider_delete_result(
+    deleted: io::Result<()>,
+    refresh: impl FnOnce() -> io::Result<(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>)>,
+) -> ProviderDeleteOutcome {
+    match deleted {
+        Ok(()) => match refresh() {
+            Ok((standard, custom)) => ProviderDeleteOutcome::Refreshed(standard, custom),
+            Err(_) => ProviderDeleteOutcome::DeletedRefreshFailed,
+        },
+        Err(error) if error.kind() == io::ErrorKind::ConnectionAborted => {
+            ProviderDeleteOutcome::SyncIndeterminate
+        }
+        Err(_) => ProviderDeleteOutcome::DeleteFailed,
+    }
+}
+
+fn custom_provider_edit_targets(custom: &[CustomProviderRecord]) -> Vec<CustomProviderEditTarget> {
+    custom
+        .iter()
+        .map(|provider| CustomProviderEditTarget {
+            slug: provider.slug.clone(),
+            base_url: provider.base_url.clone(),
+            failover_eligible: provider.failover_eligible,
+        })
+        .collect()
 }
 
 impl WorkspacePrototype {
@@ -171,14 +225,15 @@ impl WorkspacePrototype {
         self.approval_prompt_detail = pending.first().map(format_approval_detail);
     }
 
-    fn show_provider_delete_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn show_provider_delete_prompt(
+        &mut self,
+        target: ProviderDeleteTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !begin_provider_operation(&mut self.provider_operation_in_flight) {
             return;
         }
-        let Some(target) = self.provider_delete_target.clone() else {
-            self.provider_operation_in_flight = false;
-            return;
-        };
         let label = match &target {
             ProviderDeleteTarget::Standard(provider) => provider.as_str(),
             ProviderDeleteTarget::Custom(slug) => slug.as_str(),
@@ -211,35 +266,36 @@ impl WorkspacePrototype {
                             controller.delete_custom(slug).map(|_| ())
                         }
                     };
-                    match deleted {
-                        Ok(()) => match controller.status() {
-                            Ok((standard, custom)) => {
-                                ProviderDeleteOutcome::Refreshed(standard, custom)
-                            }
-                            Err(_) => ProviderDeleteOutcome::DeletedRefreshFailed,
-                        },
-                        Err(_) => ProviderDeleteOutcome::DeleteFailed,
-                    }
+                    classify_provider_delete_result(deleted, || controller.status())
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.provider_operation_in_flight = false;
                 match outcome {
                     ProviderDeleteOutcome::Refreshed(standard, custom) => {
-                        let (summary, target) = format_provider_settings(&standard, &custom);
+                        let (summary, targets) = format_provider_settings(&standard, &custom);
                         this.provider_settings = summary;
-                        this.provider_delete_target = target;
+                        this.provider_delete_targets = targets;
+                        this.custom_provider_edit_targets =
+                            custom_provider_edit_targets(&custom);
                     }
                     ProviderDeleteOutcome::DeletedRefreshFailed => {
                         this.provider_settings =
                             "Credential deleted — status reload failed; restart to refresh"
                                 .to_owned();
-                        this.provider_delete_target = None;
+                        this.provider_delete_targets.clear();
+                        this.custom_provider_edit_targets.clear();
+                    }
+                    ProviderDeleteOutcome::SyncIndeterminate => {
+                        this.provider_settings = "Credential deleted from Keychain — runtime sync indeterminate; restart required".to_owned();
+                        this.provider_delete_targets.clear();
+                        this.custom_provider_edit_targets.clear();
                     }
                     ProviderDeleteOutcome::DeleteFailed => {
                         this.provider_settings =
                             "Provider deletion failed — Keychain status requires reload".to_owned();
-                        this.provider_delete_target = None;
+                        this.provider_delete_targets.clear();
+                        this.custom_provider_edit_targets.clear();
                     }
                 }
                 cx.notify();
@@ -252,6 +308,23 @@ impl WorkspacePrototype {
         if self.provider_operation_in_flight {
             return;
         }
+        let base_url = if provider == "omniroute" {
+            match secure_prompt::prompt_text(
+                "Set OmniRoute base URL",
+                "Enter the HTTP(S) OpenAI-compatible endpoint.",
+                "",
+            ) {
+                Ok(Some(value)) => Some(value),
+                Ok(None) => return,
+                Err(_) => {
+                    self.provider_settings = "Native provider URL prompt failed".to_owned();
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let api_key = match secure_prompt::prompt_api_key(&provider) {
             Ok(Some(api_key)) => api_key,
             Ok(None) => return,
@@ -270,42 +343,141 @@ impl WorkspacePrototype {
             let outcome = cx
                 .background_executor()
                 .spawn(async move {
-                    let saved = controller.set_standard(&provider, api_key, None);
+                    let saved = controller.set_standard(&provider, api_key, base_url.as_deref());
                     classify_provider_edit_result(saved, || controller.status())
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.provider_operation_in_flight = false;
-                match outcome {
-                    ProviderEditOutcome::Refreshed(standard, custom) => {
-                        let (summary, target) = format_provider_settings(&standard, &custom);
-                        this.provider_settings = summary;
-                        this.provider_delete_target = target;
-                    }
-                    ProviderEditOutcome::SavedRefreshFailed => {
-                        this.provider_settings =
-                            "Credential saved — status reload failed; restart to refresh"
-                                .to_owned();
-                    }
-                    ProviderEditOutcome::SyncIndeterminate => {
-                        this.provider_settings = "Credential saved to Keychain — runtime sync indeterminate; restart required".to_owned();
-                    }
-                    ProviderEditOutcome::SaveFailed => {
-                        this.provider_settings =
-                            "Credential save failed — live state unchanged".to_owned();
-                    }
-                }
+                this.apply_provider_edit_outcome(outcome);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn show_custom_provider_edit_prompt(
+        &mut self,
+        existing: Option<CustomProviderEditTarget>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.provider_operation_in_flight {
+            return;
+        }
+        let slug = match existing.as_ref() {
+            Some(provider) => provider.slug.clone(),
+            None => match secure_prompt::prompt_text(
+                "Custom provider ID",
+                "Use letters, digits, and internal hyphens (maximum 64 characters).",
+                "",
+            ) {
+                Ok(Some(value)) => value,
+                Ok(None) => return,
+                Err(_) => {
+                    self.provider_settings = "Native custom-provider prompt failed".to_owned();
+                    cx.notify();
+                    return;
+                }
+            },
+        };
+        let initial_url = existing
+            .as_ref()
+            .map(|provider| provider.base_url.as_str())
+            .unwrap_or("");
+        let base_url = match secure_prompt::prompt_text(
+            "Custom provider base URL",
+            "Enter the HTTP(S) OpenAI-compatible endpoint.",
+            initial_url,
+        ) {
+            Ok(Some(value)) => value,
+            Ok(None) => return,
+            Err(_) => {
+                self.provider_settings = "Native custom-provider URL prompt failed".to_owned();
+                cx.notify();
+                return;
+            }
+        };
+        let api_key = match secure_prompt::prompt_api_key(&format!("custom:{slug}")) {
+            Ok(Some(value)) => value,
+            Ok(None) => return,
+            Err(_) => {
+                self.provider_settings = "Secure credential prompt failed".to_owned();
+                cx.notify();
+                return;
+            }
+        };
+        let current_failover = existing
+            .as_ref()
+            .is_some_and(|provider| provider.failover_eligible);
+        let failover_eligible = match secure_prompt::prompt_boolean(
+            "Custom provider failover",
+            &format!(
+                "This provider is currently {} for automatic failover.",
+                if current_failover {
+                    "eligible"
+                } else {
+                    "not eligible"
+                }
+            ),
+        ) {
+            Ok(Some(value)) => value,
+            Ok(None) => return,
+            Err(_) => {
+                self.provider_settings = "Native failover prompt failed".to_owned();
+                cx.notify();
+                return;
+            }
+        };
+        if !begin_provider_operation(&mut self.provider_operation_in_flight) {
+            return;
+        }
+        cx.notify();
+        let controller = Arc::clone(&self.provider_settings_controller);
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let saved = controller.set_custom(&slug, &base_url, api_key, failover_eligible);
+                    classify_provider_edit_result(saved, || controller.status())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.provider_operation_in_flight = false;
+                this.apply_provider_edit_outcome(outcome);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn apply_provider_edit_outcome(&mut self, outcome: ProviderEditOutcome) {
+        match outcome {
+            ProviderEditOutcome::Refreshed(standard, custom) => {
+                let (summary, targets) = format_provider_settings(&standard, &custom);
+                self.provider_settings = summary;
+                self.provider_delete_targets = targets;
+                self.custom_provider_edit_targets = custom_provider_edit_targets(&custom);
+            }
+            ProviderEditOutcome::SavedRefreshFailed => {
+                self.provider_settings =
+                    "Credential saved — status reload failed; restart to refresh".to_owned();
+            }
+            ProviderEditOutcome::SyncIndeterminate => {
+                self.provider_settings =
+                    "Credential saved to Keychain — runtime sync indeterminate; restart required"
+                        .to_owned();
+            }
+            ProviderEditOutcome::SaveFailed => {
+                self.provider_settings = "Credential save failed — live state unchanged".to_owned();
+            }
+        }
     }
 }
 
 fn format_provider_settings(
     standard: &[ProviderSecretStatus],
     custom: &[CustomProviderRecord],
-) -> (String, Option<ProviderDeleteTarget>) {
+) -> (String, Vec<ProviderDeleteTarget>) {
     let mut rows = standard
         .iter()
         .map(|status| {
@@ -326,16 +498,17 @@ fn format_provider_settings(
             provider.slug, provider.base_url
         )
     }));
-    let target = standard
+    let mut targets = standard
         .iter()
-        .find(|status| status.configured)
+        .filter(|status| status.configured)
         .map(|status| ProviderDeleteTarget::Standard(status.provider.to_owned()))
-        .or_else(|| {
-            custom
-                .first()
-                .map(|provider| ProviderDeleteTarget::Custom(provider.slug.clone()))
-        });
-    (rows.join(" · "), target)
+        .collect::<Vec<_>>();
+    targets.extend(
+        custom
+            .iter()
+            .map(|provider| ProviderDeleteTarget::Custom(provider.slug.clone())),
+    );
+    (rows.join(" · "), targets)
 }
 
 fn format_pending_approvals(pending: &[PendingApproval]) -> String {
@@ -393,8 +566,9 @@ impl Render for WorkspacePrototype {
             )
             .child(provider_settings_pane(
                 &self.provider_settings,
-                self.provider_delete_target.is_some(),
+                &self.provider_delete_targets,
                 &self.provider_edit_targets,
+                &self.custom_provider_edit_targets,
                 !self.provider_operation_in_flight,
                 cx,
             ))
@@ -403,13 +577,16 @@ impl Render for WorkspacePrototype {
 
 fn provider_settings_pane(
     settings: &str,
-    has_delete_target: bool,
+    delete_targets: &[ProviderDeleteTarget],
     edit_targets: &[String],
+    custom_edit_targets: &[CustomProviderEditTarget],
     actions_enabled: bool,
     cx: &mut Context<WorkspacePrototype>,
 ) -> impl gpui::IntoElement {
     let mut pane = div()
-        .h(px(180.0))
+        .id("provider-settings-pane")
+        .h(px(280.0))
+        .overflow_y_scroll()
         .border_t_1()
         .border_color(rgb(0x30363d))
         .p_3()
@@ -442,20 +619,69 @@ fn provider_settings_pane(
                 })),
         );
     }
-    pane = pane.child(edit_actions);
-    if has_delete_target && actions_enabled {
-        pane.child(
+    for (index, provider) in custom_edit_targets.iter().enumerate() {
+        if !actions_enabled {
+            break;
+        }
+        let provider = provider.clone();
+        let label = format!("Edit custom:{}…", provider.slug);
+        edit_actions = edit_actions.child(
             div()
-                .id("delete-provider-credential")
-                .mt_3()
+                .id(("edit-custom-provider", index))
+                .mt_2()
+                .mr_2()
                 .px_2()
                 .py_1()
-                .bg(rgb(0x5a1d1d))
-                .child("Delete first configured credential…")
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.show_provider_delete_prompt(window, cx);
+                .bg(rgb(0x30363d))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.show_custom_provider_edit_prompt(Some(provider.clone()), cx);
                 })),
-        )
+        );
+    }
+    if actions_enabled {
+        edit_actions = edit_actions.child(
+            div()
+                .id("add-custom-provider")
+                .mt_2()
+                .mr_2()
+                .px_2()
+                .py_1()
+                .bg(rgb(0x30363d))
+                .child("Add custom provider…")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_custom_provider_edit_prompt(None, cx);
+                })),
+        );
+    }
+    pane = pane.child(edit_actions);
+    if actions_enabled {
+        let mut delete_actions = div().flex().flex_row().flex_wrap();
+        for (index, target) in delete_targets.iter().enumerate() {
+            let target = target.clone();
+            let label = match &target {
+                ProviderDeleteTarget::Standard(provider) => {
+                    format!("Delete {provider} credential…")
+                }
+                ProviderDeleteTarget::Custom(slug) => {
+                    format!("Delete custom:{slug}…")
+                }
+            };
+            delete_actions = delete_actions.child(
+                div()
+                    .id(("delete-provider-credential", index))
+                    .mt_2()
+                    .mr_2()
+                    .px_2()
+                    .py_1()
+                    .bg(rgb(0x5a1d1d))
+                    .child(label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.show_provider_delete_prompt(target.clone(), window, cx);
+                    })),
+            );
+        }
+        pane.child(delete_actions)
     } else {
         pane
     }
@@ -644,13 +870,13 @@ fn main() -> io::Result<()> {
     let approval_id = pending.first().map(|approval| approval.approval_id.clone());
     let approval_prompt_detail = pending.first().map(format_approval_detail);
     let (standard_status, custom_status) = provider_settings_controller.status()?;
-    let (provider_settings, provider_delete_target) =
+    let (provider_settings, provider_delete_targets) =
         format_provider_settings(&standard_status, &custom_status);
     let provider_edit_targets = standard_status
         .iter()
-        .filter(|status| status.provider != "omniroute")
         .map(|status| status.provider.to_owned())
         .collect();
+    let custom_provider_edit_targets = custom_provider_edit_targets(&custom_status);
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -672,8 +898,9 @@ fn main() -> io::Result<()> {
                     approval_review_status: "No approval action sent".to_owned(),
                     provider_settings,
                     provider_settings_controller,
-                    provider_delete_target,
+                    provider_delete_targets,
                     provider_edit_targets,
+                    custom_provider_edit_targets,
                     provider_operation_in_flight: false,
                 })
             },
@@ -686,7 +913,11 @@ fn main() -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{begin_provider_operation, classify_provider_edit_result, ProviderEditOutcome};
+    use super::{
+        begin_provider_operation, classify_provider_delete_result, classify_provider_edit_result,
+        custom_provider_edit_targets, CustomProviderRecord, ProviderDeleteOutcome,
+        ProviderEditOutcome,
+    };
     use std::io;
 
     #[test]
@@ -708,5 +939,30 @@ mod tests {
             || panic!("indeterminate writes must not be refreshed as definite success"),
         );
         assert!(matches!(outcome, ProviderEditOutcome::SyncIndeterminate));
+    }
+
+    #[test]
+    fn indeterminate_delete_is_not_reported_as_definite_failure() {
+        let outcome = classify_provider_delete_result(
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "response lost after commit",
+            )),
+            || panic!("indeterminate deletes must not refresh as definite success"),
+        );
+        assert!(matches!(outcome, ProviderDeleteOutcome::SyncIndeterminate));
+    }
+
+    #[test]
+    fn refreshed_custom_targets_do_not_retain_deleted_provider() {
+        let remaining = vec![CustomProviderRecord {
+            slug: "remaining".to_owned(),
+            base_url: "https://remaining.example/v1".to_owned(),
+            failover_eligible: false,
+        }];
+        let targets = custom_provider_edit_targets(&remaining);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].slug, "remaining");
+        assert!(!targets.iter().any(|provider| provider.slug == "deleted"));
     }
 }

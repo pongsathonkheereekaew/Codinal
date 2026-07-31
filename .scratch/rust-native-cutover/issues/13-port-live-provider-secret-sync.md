@@ -1,5 +1,5 @@
 Type: task
-Status: open
+Status: resolved
 Blocked by: 09, 12
 
 ## Question
@@ -50,5 +50,13 @@ one-shot updates authenticated by both bearer and secret-sync tokens.
   action that updates Keychain/runtime state without invoking Tauri.
 - GPUI standard-provider rotation now uses a native macOS secure text field;
   the Rust copy is zeroized and the AppKit field is cleared before release.
-- Remaining: native multi-field editing for OmniRoute/custom provider URL and
-  failover metadata.
+- OmniRoute and custom providers now use native URL/slug/failover prompts plus
+  the same secure credential field; edit/delete actions target each provider
+  explicitly and the provider list scrolls without a fixed registry limit.
+
+## Resolution
+
+GPUI can list, add, rotate, and delete standard, OmniRoute, and custom provider
+credentials through the Rust native-host controller. All secret mutation and
+runtime synchronization bypasses Tauri; ambiguous acknowledgements remain
+explicit and require restart reconciliation.
