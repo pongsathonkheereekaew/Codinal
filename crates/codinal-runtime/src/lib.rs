@@ -6,11 +6,14 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use zeroize::Zeroizing;
+
+use fs2::FileExt;
 
 pub use codinal_policy::{ApprovalChokepoint, Risk};
 
@@ -183,6 +186,91 @@ pub struct RuntimeConfig {
     port: u16,
     token: Zeroizing<String>,
     data_dir: PathBuf,
+}
+
+/// Owns a native runtime's exclusive data-directory lock for its lifetime.
+/// The operating system releases the lock if the process exits unexpectedly.
+struct RuntimeOwnerLock {
+    file: File,
+}
+
+impl RuntimeOwnerLock {
+    fn acquire(data_dir: &Path) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(data_dir.join(".codinal-runtime.lock"))?;
+        file.try_lock_exclusive()?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for RuntimeOwnerLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+/// Process bootstrap for the native runtime. Constructing this value reserves
+/// the data directory before any writable store can be opened.
+pub struct RuntimeBootstrap {
+    config: RuntimeConfig,
+    _owner_lock: RuntimeOwnerLock,
+}
+
+impl RuntimeBootstrap {
+    pub fn from_values(port: u16, token: &str, data_dir: &Path) -> io::Result<Self> {
+        let config = RuntimeConfig::new(port, token, data_dir)?;
+        let owner_lock = RuntimeOwnerLock::acquire(config.data_dir())?;
+        Ok(Self {
+            config,
+            _owner_lock: owner_lock,
+        })
+    }
+
+    /// Read launch values once and remove the bearer token before starting the
+    /// listener, preventing later child processes from inheriting it.
+    pub fn from_environment() -> io::Result<Self> {
+        let token = Zeroizing::new(std::env::var("CODINAL_SESSION_TOKEN").map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "CODINAL_SESSION_TOKEN is required",
+            )
+        })?);
+        // Safe at process startup before the runtime creates threads.
+        unsafe { std::env::remove_var("CODINAL_SESSION_TOKEN") };
+        let port = std::env::var("CODINAL_PORT")
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "CODINAL_PORT is required"))?
+            .parse::<u16>()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "CODINAL_PORT is invalid"))?;
+        let data_dir = std::env::var_os("CODINAL_DATA_DIR").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "CODINAL_DATA_DIR is required")
+        })?;
+        Self::from_values(port, &token, Path::new(&data_dir))
+    }
+
+    pub fn config(&self) -> &RuntimeConfig {
+        &self.config
+    }
+
+    pub fn serve_forever(&self) -> io::Result<()> {
+        let listener = self.config.bind()?;
+        loop {
+            let (stream, peer) = listener.accept()?;
+            if peer.ip().is_loopback() {
+                // Bad or disconnected clients must not release the runtime's
+                // owner lock. Listener failures remain fatal to the process.
+                let _ = serve_stream(stream, &self.config);
+            }
+        }
+    }
+}
+
+/// Start the packaged native runtime from its host-supplied environment.
+pub fn run_from_environment() -> io::Result<()> {
+    RuntimeBootstrap::from_environment()?.serve_forever()
 }
 
 impl RuntimeConfig {
@@ -380,7 +468,10 @@ fn write_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{serve_one, EventHub, Risk, RuntimeConfig, RuntimeEvent, RuntimePolicy};
+    use super::{
+        serve_one, EventHub, Risk, RuntimeBootstrap, RuntimeConfig, RuntimeEvent, RuntimePolicy,
+    };
+    use std::ffi::OsString;
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpStream;
@@ -390,6 +481,34 @@ mod tests {
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
     static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
+    static ENVIRONMENT_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvironmentRestore(Vec<(&'static str, Option<OsString>)>);
+
+    impl EnvironmentRestore {
+        fn capture(names: &[&'static str]) -> Self {
+            Self(
+                names
+                    .iter()
+                    .map(|name| (*name, std::env::var_os(name)))
+                    .collect(),
+            )
+        }
+    }
+
+    impl Drop for EnvironmentRestore {
+        fn drop(&mut self) {
+            for (name, value) in &self.0 {
+                // Safe while the test-wide environment lock is held.
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
 
     fn control_plane_fixture() -> serde_json::Value {
         serde_json::from_str(include_str!("../../../contracts/v1/control-plane.json"))
@@ -430,6 +549,38 @@ mod tests {
         assert_eq!(config.inspect_storage().expect("inspect").len(), 9);
         assert!(path.read_dir().expect("read").next().is_none());
         fs::remove_dir(path).expect("remove");
+    }
+
+    #[test]
+    fn runtime_bootstrap_exclusively_owns_its_data_directory() {
+        let path = data_dir();
+        let owner = RuntimeBootstrap::from_values(3000, TOKEN, &path).expect("first owner");
+        assert!(RuntimeBootstrap::from_values(3001, TOKEN, &path).is_err());
+        drop(owner);
+        assert!(RuntimeBootstrap::from_values(3001, TOKEN, &path).is_ok());
+        fs::remove_dir_all(path).expect("remove");
+    }
+
+    #[test]
+    fn runtime_bootstrap_consumes_the_host_token_environment_value() {
+        let _guard = ENVIRONMENT_LOCK.lock().expect("environment lock");
+        let _restore = EnvironmentRestore::capture(&[
+            "CODINAL_SESSION_TOKEN",
+            "CODINAL_PORT",
+            "CODINAL_DATA_DIR",
+        ]);
+        let path = data_dir();
+        // Safe while the test-wide environment lock is held.
+        unsafe {
+            std::env::set_var("CODINAL_SESSION_TOKEN", TOKEN);
+            std::env::set_var("CODINAL_PORT", "3000");
+            std::env::set_var("CODINAL_DATA_DIR", &path);
+        }
+        let bootstrap = RuntimeBootstrap::from_environment().expect("bootstrap");
+        assert!(std::env::var("CODINAL_SESSION_TOKEN").is_err());
+        assert_eq!(bootstrap.config().data_dir(), path);
+        drop(bootstrap);
+        fs::remove_dir_all(path).expect("remove");
     }
 
     #[test]
