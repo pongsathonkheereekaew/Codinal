@@ -60,6 +60,12 @@
       "id": "reconnect-preserves-published-order",
       "stream": "session",
       "sequence": ["turn_started", "tool_proposed", "turn_completed"]
+    },
+    {
+      "id": "reconnect-receives-only-future-events",
+      "stream": "session",
+      "before_reconnect": ["turn_started"],
+      "after_reconnect": ["turn_completed"]
     }
   ]
 }

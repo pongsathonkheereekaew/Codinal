@@ -172,6 +172,32 @@ def test_reference_event_order_matches_golden_fixture() -> None:
     assert asyncio.run(collect()) == _fixture()["events"][0]["sequence"]
 
 
+def test_reference_reconnect_matches_golden_event_fixture() -> None:
+    async def collect() -> list[str]:
+        hub = EventHub()
+        first: list[str] = []
+        second: list[str] = []
+
+        async def first_listener(event: dict[str, object]) -> None:
+            first.append(str(event["type"]))
+
+        async def second_listener(event: dict[str, object]) -> None:
+            second.append(str(event["type"]))
+
+        case = _fixture()["events"][1]
+        unsubscribe = hub.subscribe_session("fixture-session", first_listener)
+        for event_type in case["before_reconnect"]:
+            await hub.publish_session("fixture-session", {"type": event_type})
+        unsubscribe()
+        hub.subscribe_session("fixture-session", second_listener)
+        for event_type in case["after_reconnect"]:
+            await hub.publish_session("fixture-session", {"type": event_type})
+        assert first == case["before_reconnect"]
+        return second
+
+    assert asyncio.run(collect()) == _fixture()["events"][1]["after_reconnect"]
+
+
 def test_build_services_sqlite_inventory_matches_golden_fixture(tmp_path: Path) -> None:
     build_services(
         ServerConfig(
