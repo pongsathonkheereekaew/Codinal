@@ -11,6 +11,7 @@ pub mod project_open;
 #[cfg(target_os = "macos")]
 pub mod pty;
 pub mod secrets;
+pub mod updater;
 pub mod workspace;
 
 pub use host::*;
