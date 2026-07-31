@@ -17,6 +17,8 @@ use gpui::{
 use std::io;
 use std::path::PathBuf;
 use std::process::Child;
+use std::thread;
+use std::time::{Duration, Instant};
 
 struct SidecarProcess(Child);
 
@@ -28,17 +30,16 @@ impl Drop for SidecarProcess {
 }
 
 struct WorkspacePrototype {
-    client: ControlPlaneClient,
     _sidecar: SidecarProcess,
+    session_count: usize,
 }
 
 impl Render for WorkspacePrototype {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
-        let sidecar = if self.client.get("sessions").is_ok() {
-            "authenticated sidecar contract ready"
-        } else {
-            "sidecar contract unavailable"
-        };
+        let sidecar = format!(
+            "authenticated sidecar ready · {} sessions",
+            self.session_count
+        );
         div()
             .size_full()
             .flex()
@@ -65,7 +66,7 @@ impl Render for WorkspacePrototype {
     }
 }
 
-fn header(sidecar: &'static str) -> impl gpui::IntoElement {
+fn header(sidecar: String) -> impl gpui::IntoElement {
     div()
         .h(px(44.0))
         .flex()
@@ -123,12 +124,20 @@ fn start_sidecar() -> io::Result<(ControlPlaneClient, SidecarProcess)> {
     let sidecar = SidecarProcess(launch.spawn_with_bootstrap(secret_bootstrap)?);
     let client = ControlPlaneClient::new(port, &token)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
-    Ok((client, sidecar))
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match client.get_json("sessions") {
+            Ok(_) => return Ok((client, sidecar)),
+            Err(error) if Instant::now() >= deadline => return Err(error),
+            Err(_) => thread::sleep(Duration::from_millis(50)),
+        }
+    }
 }
 
 fn main() -> io::Result<()> {
     let (client, sidecar) = start_sidecar()?;
-    gpui_platform::application().run(|cx: &mut App| {
+    let session_count = client.get_json("sessions")?.as_array().map_or(0, Vec::len);
+    gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -137,8 +146,8 @@ fn main() -> io::Result<()> {
             },
             |_, cx| {
                 cx.new(|_| WorkspacePrototype {
-                    client,
                     _sidecar: sidecar,
+                    session_count,
                 })
             },
         )
