@@ -60,6 +60,72 @@ pub struct SidecarLaunch {
     token: String,
 }
 
+/// Native runtime process launch contract. This is separate from
+/// `SidecarLaunch` while Python remains the reference implementation.
+pub struct NativeRuntimeLaunch {
+    binary: PathBuf,
+    data_dir: PathBuf,
+    port: u16,
+    token: String,
+}
+
+impl NativeRuntimeLaunch {
+    pub fn new(binary: PathBuf, data_dir: PathBuf, port: u16, token: String) -> io::Result<Self> {
+        validate_session_token(&token)?;
+        if port == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "runtime port must not be zero",
+            ));
+        }
+        Ok(Self {
+            binary,
+            data_dir,
+            port,
+            token,
+        })
+    }
+
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.binary);
+        command
+            .env("CODINAL_SESSION_TOKEN", &self.token)
+            .env("CODINAL_PORT", self.port.to_string())
+            .env("CODINAL_DATA_DIR", &self.data_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    pub fn spawn(&self) -> io::Result<NativeRuntimeProcess> {
+        Ok(NativeRuntimeProcess(self.command().spawn()?))
+    }
+}
+
+impl Drop for NativeRuntimeLaunch {
+    fn drop(&mut self) {
+        self.token.zeroize();
+    }
+}
+
+pub struct NativeRuntimeProcess(Child);
+
+impl NativeRuntimeProcess {
+    /// Request process termination and wait so a desktop shutdown cannot leave
+    /// a second runtime writer behind.
+    pub fn shutdown(&mut self) -> io::Result<()> {
+        match self.0.try_wait()? {
+            Some(_) => Ok(()),
+            None => {
+                self.0.kill()?;
+                self.0.wait()?;
+                Ok(())
+            }
+        }
+    }
+}
+
 impl SidecarLaunch {
     pub fn new(
         python: PathBuf,
@@ -209,7 +275,7 @@ pub fn validate_runtime_layout(layout: &RuntimeLayout) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{runtime_layout_from, RuntimeLayout, SidecarLaunch};
+    use super::{runtime_layout_from, NativeRuntimeLaunch, RuntimeLayout, SidecarLaunch};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -273,6 +339,34 @@ mod tests {
         assert!(envs.iter().any(|(key, value)| {
             key.to_string_lossy() == "PYTHONDONTWRITEBYTECODE"
                 && value.is_some_and(|value| value.to_string_lossy() == "1")
+        }));
+    }
+
+    #[test]
+    fn native_runtime_token_is_in_environment_not_arguments() {
+        let launch = NativeRuntimeLaunch::new(
+            PathBuf::from("/App/Resources/codinal-runtime"),
+            PathBuf::from("/Data"),
+            41000,
+            "abcdefghijklmnopqrstuvwxyzABCDEF".to_owned(),
+        )
+        .expect("valid launch");
+        let command = launch.command();
+        let arguments: Vec<_> = command.get_args().collect();
+        let token = command
+            .get_envs()
+            .find(|(name, _)| *name == std::ffi::OsStr::new("CODINAL_SESSION_TOKEN"))
+            .and_then(|(_, value)| value);
+
+        assert!(arguments.is_empty());
+        assert_eq!(
+            token,
+            Some(std::ffi::OsStr::new("abcdefghijklmnopqrstuvwxyzABCDEF"))
+        );
+        assert!(!arguments.iter().any(|argument| {
+            argument
+                .to_string_lossy()
+                .contains("abcdefghijklmnopqrstuvwxyzABCDEF")
         }));
     }
 }
