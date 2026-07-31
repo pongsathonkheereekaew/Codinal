@@ -2446,6 +2446,19 @@ def test_preview_origin_requires_loopback_ip_literal():
     assert accepted.json() == {"url": "http://127.0.0.1:3000/app"}
 
 
+def test_preview_origin_rejects_oversized_request():
+    client = _preview_client(_FakePreview())
+
+    with client:
+        response = client.post(
+            "/v1/sessions/session-1/preview/verify-origin",
+            headers=AUTH,
+            json={"url": "http://127.0.0.1:3000/" + "x" * 5000},
+        )
+
+    assert response.status_code == 400
+
+
 def test_preview_evidence_503_when_unavailable():
     client = _preview_client(None)
 

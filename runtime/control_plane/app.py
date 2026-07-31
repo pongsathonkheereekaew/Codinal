@@ -3033,10 +3033,16 @@ def create_control_plane_app(
         request: Request,
     ) -> dict[str, str]:
         _validate_public_session_id(session_id)
+        body = await _read_bounded_object(
+            request,
+            limit=4096,
+            detail="preview verification requires a loopback origin",
+        )
         try:
-            body = await request.json()
+            if set(body) != {"url"}:
+                raise PreviewVerificationError("invalid preview origin")
             origin = verify_origin(body.get("url"))
-        except (AttributeError, json.JSONDecodeError, PreviewVerificationError):
+        except PreviewVerificationError:
             raise HTTPException(
                 status_code=400,
                 detail="preview verification requires a loopback origin",
