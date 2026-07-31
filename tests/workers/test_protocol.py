@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,12 @@ from runtime.workers.protocol import RemoteArtifact, verify_remote_artifact
 def test_remote_artifact_is_revision_bound_and_bounded():
     artifact = RemoteArtifact(
         revision="a" * 40,
-        diff_digest="sha256:" + "b" * 64,
-        evidence_digest="sha256:" + "c" * 64,
+        diff_digest="sha256:" + hashlib.sha256(b"diff").hexdigest(),
+        evidence_digest="sha256:" + hashlib.sha256(b"evidence").hexdigest(),
         changed_paths=("runtime/worker.py",),
-        size_bytes=128,
+        size_bytes=12,
+        diff=b"diff",
+        evidence=b"evidence",
     )
 
     assert verify_remote_artifact(artifact, revision="a" * 40) == artifact

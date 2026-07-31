@@ -63,6 +63,8 @@ class RemoteArtifact:
     evidence_digest: str
     changed_paths: tuple[str, ...]
     size_bytes: int
+    diff: bytes
+    evidence: bytes
 
 
 def verify_remote_artifact(
@@ -72,14 +74,23 @@ def verify_remote_artifact(
 ) -> RemoteArtifact:
     if (
         not isinstance(artifact, RemoteArtifact)
+        or not isinstance(revision, str)
         or artifact.revision != revision
         or _COMMIT.fullmatch(revision) is None
         or _DIGEST.fullmatch(artifact.diff_digest) is None
         or _DIGEST.fullmatch(artifact.evidence_digest) is None
+        or not isinstance(artifact.changed_paths, tuple)
+        or not isinstance(artifact.size_bytes, int)
+        or not isinstance(artifact.diff, bytes)
+        or not isinstance(artifact.evidence, bytes)
+        or artifact.diff_digest != f"sha256:{hashlib.sha256(artifact.diff).hexdigest()}"
+        or artifact.evidence_digest != f"sha256:{hashlib.sha256(artifact.evidence).hexdigest()}"
+        or artifact.size_bytes != len(artifact.diff) + len(artifact.evidence)
         or not 0 <= artifact.size_bytes <= _MAX_REMOTE_ARTIFACT_BYTES
         or not 0 <= len(artifact.changed_paths) <= 10_000
         or any(
-            not path
+            not isinstance(path, str)
+            or not path
             or path.startswith("/")
             or "\\" in path
             or any(part in {"", ".", ".."} for part in path.split("/"))
