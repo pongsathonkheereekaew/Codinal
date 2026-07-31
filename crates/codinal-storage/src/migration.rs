@@ -17,6 +17,12 @@ struct MigrationPlan {
     apply: fn(&Transaction<'_>, i64) -> io::Result<()>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct DataDirectoryMigrationReport {
+    pub databases: Vec<ConversationMigrationReport>,
+    pub publication_durable: bool,
+}
+
 const CONVERSATION_PLAN: MigrationPlan = MigrationPlan {
     file: "codinal.db",
     target: CONVERSATION_SCHEMA_VERSION,
@@ -32,13 +38,132 @@ const WORKER_PLAN: MigrationPlan = MigrationPlan {
     target: WORKER_SCHEMA_VERSION,
     apply: apply_worker_migration,
 };
+const AUDIT_PLAN: MigrationPlan = MigrationPlan {
+    file: "audit.db",
+    target: 1,
+    apply: apply_audit_migration,
+};
+const EXTENSIONS_PLAN: MigrationPlan = MigrationPlan {
+    file: "extensions.db",
+    target: 1,
+    apply: apply_extensions_migration,
+};
+const GOALS_PLAN: MigrationPlan = MigrationPlan {
+    file: "goals.db",
+    target: 1,
+    apply: apply_goals_migration,
+};
+const MCP_PLAN: MigrationPlan = MigrationPlan {
+    file: "mcp.db",
+    target: 1,
+    apply: apply_mcp_migration,
+};
+const PLAN_BUILDS_PLAN: MigrationPlan = MigrationPlan {
+    file: "plan-builds.db",
+    target: 1,
+    apply: apply_plan_builds_migration,
+};
+const PREVIEW_PLAN: MigrationPlan = MigrationPlan {
+    file: "preview.db",
+    target: 1,
+    apply: apply_preview_migration,
+};
+
+const ALL_PLANS: [MigrationPlan; 9] = [
+    AUDIT_PLAN,
+    CONVERSATION_PLAN,
+    EXTENSIONS_PLAN,
+    GIT_WORKTREE_PLAN,
+    GOALS_PLAN,
+    MCP_PLAN,
+    PLAN_BUILDS_PLAN,
+    PREVIEW_PLAN,
+    WORKER_PLAN,
+];
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConversationMigrationReport {
+    pub database: String,
     pub from_version: i64,
     pub to_version: i64,
     pub backup: Option<PathBuf>,
     pub recovered_from: Option<PathBuf>,
+    pub publication_durable: bool,
+    pub cleanup_complete: bool,
+}
+
+pub fn migrate_data_directory_snapshot(
+    source: &Path,
+    destination: &Path,
+) -> io::Result<DataDirectoryMigrationReport> {
+    let source_metadata = fs::symlink_metadata(source)?;
+    if source_metadata.file_type().is_symlink() || !source_metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid source data directory",
+        ));
+    }
+    if destination.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "migration destination already exists",
+        ));
+    }
+    let canonical_source = fs::canonicalize(source)?;
+    let parent = destination.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "migration destination has no parent",
+        )
+    })?;
+    let canonical_parent = fs::canonicalize(parent)?;
+    if canonical_parent.starts_with(&canonical_source) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "migration destination must be outside the source data directory",
+        ));
+    }
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "invalid migration destination")
+        })?;
+    let staging = parent.join(format!(
+        ".{name}.cutover-{}-{}",
+        std::process::id(),
+        timestamp()
+    ));
+    fs::create_dir(&staging)?;
+    fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
+    let result = (|| {
+        let mut reports = Vec::with_capacity(ALL_PLANS.len());
+        for plan in ALL_PLANS {
+            let source_database = source.join(plan.file);
+            validate_source(&source_database, plan.target)?;
+            let staged_database = staging.join(plan.file);
+            copy_sqlite(&source_database, &staged_database)?;
+            secure_file(&staged_database)?;
+            reports.push(migrate_owned_database(&staging, None, true, plan)?);
+        }
+        fs::rename(&staging, destination)?;
+        let publication_durable = sync_directory(parent).is_ok();
+        Ok(DataDirectoryMigrationReport {
+            databases: reports
+                .into_iter()
+                .map(|report| {
+                    let mut report = remap_report(report, &staging, destination);
+                    report.publication_durable = publication_durable;
+                    report
+                })
+                .collect(),
+            publication_durable,
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
 }
 
 pub fn migrate_conversation_snapshot(
@@ -99,8 +224,10 @@ fn migrate_snapshot(
         secure_file(&database)?;
         let report = migrate_owned_database(&staging, None, true, plan)?;
         fs::rename(&staging, destination)?;
-        sync_directory(parent)?;
-        Ok(remap_report(report, &staging, destination))
+        let publication_durable = sync_directory(parent).is_ok();
+        let mut report = remap_report(report, &staging, destination);
+        report.publication_durable = publication_durable;
+        Ok(report)
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&staging);
@@ -176,10 +303,13 @@ fn recover_snapshot(
     }
     sync_directory(&recovery)?;
     fs::rename(&staged_database, &database)?;
-    secure_file(&database)?;
-    sync_directory(destination)?;
-    fs::remove_dir_all(&staging)?;
-    Ok(report)
+    let publication_durable = sync_directory(destination).is_ok();
+    let cleanup_complete = fs::remove_dir(&staging).is_ok();
+    Ok(ConversationMigrationReport {
+        publication_durable,
+        cleanup_complete,
+        ..report
+    })
 }
 
 fn migrate_owned_database(
@@ -241,10 +371,13 @@ fn migrate_owned_database(
         ));
     }
     Ok(ConversationMigrationReport {
+        database: plan.file.to_owned(),
         from_version,
         to_version,
         backup,
         recovered_from,
+        publication_durable: true,
+        cleanup_complete: true,
     })
 }
 
@@ -394,6 +527,44 @@ fn apply_worker_migration(transaction: &Transaction<'_>, version: i64) -> io::Re
         }
     }
     Ok(())
+}
+
+fn apply_single_version(
+    transaction: &Transaction<'_>,
+    version: i64,
+    schema: &str,
+) -> io::Result<()> {
+    if version != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "single-version migration chain has a gap",
+        ));
+    }
+    transaction.execute_batch(schema).map_err(sqlite_error)
+}
+
+fn apply_audit_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    apply_single_version(transaction, version, AUDIT_V1_SCHEMA)
+}
+
+fn apply_extensions_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    apply_single_version(transaction, version, EXTENSIONS_V1_SCHEMA)
+}
+
+fn apply_goals_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    apply_single_version(transaction, version, GOALS_V1_SCHEMA)
+}
+
+fn apply_mcp_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    apply_single_version(transaction, version, MCP_V1_SCHEMA)
+}
+
+fn apply_plan_builds_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    apply_single_version(transaction, version, PLAN_BUILDS_V1_SCHEMA)
+}
+
+fn apply_preview_migration(transaction: &Transaction<'_>, version: i64) -> io::Result<()> {
+    apply_single_version(transaction, version, PREVIEW_V1_SCHEMA)
 }
 
 fn add_column(
@@ -731,12 +902,76 @@ CREATE INDEX IF NOT EXISTS workers_build
 ON workers(build_id, plan_task_id, candidate_index);
 "#;
 
+const AUDIT_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, domain TEXT NOT NULL,
+  action TEXT NOT NULL, actor TEXT NOT NULL, subject TEXT NOT NULL, payload TEXT NOT NULL,
+  prev_hash TEXT NOT NULL, hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_domain_seq ON events(domain, seq);
+"#;
+
+const EXTENSIONS_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS extensions (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL,
+  publisher TEXT NOT NULL, requested_permissions TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1, manifest_hash TEXT NOT NULL, manifest TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+"#;
+
+const GOALS_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS goals (
+  goal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, objective TEXT NOT NULL,
+  requirements TEXT NOT NULL, continuation_prompt TEXT NOT NULL, token_budget INTEGER,
+  time_budget_seconds INTEGER, state TEXT NOT NULL, tokens_used INTEGER NOT NULL,
+  continuation_count INTEGER NOT NULL, continuation_running INTEGER NOT NULL,
+  baseline_message_count INTEGER NOT NULL, continuation_turn_id TEXT NOT NULL,
+  turn_started_at TEXT NOT NULL, evidence TEXT NOT NULL, audit_summary TEXT NOT NULL,
+  requirement_evidence TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  version INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS goals_session_created ON goals(session_id, created_at, goal_id);
+"#;
+
+const MCP_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS connections (
+  session_id TEXT NOT NULL, name TEXT NOT NULL, transport TEXT NOT NULL,
+  definition TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, connected_at REAL NOT NULL,
+  PRIMARY KEY (session_id, name)
+);
+CREATE INDEX IF NOT EXISTS connections_enabled ON connections(enabled, session_id);
+"#;
+
+const PLAN_BUILDS_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS plan_builds (
+  build_id TEXT PRIMARY KEY, parent_session_id TEXT NOT NULL, plan_id TEXT NOT NULL,
+  tasks TEXT NOT NULL, state TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS plan_builds_parent_created
+ON plan_builds(parent_session_id, created_at, build_id);
+"#;
+
+const PREVIEW_V1_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS evidence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS evidence_session ON evidence(session_id, id);
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::{
         apply_conversation_migration, apply_git_worktree_migration, apply_worker_migration,
-        migrate_conversation_snapshot, migrate_git_worktree_snapshot, migrate_worker_snapshot,
-        recover_conversation_snapshot, CONVERSATION_SCHEMA_VERSION,
+        migrate_conversation_snapshot, migrate_data_directory_snapshot,
+        migrate_git_worktree_snapshot, migrate_worker_snapshot, recover_conversation_snapshot,
+        ALL_PLANS, CONVERSATION_SCHEMA_VERSION,
     };
     use rusqlite::Connection;
     use std::fs;
@@ -1150,6 +1385,76 @@ mod tests {
             )
             .expect("metadata");
         assert_eq!(metadata, (String::new(), String::new(), -1));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    fn create_complete_data_directory(path: &Path) {
+        fs::create_dir(path).expect("source directory");
+        for plan in ALL_PLANS {
+            let mut connection = Connection::open(path.join(plan.file)).expect("source database");
+            let transaction = connection.transaction().expect("transaction");
+            for version in 1..=plan.target {
+                (plan.apply)(&transaction, version).expect("fixture migration");
+                transaction
+                    .pragma_update(None, "user_version", version)
+                    .expect("fixture version");
+            }
+            transaction.commit().expect("fixture commit");
+        }
+    }
+
+    #[test]
+    fn whole_data_directory_cutover_publishes_only_after_all_nine_databases_verify() {
+        let root = directory();
+        let source = root.join("source");
+        let destination = root.join("cutover");
+        create_complete_data_directory(&source);
+        let report = migrate_data_directory_snapshot(&source, &destination).expect("cutover");
+        assert_eq!(report.databases.len(), 9);
+        assert!(report.publication_durable);
+        assert!(crate::inspect_v1_data_dir(&destination)
+            .expect("inventory")
+            .is_empty());
+        assert!(report
+            .databases
+            .iter()
+            .all(|database| database.backup.is_none()));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn whole_data_directory_cutover_is_atomic_when_one_database_is_unsupported() {
+        let root = directory();
+        let source = root.join("source");
+        let destination = root.join("cutover");
+        create_complete_data_directory(&source);
+        let audit = Connection::open(source.join("audit.db")).expect("audit");
+        audit
+            .pragma_update(None, "user_version", 99)
+            .expect("future version");
+        drop(audit);
+        assert!(migrate_data_directory_snapshot(&source, &destination).is_err());
+        assert!(!destination.exists());
+        assert_eq!(
+            fs::read_dir(&root)
+                .expect("root")
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().contains(".cutover-"))
+                .count(),
+            0
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn whole_data_directory_cutover_rejects_a_destination_below_source() {
+        let root = directory();
+        let source = root.join("source");
+        create_complete_data_directory(&source);
+        let destination = source.join("cutover");
+        assert!(migrate_data_directory_snapshot(&source, &destination).is_err());
+        assert!(!destination.exists());
+        assert_eq!(fs::read_dir(&source).expect("source inventory").count(), 9);
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

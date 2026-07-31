@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 mod migration;
 
 pub use migration::{
-    migrate_conversation_snapshot, migrate_git_worktree_snapshot, migrate_worker_snapshot,
-    recover_conversation_snapshot, recover_git_worktree_snapshot, recover_worker_snapshot,
-    ConversationMigrationReport, CONVERSATION_SCHEMA_VERSION, GIT_WORKTREE_SCHEMA_VERSION,
-    WORKER_SCHEMA_VERSION,
+    migrate_conversation_snapshot, migrate_data_directory_snapshot, migrate_git_worktree_snapshot,
+    migrate_worker_snapshot, recover_conversation_snapshot, recover_git_worktree_snapshot,
+    recover_worker_snapshot, ConversationMigrationReport, DataDirectoryMigrationReport,
+    CONVERSATION_SCHEMA_VERSION, GIT_WORKTREE_SCHEMA_VERSION, WORKER_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]

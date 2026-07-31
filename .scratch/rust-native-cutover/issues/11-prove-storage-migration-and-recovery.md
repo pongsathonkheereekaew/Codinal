@@ -1,5 +1,5 @@
 Type: task
-Status: open
+Status: resolved
 Blocked by: 10
 
 ## Question
@@ -34,9 +34,18 @@ dual-writing Python-owned data or weakening the existing read contract.
   through v5 and `workers.db` through v2, including retained checkpoint and
   worker comparison metadata across every released boundary.
 
-Still required before resolving this ticket: equivalent corpus/ownership proof
-for the six single-version durable databases and an atomic whole-data-directory
-cutover.
+The six single-version stores now use schema-matched Rust migrations. A whole
+data-directory publisher stages all nine databases, verifies the shared v1
+inventory, rejects source-contained destinations and unsupported inputs, then
+publishes with one directory rename. Reports distinguish published durability
+and cleanup state so no post-publication error is ambiguous.
+
+## Resolution
+
+The R1 migration/recovery corpus now covers every durable SQLite database,
+released multi-version boundaries, private fsynced backups, corrupt SQLite
+companions, retryable recovery, future-version refusal, and atomic all-database
+publication without writing the Python-owned source.
 
 ## Out of scope
 
