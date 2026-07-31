@@ -4,14 +4,158 @@
 //! It is not wired into desktop launch yet: Python remains the only data
 //! writer until the remaining v1 routes and storage migrations pass parity.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use zeroize::Zeroizing;
 
 pub use codinal_policy::{ApprovalChokepoint, Risk};
 
+static NEXT_EVENT_HUB_ID: AtomicU64 = AtomicU64::new(1);
+
+/// In-process, live v1 event fan-out. Events are never retained here; durable
+/// replay belongs to the storage layer.
+pub struct EventHub {
+    id: u64,
+    next_subscription_id: u64,
+    global_listeners: BTreeMap<u64, EventListener>,
+    session_listeners: BTreeMap<String, BTreeMap<u64, EventListener>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuntimeEvent {
+    /// The original v1 JSON object. The event hub deliberately does not
+    /// interpret or reshape this payload before fan-out.
+    pub message: serde_json::Map<String, serde_json::Value>,
+}
+
+pub struct EventSubscription {
+    hub_id: u64,
+    scope: SubscriptionScope,
+    id: u64,
+}
+
+enum SubscriptionScope {
+    Global,
+    Session(String),
+}
+
+pub type EventListener = Box<dyn FnMut(&RuntimeEvent) -> io::Result<()> + Send>;
+
+impl EventHub {
+    pub fn subscribe_global(&mut self, listener: EventListener) -> EventSubscription {
+        let id = self.allocate_subscription_id();
+        self.global_listeners.insert(id, listener);
+        EventSubscription {
+            hub_id: self.id,
+            scope: SubscriptionScope::Global,
+            id,
+        }
+    }
+
+    pub fn subscribe_session(
+        &mut self,
+        session_id: &str,
+        listener: EventListener,
+    ) -> io::Result<EventSubscription> {
+        validate_session_subject(session_id)?;
+        let id = self.allocate_subscription_id();
+        self.session_listeners
+            .entry(session_id.to_owned())
+            .or_default()
+            .insert(id, listener);
+        Ok(EventSubscription {
+            hub_id: self.id,
+            scope: SubscriptionScope::Session(session_id.to_owned()),
+            id,
+        })
+    }
+
+    pub fn unsubscribe(&mut self, subscription: EventSubscription) -> bool {
+        if subscription.hub_id != self.id {
+            return false;
+        }
+        match subscription.scope {
+            SubscriptionScope::Global => self.global_listeners.remove(&subscription.id).is_some(),
+            SubscriptionScope::Session(session_id) => {
+                let Some(listeners) = self.session_listeners.get_mut(&session_id) else {
+                    return false;
+                };
+                let removed = listeners.remove(&subscription.id).is_some();
+                if listeners.is_empty() {
+                    self.session_listeners.remove(&session_id);
+                }
+                removed
+            }
+        }
+    }
+
+    pub fn publish_global(&mut self, event: &RuntimeEvent) {
+        notify_listeners(&mut self.global_listeners, event);
+    }
+
+    pub fn publish_session(&mut self, session_id: &str, event: &RuntimeEvent) -> io::Result<()> {
+        validate_session_subject(session_id)?;
+        if let Some(listeners) = self.session_listeners.get_mut(session_id) {
+            notify_listeners(listeners, event);
+            if listeners.is_empty() {
+                self.session_listeners.remove(session_id);
+            }
+        }
+        Ok(())
+    }
+
+    fn allocate_subscription_id(&mut self) -> u64 {
+        let id = self.next_subscription_id;
+        self.next_subscription_id = self
+            .next_subscription_id
+            .checked_add(1)
+            .expect("subscription ids exhausted");
+        id
+    }
+}
+
+impl RuntimeEvent {
+    pub fn new(message: serde_json::Map<String, serde_json::Value>) -> Self {
+        Self { message }
+    }
+}
+
+impl Default for EventHub {
+    fn default() -> Self {
+        Self {
+            id: NEXT_EVENT_HUB_ID.fetch_add(1, Ordering::Relaxed),
+            next_subscription_id: 1,
+            global_listeners: BTreeMap::new(),
+            session_listeners: BTreeMap::new(),
+        }
+    }
+}
+
+fn notify_listeners(listeners: &mut BTreeMap<u64, EventListener>, event: &RuntimeEvent) {
+    let failed = listeners
+        .iter_mut()
+        .filter_map(|(id, listener)| listener(event).is_err().then_some(*id))
+        .collect::<Vec<_>>();
+    for id in failed {
+        listeners.remove(&id);
+    }
+}
+
+fn validate_session_subject(value: &str) -> io::Result<()> {
+    let valid = !value.is_empty() && value.len() <= 128 && !value.contains(['\r', '\n']);
+    valid.then_some(()).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "event session subject must be bounded single-line text",
+        )
+    })
+}
+
+#[derive(Default)]
 pub struct RuntimePolicy {
     approvals: ApprovalChokepoint,
 }
@@ -29,14 +173,6 @@ impl RuntimePolicy {
     ) -> (bool, Option<codinal_policy::AuditEvent>) {
         self.approvals
             .authorize_with_audit(risk, approval_id, subject)
-    }
-}
-
-impl Default for RuntimePolicy {
-    fn default() -> Self {
-        Self {
-            approvals: ApprovalChokepoint::default(),
-        }
     }
 }
 
@@ -244,11 +380,12 @@ fn write_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{serve_one, Risk, RuntimeConfig, RuntimePolicy};
+    use super::{serve_one, EventHub, Risk, RuntimeConfig, RuntimeEvent, RuntimePolicy};
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpStream;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
@@ -313,6 +450,178 @@ mod tests {
                 )
                 .0
         );
+    }
+
+    #[test]
+    fn event_history_preserves_the_v1_published_order() {
+        let fixture = control_plane_fixture();
+        let sequence = fixture["events"][0]["sequence"]
+            .as_array()
+            .expect("sequence");
+        let mut events = EventHub::default();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let received_by_listener = Arc::clone(&received);
+        let subscription = events
+            .subscribe_session(
+                "fixture-session",
+                Box::new(move |event| {
+                    received_by_listener.lock().expect("received").push(
+                        event.message["type"]
+                            .as_str()
+                            .expect("event type")
+                            .to_owned(),
+                    );
+                    Ok(())
+                }),
+            )
+            .expect("subscribe");
+        for event_type in sequence {
+            events
+                .publish_session(
+                    "fixture-session",
+                    &RuntimeEvent::new(
+                        serde_json::json!({ "type": event_type.as_str().expect("event type") })
+                            .as_object()
+                            .expect("object")
+                            .clone(),
+                    ),
+                )
+                .expect("publish");
+        }
+        assert_eq!(
+            received.lock().expect("received").clone(),
+            sequence
+                .iter()
+                .map(|event| event.as_str().expect("event type").to_owned())
+                .collect::<Vec<_>>()
+        );
+        assert!(events.unsubscribe(subscription));
+    }
+
+    #[test]
+    fn reconnect_subscription_receives_only_future_v1_events() {
+        let fixture = control_plane_fixture();
+        let reconnect = &fixture["events"][1];
+        let mut events = EventHub::default();
+        let first = Arc::new(Mutex::new(Vec::new()));
+        let first_by_listener = Arc::clone(&first);
+        let first_subscription = events
+            .subscribe_session(
+                reconnect["stream"].as_str().expect("stream"),
+                Box::new(move |event| {
+                    first_by_listener.lock().expect("first").push(
+                        event.message["type"]
+                            .as_str()
+                            .expect("event type")
+                            .to_owned(),
+                    );
+                    Ok(())
+                }),
+            )
+            .expect("subscribe");
+        for event_type in reconnect["before_reconnect"]
+            .as_array()
+            .expect("before reconnect")
+        {
+            events
+                .publish_session(
+                    reconnect["stream"].as_str().expect("stream"),
+                    &RuntimeEvent::new(
+                        serde_json::json!({ "type": event_type.as_str().expect("event type") })
+                            .as_object()
+                            .expect("object")
+                            .clone(),
+                    ),
+                )
+                .expect("publish before reconnect");
+        }
+        assert!(events.unsubscribe(first_subscription));
+        let second = Arc::new(Mutex::new(Vec::new()));
+        let second_by_listener = Arc::clone(&second);
+        events
+            .subscribe_session(
+                reconnect["stream"].as_str().expect("stream"),
+                Box::new(move |event| {
+                    second_by_listener.lock().expect("second").push(
+                        event.message["type"]
+                            .as_str()
+                            .expect("event type")
+                            .to_owned(),
+                    );
+                    Ok(())
+                }),
+            )
+            .expect("resubscribe");
+        for event_type in reconnect["after_reconnect"]
+            .as_array()
+            .expect("after reconnect")
+        {
+            events
+                .publish_session(
+                    reconnect["stream"].as_str().expect("stream"),
+                    &RuntimeEvent::new(
+                        serde_json::json!({ "type": event_type.as_str().expect("event type") })
+                            .as_object()
+                            .expect("object")
+                            .clone(),
+                    ),
+                )
+                .expect("publish after reconnect");
+        }
+        assert_eq!(
+            first.lock().expect("first").clone(),
+            reconnect["before_reconnect"]
+                .as_array()
+                .expect("before reconnect")
+                .iter()
+                .map(|event| event.as_str().expect("event type").to_owned())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            second.lock().expect("second").clone(),
+            reconnect["after_reconnect"]
+                .as_array()
+                .expect("after reconnect")
+                .iter()
+                .map(|event| event.as_str().expect("event type").to_owned())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn event_hub_preserves_payload_and_prunes_failed_listeners() {
+        let mut events = EventHub::default();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let received_by_listener = Arc::clone(&received);
+        events.subscribe_global(Box::new(move |event| {
+            received_by_listener
+                .lock()
+                .expect("received")
+                .push(event.clone());
+            Ok(())
+        }));
+        let failed_calls = Arc::new(Mutex::new(0));
+        let failed_by_listener = Arc::clone(&failed_calls);
+        events.subscribe_global(Box::new(move |_| {
+            *failed_by_listener.lock().expect("failed calls") += 1;
+            Err(std::io::Error::other("closed"))
+        }));
+        let event = RuntimeEvent::new(
+            serde_json::json!({ "sequence": 1, "text": "payload survives fan-out" })
+                .as_object()
+                .expect("object")
+                .clone(),
+        );
+        events.publish_global(&event);
+        events.publish_global(&event);
+        assert_eq!(
+            received.lock().expect("received").as_slice(),
+            &[event.clone(), event]
+        );
+        assert_eq!(*failed_calls.lock().expect("failed calls"), 1);
+        assert!(events
+            .subscribe_session(&"a".repeat(129), Box::new(|_| Ok(())))
+            .is_err());
     }
 
     #[test]
