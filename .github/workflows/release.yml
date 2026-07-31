@@ -44,7 +44,7 @@ jobs:
             *) echo "release tag must start with v" >&2; exit 1 ;;
           esac
           VERSION="${TAG#v}"
-          CARGO_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("desktop/gpui-prototype/Cargo.toml", "rb"))["package"]["version"])')"
+          CARGO_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("desktop/gpui/Cargo.toml", "rb"))["package"]["version"])')"
           test "$VERSION" = "$CARGO_VERSION"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -109,7 +109,7 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          BUNDLE="desktop/gpui-prototype/target/release/bundle"
+          BUNDLE="desktop/gpui/target/release/bundle"
           UPDATE_NAME="Codinal-${VERSION}-macos-arm64.app.tar.gz"
           python scripts/generate_update_manifest.py \
             --version "$VERSION" \
@@ -125,7 +125,7 @@ jobs:
           TAG: ${{ steps.release.outputs.tag }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          BUNDLE="desktop/gpui-prototype/target/release/bundle"
+          BUNDLE="desktop/gpui/target/release/bundle"
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --generate-notes
           fi

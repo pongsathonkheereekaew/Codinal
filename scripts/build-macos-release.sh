@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-GPUI_ROOT="$ROOT/desktop/gpui-prototype"
+GPUI_ROOT="$ROOT/desktop/gpui"
 RUNTIME_ROOT="$ROOT/crates/codinal-runtime"
 BUNDLE_ROOT="$GPUI_ROOT/target/release/bundle"
 APP="$BUNDLE_ROOT/macos/Codinal.app"
@@ -49,13 +49,13 @@ if [ "${CODINAL_SKIP_CARGO_BUILD:-0}" != "1" ]; then
   cargo build --release --locked --manifest-path "$RUNTIME_ROOT/Cargo.toml"
   cargo build --release --locked --manifest-path "$SIGNER_MANIFEST"
 fi
-test -x "$GPUI_ROOT/target/release/codinal-gpui-prototype"
+test -x "$GPUI_ROOT/target/release/codinal-gpui"
 test -x "$RUNTIME_ROOT/target/release/codinal-runtime"
 test -x "$SIGNER_BINARY"
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
-install -m 755 "$GPUI_ROOT/target/release/codinal-gpui-prototype" "$MACOS/codinal"
+install -m 755 "$GPUI_ROOT/target/release/codinal-gpui" "$MACOS/codinal"
 install -m 755 "$RUNTIME_ROOT/target/release/codinal-runtime" "$RESOURCES/codinal-runtime"
 install -m 644 "$ROOT/desktop/assets/Codinal.icns" "$RESOURCES/Codinal.icns"
 

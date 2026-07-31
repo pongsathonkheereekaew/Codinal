@@ -16,9 +16,9 @@ fi
 VERSION="$(
   "$PYTHON_BIN" -c \
     'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["package"]["version"])' \
-  "$ROOT/desktop/gpui-prototype/Cargo.toml"
+  "$ROOT/desktop/gpui/Cargo.toml"
 )"
-ZIP="${1:-$ROOT/desktop/gpui-prototype/target/release/bundle/Codinal-${VERSION}-macos-arm64.zip}"
+ZIP="${1:-$ROOT/desktop/gpui/target/release/bundle/Codinal-${VERSION}-macos-arm64.zip}"
 SMOKE_ROOT="$(mktemp -d /tmp/codinal-gatekeeper.XXXXXX)"
 trap 'rm -rf "$SMOKE_ROOT"' EXIT
 

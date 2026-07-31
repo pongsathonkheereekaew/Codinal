@@ -9,7 +9,7 @@ cd "$ROOT"
 CI=true ./verify.sh
 cargo test --manifest-path desktop/control-plane-client/Cargo.toml
 cargo test --manifest-path desktop/native-host/Cargo.toml
-TOOLCHAINS=Metal cargo check --manifest-path desktop/gpui-prototype/Cargo.toml
+TOOLCHAINS=Metal cargo check --manifest-path desktop/gpui/Cargo.toml
 scripts/smoke-macos-release.sh
 
 if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="${1:-$ROOT/desktop/gpui-prototype/target/release/bundle/macos/Codinal.app}"
+APP="${1:-$ROOT/desktop/gpui/target/release/bundle/macos/Codinal.app}"
 EXECUTABLE="$APP/Contents/MacOS/codinal"
 RUNTIME="$APP/Contents/Resources/codinal-runtime"
 

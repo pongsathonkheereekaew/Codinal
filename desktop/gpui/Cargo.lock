@@ -1000,7 +1000,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "codinal-gpui-prototype"
+name = "codinal-gpui"
 version = "0.1.0"
 dependencies = [
  "codinal-control-plane-client",

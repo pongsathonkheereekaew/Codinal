@@ -2,7 +2,7 @@
 //!
 //! Development run:
 //! `cargo build --manifest-path crates/codinal-runtime/Cargo.toml`
-//! `CODINAL_NATIVE_RUNTIME=crates/codinal-runtime/target/debug/codinal-runtime CODINAL_DATA_DIR=/absolute/codinal/data cargo run --manifest-path desktop/gpui-prototype/Cargo.toml`
+//! `CODINAL_NATIVE_RUNTIME=crates/codinal-runtime/target/debug/codinal-runtime CODINAL_DATA_DIR=/absolute/codinal/data cargo run --manifest-path desktop/gpui/Cargo.toml`
 //! Debug builds boot an authenticated Rust runtime on an isolated snapshot.
 //! Release builds boot the bundled native runtime against the production data.
 
