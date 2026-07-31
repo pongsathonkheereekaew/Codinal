@@ -10,6 +10,8 @@ use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+pub use codinal_policy::{ApprovalChokepoint, Risk};
+
 const MAX_REQUEST_BYTES: usize = 32 * 1024;
 const MIN_TOKEN_LENGTH: usize = 32;
 
