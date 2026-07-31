@@ -4,6 +4,7 @@
 //! It is not wired into desktop launch yet: Python remains the only data
 //! writer until the remaining v1 routes and storage migrations pass parity.
 
+use fs2::FileExt;
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::{File, OpenOptions};
@@ -14,10 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
-use fs2::FileExt;
-
 pub use codinal_policy::{ApprovalBroker, ApprovalChokepoint, PermissionRequest, Risk};
-pub use codinal_providers::{ProviderId, ProviderSecrets};
+pub use codinal_providers::{AssistantTurn, OllamaProvider, ProviderId, ProviderSecrets, ToolCall};
 
 static NEXT_EVENT_HUB_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -189,31 +188,14 @@ pub struct RuntimeConfig {
     token: Zeroizing<String>,
     data_dir: PathBuf,
     approval_broker: Arc<Mutex<ApprovalBroker>>,
+    ollama_port: u16,
 }
 
-/// Owns a native runtime's exclusive data-directory lock for its lifetime.
-/// The operating system releases the lock if the process exits unexpectedly.
-struct RuntimeOwnerLock {
-    file: File,
-}
-
-impl RuntimeOwnerLock {
-    fn acquire(data_dir: &Path) -> io::Result<Self> {
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(data_dir.join(".codinal-runtime.lock"))?;
-        file.try_lock_exclusive()?;
-        Ok(Self { file })
-    }
-}
-
-impl Drop for RuntimeOwnerLock {
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
-    }
+#[derive(Debug, serde::Serialize, PartialEq, Eq)]
+pub struct TurnIngressResult {
+    pub pending_approval_ids: Vec<String>,
+    pub allowed_read_tool_call_ids: Vec<String>,
+    pub rejected_tool_call_ids: Vec<String>,
 }
 
 /// Process bootstrap for the native runtime. Constructing this value reserves
@@ -222,6 +204,27 @@ pub struct RuntimeBootstrap {
     config: RuntimeConfig,
     provider_secrets: ProviderSecrets,
     _owner_lock: RuntimeOwnerLock,
+}
+
+struct RuntimeOwnerLock(File);
+
+impl RuntimeOwnerLock {
+    fn acquire(data_dir: &Path) -> io::Result<Self> {
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(data_dir.join(".codinal-runtime.lock"))?;
+        lock.try_lock_exclusive()?;
+        Ok(Self(lock))
+    }
+}
+
+impl Drop for RuntimeOwnerLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 impl RuntimeBootstrap {
@@ -307,7 +310,16 @@ pub fn run_from_environment() -> io::Result<()> {
 
 impl RuntimeConfig {
     pub fn new(port: u16, token: &str, data_dir: &Path) -> io::Result<Self> {
-        if port == 0 {
+        Self::new_with_ollama_port(port, token, data_dir, 11_434)
+    }
+
+    pub fn new_with_ollama_port(
+        port: u16,
+        token: &str,
+        data_dir: &Path,
+        ollama_port: u16,
+    ) -> io::Result<Self> {
+        if port == 0 || ollama_port == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "runtime port must not be zero",
@@ -326,6 +338,7 @@ impl RuntimeConfig {
             token: Zeroizing::new(token.to_owned()),
             data_dir: data_dir.to_owned(),
             approval_broker: Arc::new(Mutex::new(ApprovalBroker::default())),
+            ollama_port,
         })
     }
 
@@ -341,6 +354,107 @@ impl RuntimeConfig {
         Arc::clone(&self.approval_broker)
     }
 
+    pub fn ingest_provider_turn(
+        &self,
+        session_id: &str,
+        turn: AssistantTurn,
+    ) -> io::Result<TurnIngressResult> {
+        if !codinal_storage::public_session_exists(self.data_dir(), session_id)? {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid session id",
+            ));
+        }
+        let mut result = TurnIngressResult {
+            pending_approval_ids: Vec::new(),
+            allowed_read_tool_call_ids: Vec::new(),
+            rejected_tool_call_ids: Vec::new(),
+        };
+        let mut broker = self
+            .approval_broker
+            .lock()
+            .map_err(|_| io::Error::other("approval broker lock poisoned"))?;
+        for call in turn.tool_calls {
+            let risk = match call.name.as_str() {
+                "write_file" | "replace_in_file" | "apply_patch" | "apply_unified_diff"
+                | "git_stage" | "git_commit" => Some("write_local"),
+                "run_shell" => Some("exec"),
+                "read_file" | "list_files" | "grep" | "git_status" | "git_diff" | "git_log" => {
+                    result.allowed_read_tool_call_ids.push(call.id.clone());
+                    None
+                }
+                _ => {
+                    result.rejected_tool_call_ids.push(call.id.clone());
+                    None
+                }
+            };
+            let Some(risk) = risk else {
+                continue;
+            };
+            let command = (risk == "exec")
+                .then(|| {
+                    call.arguments
+                        .get("command")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .flatten()
+                .map(str::to_owned);
+            let approval_id = match broker.request(
+                session_id,
+                PermissionRequest {
+                    tool_call_id: call.id,
+                    tool_name: call.name,
+                    arguments: serde_json::Value::Object(call.arguments),
+                    reason: format!("tool requires {risk} approval"),
+                    risk: risk.to_owned(),
+                    command,
+                },
+            ) {
+                Ok(approval_id) => approval_id,
+                Err(error) => {
+                    for approval_id in &result.pending_approval_ids {
+                        broker.resolve(session_id, approval_id);
+                    }
+                    return Err(error);
+                }
+            };
+            result.pending_approval_ids.push(approval_id);
+        }
+        Ok(result)
+    }
+
+    pub fn run_ollama_turn(
+        &self,
+        session_id: &str,
+        model: &str,
+        user_input: &str,
+    ) -> io::Result<TurnIngressResult> {
+        let bare_model = model.strip_prefix("ollama:").ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Rust turn ingress currently requires an Ollama model",
+            )
+        })?;
+        if bare_model.is_empty()
+            || user_input.is_empty()
+            || user_input.len() > 1024 * 1024
+            || user_input.chars().any(|character| character == '\0')
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid turn payload",
+            ));
+        }
+        let mut messages = codinal_storage::read_session_messages(self.data_dir(), session_id)?;
+        messages.push(serde_json::json!({"role": "user", "content": user_input}));
+        let turn = OllamaProvider::new(self.ollama_port)?.complete(
+            bare_model,
+            &messages,
+            &builtin_tool_schemas(),
+        )?;
+        self.ingest_provider_turn(session_id, turn)
+    }
+
     /// Compare an immutable or copied Python data directory to the v1 storage
     /// fixture. This never opens a writable SQLite connection.
     pub fn inspect_storage(&self) -> io::Result<Vec<codinal_storage::StorageMismatch>> {
@@ -352,6 +466,39 @@ impl RuntimeConfig {
     pub fn create_storage_shadow_snapshot(&self, destination: &Path) -> io::Result<()> {
         codinal_storage::create_v1_shadow_snapshot(&self.data_dir, destination)
     }
+}
+
+fn builtin_tool_schemas() -> Vec<serde_json::Value> {
+    [
+        ("read_file", "Read a workspace file", vec!["path"]),
+        (
+            "write_file",
+            "Write a workspace file",
+            vec!["path", "content"],
+        ),
+        ("run_shell", "Run a sandboxed command", vec!["command"]),
+    ]
+    .into_iter()
+    .map(|(name, description, required)| {
+        let properties = required
+            .iter()
+            .map(|field| ((*field).to_owned(), serde_json::json!({"type": "string"})))
+            .collect::<serde_json::Map<_, _>>();
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": false,
+                }
+            }
+        })
+    })
+    .collect()
 }
 
 pub fn validate_session_token(token: &str) -> io::Result<()> {
@@ -701,11 +848,16 @@ mod tests {
                 connection
                     .execute_batch(
                         "DROP TABLE sessions;
+                         DROP TABLE messages;
                          CREATE TABLE sessions (
-                           session_id TEXT PRIMARY KEY, origin TEXT
+                           session_id TEXT PRIMARY KEY, origin TEXT, updated_at TEXT NOT NULL
                          );
-                         INSERT INTO sessions VALUES ('session-1', NULL);
-                         INSERT INTO sessions VALUES ('worker-1', 'worker');",
+                         CREATE TABLE messages (
+                           session_id TEXT NOT NULL, sequence INTEGER NOT NULL, payload TEXT NOT NULL,
+                           PRIMARY KEY (session_id, sequence)
+                         );
+                         INSERT INTO sessions VALUES ('session-1', NULL, '2026-01-01T00:00:00Z');
+                         INSERT INTO sessions VALUES ('worker-1', 'worker', '2026-01-01T00:00:00Z');",
                     )
                     .expect("sessions");
             }
@@ -719,6 +871,31 @@ mod tests {
             .local_addr()
             .expect("port address")
             .port()
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0_u8; 1024];
+            let read = stream.read(&mut chunk).expect("request");
+            assert!(read > 0);
+            request.extend_from_slice(&chunk[..read]);
+            let Some(split) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&request[..split]);
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length: ")
+                        .and_then(|value| value.parse::<usize>().ok())
+                })
+                .unwrap_or(0);
+            if request.len() >= split + 4 + length {
+                return request;
+            }
+        }
     }
 
     #[test]
@@ -1089,6 +1266,47 @@ mod tests {
             .expect("response");
         assert!(worker_response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
         worker_server.join().expect("server").expect("serve");
+        fs::remove_dir_all(data_dir).expect("remove");
+    }
+
+    #[test]
+    fn ollama_turn_ingress_feeds_the_live_approval_broker() {
+        let provider_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("provider");
+        let provider_port = provider_listener.local_addr().expect("address").port();
+        let provider = thread::spawn(move || {
+            let (mut stream, _) = provider_listener.accept().expect("accept");
+            let _request = read_http_request(&mut stream);
+            let body = r#"{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call-1","function":{"name":"write_file","arguments":{"path":"README.md","content":"hello"}}}]},"done":true,"done_reason":"stop"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("response");
+        });
+        let turn = super::OllamaProvider::new(provider_port)
+            .expect("ollama")
+            .complete(
+                "qwen3",
+                &[serde_json::json!({"role": "user", "content": "update README"})],
+                &[],
+            )
+            .expect("assistant turn");
+        provider.join().expect("provider");
+
+        let data_dir = fixture_data_dir();
+        let config = RuntimeConfig::new(free_loopback_port(), TOKEN, &data_dir).expect("config");
+        let result = config
+            .ingest_provider_turn("session-1", turn)
+            .expect("ingress");
+        assert_eq!(result.pending_approval_ids.len(), 1);
+        let pending = config
+            .approval_broker()
+            .lock()
+            .expect("broker")
+            .pending("session-1");
+        assert_eq!(pending[0].tool_name, "write_file");
+        assert_eq!(pending[0].arguments["path"], "README.md");
         fs::remove_dir_all(data_dir).expect("remove");
     }
 }

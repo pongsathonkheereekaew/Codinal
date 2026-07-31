@@ -12,7 +12,6 @@ GPUI can restore its safety pane without invoking Python or Tauri?
 
 The premise was corrected: Python pending approvals are live broker state and
 cannot be reconstructed from a static SQLite snapshot. Rust now has the bounded,
-session-scoped broker and authenticated read route foundation with compatible
-IDs and public-session isolation. This ticket remains open because no Rust turn
-engine/tool producer submits real requests yet; GPUI must not treat the empty
-shadow broker as live parity.
+session-scoped broker, authenticated read route, and a live Ollama turn producer
+with compatible IDs and public-session isolation. This ticket remains open
+until GPUI restores its approval review/decision pane against that live state.
