@@ -9,18 +9,26 @@ use gpui::{
     div, px, rgb, size, App, AppContext, Bounds, Context, ParentElement, Render, Styled, Window,
     WindowBounds, WindowOptions,
 };
+use codinal_control_plane_client::ControlPlaneClient;
 
-struct WorkspacePrototype;
+struct WorkspacePrototype {
+    client: ControlPlaneClient,
+}
 
 impl Render for WorkspacePrototype {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl gpui::IntoElement {
+        let sidecar = if self.client.get("sessions").is_ok() {
+            "authenticated sidecar contract ready"
+        } else {
+            "sidecar contract unavailable"
+        };
         div()
             .size_full()
             .flex()
             .flex_col()
             .bg(rgb(0x101214))
             .text_color(rgb(0xd8dee9))
-            .child(header())
+            .child(header(sidecar))
             .child(
                 div()
                     .flex()
@@ -40,7 +48,7 @@ impl Render for WorkspacePrototype {
     }
 }
 
-fn header() -> impl gpui::IntoElement {
+fn header(sidecar: &'static str) -> impl gpui::IntoElement {
     div()
         .h(px(44.0))
         .flex()
@@ -49,7 +57,7 @@ fn header() -> impl gpui::IntoElement {
         .px_3()
         .border_b_1()
         .border_color(rgb(0x30363d))
-        .child("Codinal GPUI prototype — development only")
+        .child(format!("Codinal GPUI prototype — {sidecar}"))
         .child("⌘K command palette · ⌘. cancel")
 }
 
@@ -65,6 +73,12 @@ fn pane(title: &'static str, state: &'static str) -> impl gpui::IntoElement {
 }
 
 fn main() {
+    let port = std::env::var("CODINAL_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let token = std::env::var("CODINAL_SESSION_TOKEN").unwrap_or_else(|_| "development-shell-token-with-at-least-32-characters".to_owned());
+    let client = ControlPlaneClient::new(port, &token).expect("valid native control-plane bootstrap");
     gpui_platform::application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -72,7 +86,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| WorkspacePrototype),
+            |_, cx| cx.new(|_| WorkspacePrototype { client }),
         )
         .expect("open GPUI prototype window");
         cx.activate(true);

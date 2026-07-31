@@ -1,4 +1,4 @@
-Status: open
+Status: claimed
 Type: task
 Blocked by: 06
 
