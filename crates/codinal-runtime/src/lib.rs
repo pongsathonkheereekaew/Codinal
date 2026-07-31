@@ -12,6 +12,34 @@ use zeroize::Zeroizing;
 
 pub use codinal_policy::{ApprovalChokepoint, Risk};
 
+pub struct RuntimePolicy {
+    approvals: ApprovalChokepoint,
+}
+
+impl RuntimePolicy {
+    pub fn approve_once(&mut self, approval_id: &str) -> bool {
+        self.approvals.approve_once(approval_id)
+    }
+
+    pub fn authorize_mutation(
+        &mut self,
+        risk: Risk,
+        approval_id: Option<&str>,
+        subject: &str,
+    ) -> (bool, Option<codinal_policy::AuditEvent>) {
+        self.approvals
+            .authorize_with_audit(risk, approval_id, subject)
+    }
+}
+
+impl Default for RuntimePolicy {
+    fn default() -> Self {
+        Self {
+            approvals: ApprovalChokepoint::default(),
+        }
+    }
+}
+
 const MAX_REQUEST_BYTES: usize = 32 * 1024;
 const MIN_TOKEN_LENGTH: usize = 32;
 
@@ -216,7 +244,7 @@ fn write_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{serve_one, RuntimeConfig};
+    use super::{serve_one, Risk, RuntimeConfig, RuntimePolicy};
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpStream;
@@ -265,6 +293,26 @@ mod tests {
         assert_eq!(config.inspect_storage().expect("inspect").len(), 9);
         assert!(path.read_dir().expect("read").next().is_none());
         fs::remove_dir(path).expect("remove");
+    }
+
+    #[test]
+    fn mutation_gate_is_owned_by_the_runtime() {
+        let mut policy = RuntimePolicy::default();
+        assert!(
+            !policy
+                .authorize_mutation(Risk::WriteLocal, None, "session-1")
+                .0
+        );
+        assert!(policy.approve_once("approval-token-0123456789"));
+        assert!(
+            policy
+                .authorize_mutation(
+                    Risk::WriteLocal,
+                    Some("approval-token-0123456789"),
+                    "session-1"
+                )
+                .0
+        );
     }
 
     #[test]
