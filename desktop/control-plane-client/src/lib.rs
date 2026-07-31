@@ -35,6 +35,25 @@ pub struct PendingApproval {
     pub command: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalOutcome {
+    Once,
+    AlwaysTool,
+    AlwaysCommand,
+    Deny,
+}
+
+impl ApprovalOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::AlwaysTool => "always_tool",
+            Self::AlwaysCommand => "always_command",
+            Self::Deny => "deny",
+        }
+    }
+}
+
 impl ControlPlaneClient {
     pub fn new(port: u16, token: &str) -> io::Result<Self> {
         if port == 0
@@ -65,17 +84,52 @@ impl ControlPlaneClient {
     /// Issue an authenticated JSON GET only to the local control plane.
     pub fn get_json(&self, path: &str) -> io::Result<serde_json::Value> {
         let request = self.get(path)?;
+        self.send_json("GET", path, None, &request)
+    }
+
+    pub fn resolve_approval(
+        &self,
+        session_id: &str,
+        approval_id: &str,
+        outcome: ApprovalOutcome,
+    ) -> io::Result<()> {
+        validate_session_id(session_id)?;
+        validate_approval_id(approval_id)?;
+        let path = format!("sessions/{session_id}/approvals/{approval_id}");
+        let request = self.get(&path)?;
+        self.send_json(
+            "POST",
+            &path,
+            Some(&serde_json::json!({ "outcome": outcome.as_str() })),
+            &request,
+        )?;
+        Ok(())
+    }
+
+    fn send_json(
+        &self,
+        method: &str,
+        path: &str,
+        payload: Option<&serde_json::Value>,
+        request: &Request,
+    ) -> io::Result<serde_json::Value> {
         let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, self.port);
         let mut stream = TcpStream::connect_timeout(&address.into(), Duration::from_secs(2))?;
         stream.set_read_timeout(Some(Duration::from_secs(2)))?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-
+        let body = payload
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let body = Zeroizing::new(body.unwrap_or_default());
         let headers = Zeroizing::new(format!(
-            "GET /v1/{path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: {}\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+            "{method} /v1/{path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAuthorization: {}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             self.port,
             request.authorization(),
+            body.len(),
         ));
         stream.write_all(headers.as_bytes())?;
+        stream.write_all(&body)?;
         stream.flush()?;
 
         let mut response = Vec::new();
@@ -132,6 +186,21 @@ fn validate_session_id(session_id: &str) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid session id",
+        ))
+    }
+}
+
+fn validate_approval_id(approval_id: &str) -> io::Result<()> {
+    if approval_id.len() == 32
+        && approval_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid approval id",
         ))
     }
 }
@@ -203,12 +272,8 @@ fn parse_pending_approval(value: &serde_json::Value) -> io::Result<PendingApprov
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid approval response"))
     };
     let approval_id = required("approval_id")?;
-    if approval_id.len() != 32 || !approval_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid approval response",
-        ));
-    }
+    validate_approval_id(&approval_id)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid approval response"))?;
     Ok(PendingApproval {
         approval_id,
         tool_name: required("tool_name")?,
@@ -271,8 +336,8 @@ impl Request {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_pending_approval, ControlPlaneClient};
-    use std::io::{BufRead, BufReader, Write};
+    use super::{parse_pending_approval, ApprovalOutcome, ControlPlaneClient};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
     use std::thread;
 
@@ -330,5 +395,41 @@ mod tests {
         .expect("approval");
         assert_eq!(approval.risk, "write_local");
         assert_eq!(approval.command, None);
+    }
+
+    #[test]
+    fn resolves_only_the_explicit_approval_payload() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("connection");
+            let mut reader = BufReader::new(&stream);
+            let mut request = String::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("read request");
+                if line == "\r\n" {
+                    break;
+                }
+                request.push_str(&line);
+            }
+            assert!(request.starts_with("POST /v1/sessions/session-1/approvals/0123456789abcdef0123456789abcdef HTTP/1.1\r\n"));
+            let mut body = [0_u8; 18];
+            reader.read_exact(&mut body).expect("read body");
+            assert_eq!(&body, b"{\"outcome\":\"deny\"}");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":true}")
+                .expect("write response");
+        });
+
+        ControlPlaneClient::new(port, TOKEN)
+            .expect("client")
+            .resolve_approval(
+                "session-1",
+                "0123456789abcdef0123456789abcdef",
+                ApprovalOutcome::Deny,
+            )
+            .expect("approval result");
+        server.join().expect("server");
     }
 }
