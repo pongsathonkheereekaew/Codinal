@@ -36,6 +36,7 @@ struct WorkspacePrototype {
     conversation: String,
     approvals: String,
     approval_prompt_detail: Option<String>,
+    approval_review_status: String,
 }
 
 impl WorkspacePrototype {
@@ -43,13 +44,26 @@ impl WorkspacePrototype {
         let Some(detail) = self.approval_prompt_detail.as_deref() else {
             return;
         };
-        let _ = window.prompt(
+        let response = window.prompt(
             PromptLevel::Warning,
             "Review pending approval",
             Some(detail),
             &["Cancel", "Review only"],
             cx,
         );
+        cx.spawn(async move |this, cx| {
+            let choice = response.await.unwrap_or(0);
+            let status = if choice == 0 {
+                "Approval review cancelled — no action sent"
+            } else {
+                "Approval reviewed — no action sent"
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.approval_review_status = status.to_owned();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -75,6 +89,7 @@ impl Render for WorkspacePrototype {
                     .child(approval_pane(
                         &self.approvals,
                         self.approval_prompt_detail.is_some(),
+                        &self.approval_review_status,
                         cx,
                     )),
             )
@@ -139,6 +154,7 @@ fn conversation_pane(messages: &str) -> impl gpui::IntoElement {
 fn approval_pane(
     approvals: &str,
     has_pending_approval: bool,
+    review_status: &str,
     cx: &mut Context<WorkspacePrototype>,
 ) -> impl gpui::IntoElement {
     let pane = div()
@@ -154,6 +170,13 @@ fn approval_pane(
                 .text_sm()
                 .text_color(rgb(0x8b949e))
                 .child(approvals.to_owned()),
+        )
+        .child(
+            div()
+                .mt_2()
+                .text_sm()
+                .text_color(rgb(0x8b949e))
+                .child(review_status.to_owned()),
         );
     if has_pending_approval {
         pane.child(
@@ -286,6 +309,7 @@ fn main() -> io::Result<()> {
                     conversation,
                     approvals,
                     approval_prompt_detail,
+                    approval_review_status: "No approval action sent".to_owned(),
                 })
             },
         )
