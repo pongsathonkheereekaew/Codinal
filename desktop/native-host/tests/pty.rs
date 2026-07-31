@@ -4,6 +4,7 @@
 
 #![cfg(target_os = "macos")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -138,7 +139,14 @@ fn pty_resize_does_not_error() {
     // Resize to 120x40; should succeed without error. (Visual confirmation
     // that the child sees the new size via `stty size` is a manual smoke
     // test — here we only assert the TIOCSWINSZ ioctl didn't fail.)
-    registry.resize("s3", 120, 40).expect("resize");
+    let boundary_called = Arc::new(AtomicBool::new(false));
+    let called = Arc::clone(&boundary_called);
+    registry
+        .resize_ordered("s3", 120, 40, move || {
+            called.store(true, Ordering::SeqCst);
+        })
+        .expect("resize");
+    assert!(boundary_called.load(Ordering::SeqCst));
 
     registry.kill("s3").expect("kill");
 }
@@ -184,6 +192,7 @@ fn bounded_output_buffer_keeps_tail_and_exit_state() {
     let output = PtyOutputBuffer::new(5);
     output.push(b"abc");
     output.push(b"defg");
+    assert_eq!(output.cursor(), 7);
     output.mark_exited();
     let delta = output.read_since(0);
     assert_eq!(delta.bytes, b"cdefg");

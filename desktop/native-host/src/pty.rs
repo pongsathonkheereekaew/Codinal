@@ -94,6 +94,16 @@ impl PtyOutputBuffer {
         self.state.lock().expect("pty output lock poisoned").exited = true;
     }
 
+    /// Returns the cursor immediately after the most recently appended byte.
+    /// Callers can use this while holding their own event-ordering lock to
+    /// correlate a control-plane transition with subsequent output.
+    pub fn cursor(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("pty output lock poisoned")
+            .next_cursor
+    }
+
     pub fn read_since(&self, cursor: u64) -> PtyOutputDelta {
         let state = self.state.lock().expect("pty output lock poisoned");
         let retained_start = state.next_cursor.saturating_sub(state.bytes.len() as u64);
@@ -129,10 +139,10 @@ impl PtySession {
 
     /// Write user input (keystrokes) to the PTY master end.
     pub fn write_input(&self, data: &[u8]) -> io::Result<()> {
-        let guard = self.master.0.lock().expect("master lock poisoned");
-        let fd = guard.as_raw_fd();
         let mut remaining = data;
         while !remaining.is_empty() {
+            let guard = self.master.0.lock().expect("master lock poisoned");
+            let fd = guard.as_raw_fd();
             // SAFETY: fd is a valid open master; remaining points to writable bytes.
             let rc = unsafe { libc::write(fd, remaining.as_ptr() as *const _, remaining.len()) };
             if rc < 0 {
@@ -140,7 +150,18 @@ impl PtySession {
                 if err.kind() == io::ErrorKind::Interrupted {
                     continue;
                 }
+                if err.kind() == io::ErrorKind::WouldBlock {
+                    drop(guard);
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
                 return Err(err);
+            }
+            if rc == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "PTY write made no progress",
+                ));
             }
             remaining = &remaining[rc as usize..];
         }
@@ -149,7 +170,19 @@ impl PtySession {
 
     /// Resize the PTY window (SIGWINCH-equivalent via TIOCSWINSZ on master).
     pub fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
-        let fd = self.master.as_raw_fd();
+        self.resize_ordered(cols, rows, || {})
+    }
+
+    /// Resize and run `after_resize` before releasing the master lock. This
+    /// establishes an atomic boundary against the reader's read+emit section.
+    pub fn resize_ordered(
+        &self,
+        cols: u16,
+        rows: u16,
+        after_resize: impl FnOnce(),
+    ) -> io::Result<()> {
+        let guard = self.master.0.lock().expect("master lock poisoned");
+        let fd = guard.as_raw_fd();
         let winsize = Winsize {
             ws_col: cols.max(1),
             ws_row: rows.max(1),
@@ -161,6 +194,7 @@ impl PtySession {
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }
+        after_resize();
         Ok(())
     }
 }
@@ -225,6 +259,18 @@ pub fn spawn(
             // Parent: drop the slave end (child owns its copy now). Keep master.
             drop(pty.slave);
             let master = Arc::new(MasterFd(Mutex::new(pty.master)));
+            {
+                let guard = master.0.lock().expect("master lock poisoned");
+                let fd = guard.as_raw_fd();
+                // Keep read/write/resize operations short while they share the
+                // master lock; the reader handles EAGAIN with a small backoff.
+                let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+                if flags < 0
+                    || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
 
             let finished = Arc::new(AtomicBool::new(false));
             let reader_finished = Arc::clone(&finished);
@@ -252,14 +298,25 @@ pub fn spawn(
                                 if err.kind() == io::ErrorKind::Interrupted {
                                     continue;
                                 }
+                                if err.kind() == io::ErrorKind::WouldBlock {
+                                    drop(guard);
+                                    thread::sleep(Duration::from_millis(5));
+                                    continue;
+                                }
                                 break;
                             }
-                            rc as usize
+                            let n = rc as usize;
+                            if n > 0 {
+                                // Keep read completion and callback insertion
+                                // ordered against resize(), which uses the same
+                                // master lock to establish an output boundary.
+                                (reader_emit)(&reader_id, Some(&buf[..n]));
+                            }
+                            n
                         };
                         if n == 0 {
                             break; // EOF
                         }
-                        (reader_emit)(&reader_id, Some(&buf[..n]));
                     }
                     reader_finished.store(true, Ordering::SeqCst);
                     (reader_emit)(&reader_id, None);
@@ -374,9 +431,19 @@ impl PtyRegistry {
     }
 
     pub fn resize(&self, session_id: &str, cols: u16, rows: u16) -> io::Result<()> {
+        self.resize_ordered(session_id, cols, rows, || {})
+    }
+
+    pub fn resize_ordered(
+        &self,
+        session_id: &str,
+        cols: u16,
+        rows: u16,
+        after_resize: impl FnOnce(),
+    ) -> io::Result<()> {
         let guard = self.sessions.lock().expect("pty lock poisoned");
         match guard.get(session_id) {
-            Some(s) => s.resize(cols, rows),
+            Some(s) => s.resize_ordered(cols, rows, after_resize),
             None => Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 "pty session not found",

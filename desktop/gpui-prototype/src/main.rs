@@ -44,9 +44,7 @@ use codinal_control_plane_client::{
     ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient, PendingApproval,
 };
 #[cfg(target_os = "macos")]
-use codinal_native_host::pty::{
-    PtyOutputBuffer, PtyOutputDelta, PtyRegistry, DEFAULT_OUTPUT_CAPACITY,
-};
+use codinal_native_host::pty::{PtyOutputBuffer, PtyOutputDelta, PtyRegistry};
 use codinal_native_host::{
     free_loopback_port, launch_shadow_runtime_with_bootstrap, mint_session_token,
     secrets::{
@@ -69,7 +67,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(target_os = "macos")]
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::thread;
 #[cfg(target_os = "macos")]
@@ -95,7 +93,8 @@ struct WorkspacePrototype {
     provider_edit_targets: Vec<String>,
     custom_provider_edit_targets: Vec<CustomProviderEditTarget>,
     provider_operation_in_flight: bool,
-    terminal_bytes: Vec<u8>,
+    terminal_parser: vt100::Parser,
+    terminal_display: String,
     terminal_status: String,
     #[cfg(target_os = "macos")]
     terminal_registry: Arc<PtyRegistry>,
@@ -114,6 +113,14 @@ struct WorkspacePrototype {
     #[cfg(target_os = "macos")]
     terminal_input_cancel: Option<Arc<AtomicBool>>,
     #[cfg(target_os = "macos")]
+    terminal_resize: Option<SyncSender<(u16, u16)>>,
+    #[cfg(target_os = "macos")]
+    terminal_resize_result: Option<Arc<Mutex<Option<TerminalResizeOutcome>>>>,
+    #[cfg(target_os = "macos")]
+    terminal_resize_pending: Option<(u16, u16)>,
+    #[cfg(target_os = "macos")]
+    terminal_resize_failed: Option<(u16, u16)>,
+    #[cfg(target_os = "macos")]
     terminal_poll: Option<Task<()>>,
 }
 
@@ -131,14 +138,6 @@ impl TerminalState {
     fn can_open(self) -> bool {
         matches!(self, Self::Closed | Self::Exited | Self::Failed)
     }
-}
-
-fn accepts_terminal_control_result(
-    current_generation: u64,
-    result_generation: u64,
-    state: TerminalState,
-) -> bool {
-    current_generation == result_generation && state == TerminalState::Running
 }
 
 fn terminal_key_bytes(event: &KeyDownEvent) -> Option<Vec<u8>> {
@@ -291,6 +290,74 @@ fn terminal_key_bytes(event: &KeyDownEvent) -> Option<Vec<u8>> {
 }
 
 #[cfg(target_os = "macos")]
+struct TerminalResizeOutcome {
+    cols: u16,
+    rows: u16,
+    boundary: Option<u64>,
+    result: Result<(), String>,
+}
+
+#[cfg(target_os = "macos")]
+fn apply_terminal_resize_outcome(
+    parser: &mut vt100::Parser,
+    display: &mut String,
+    status: &mut String,
+    outcome: TerminalResizeOutcome,
+) -> bool {
+    match outcome.result {
+        Ok(()) => {
+            parser.screen_mut().set_size(outcome.rows, outcome.cols);
+            *display = parser.screen().contents();
+            *status = format!("Terminal resized to {}×{}", outcome.cols, outcome.rows);
+            true
+        }
+        Err(error) => {
+            *status = format!("Terminal resize failed: {error}");
+            false
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apply_terminal_update(
+    parser: &mut vt100::Parser,
+    display: &mut String,
+    status: &mut String,
+    delta: &PtyOutputDelta,
+    resize: Option<TerminalResizeOutcome>,
+) -> Option<(bool, u16, u16)> {
+    let Some(outcome) = resize else {
+        apply_terminal_delta(parser, display, status, delta);
+        return None;
+    };
+    let geometry = (outcome.cols, outcome.rows);
+    if delta.truncated {
+        let (rows, cols) = parser.screen().size();
+        *parser = vt100::Parser::new(rows, cols, 1_000);
+        *status = "Terminal history truncated to bounded tail".to_owned();
+    }
+    let applied = if outcome.result.is_ok() {
+        let retained_start = delta.next_cursor.saturating_sub(delta.bytes.len() as u64);
+        let boundary = outcome.boundary.unwrap_or(retained_start);
+        let split = boundary
+            .clamp(retained_start, delta.next_cursor)
+            .saturating_sub(retained_start) as usize;
+        parser.process(&delta.bytes[..split]);
+        let applied = apply_terminal_resize_outcome(parser, display, status, outcome);
+        parser.process(&delta.bytes[split..]);
+        applied
+    } else {
+        parser.process(&delta.bytes);
+        apply_terminal_resize_outcome(parser, display, status, outcome)
+    };
+    *display = parser.screen().contents();
+    if delta.exited {
+        *status = "Terminal exited".to_owned();
+    }
+    Some((applied, geometry.0, geometry.1))
+}
+
+#[cfg(target_os = "macos")]
 fn enqueue_terminal_input(sender: &SyncSender<Vec<u8>>, bytes: Vec<u8>) -> io::Result<()> {
     const MAX_INPUT_MESSAGE_BYTES: usize = 16 * 1024;
     if bytes.len() > MAX_INPUT_MESSAGE_BYTES {
@@ -405,19 +472,53 @@ fn custom_provider_edit_targets(custom: &[CustomProviderRecord]) -> Vec<CustomPr
 }
 
 #[cfg(target_os = "macos")]
-fn apply_terminal_delta(bytes: &mut Vec<u8>, status: &mut String, delta: &PtyOutputDelta) {
+fn apply_terminal_delta(
+    parser: &mut vt100::Parser,
+    display: &mut String,
+    status: &mut String,
+    delta: &PtyOutputDelta,
+) {
     if delta.truncated {
-        bytes.clear();
+        let (rows, cols) = parser.screen().size();
+        *parser = vt100::Parser::new(rows, cols, 1_000);
         *status = "Terminal history truncated to bounded tail".to_owned();
     }
-    bytes.extend_from_slice(&delta.bytes);
-    let overflow = bytes.len().saturating_sub(DEFAULT_OUTPUT_CAPACITY);
-    if overflow > 0 {
-        bytes.drain(..overflow);
-    }
+    parser.process(&delta.bytes);
+    *display = parser.screen().contents();
     if delta.exited {
         *status = "Terminal exited".to_owned();
     }
+}
+
+fn terminal_grid_for_bounds(bounds: Bounds<Pixels>) -> (u16, u16) {
+    const CELL_WIDTH: f32 = 8.0;
+    const CELL_HEIGHT: f32 = 18.0;
+    let width = bounds.size.width.as_f32();
+    let height = bounds.size.height.as_f32();
+    let cols = if width.is_finite() {
+        ((width - 24.0) / CELL_WIDTH).floor().clamp(2.0, 500.0) as u16
+    } else {
+        2
+    };
+    let rows = if height.is_finite() {
+        ((height - 92.0) / CELL_HEIGHT).floor().clamp(1.0, 200.0) as u16
+    } else {
+        1
+    };
+    (cols, rows)
+}
+
+fn should_request_terminal_resize(
+    state: TerminalState,
+    current: (u16, u16),
+    pending: Option<(u16, u16)>,
+    failed: Option<(u16, u16)>,
+    desired: (u16, u16),
+) -> bool {
+    state == TerminalState::Running
+        && current != (desired.1, desired.0)
+        && pending.is_none()
+        && failed != Some(desired)
 }
 
 impl WorkspacePrototype {
@@ -430,40 +531,59 @@ impl WorkspacePrototype {
         self.terminal_generation = self.terminal_generation.saturating_add(1);
         self.terminal_session_id = format!("gpui-main-terminal-{}", self.terminal_generation);
         self.terminal_status = "Opening terminal…".to_owned();
-        self.terminal_bytes.clear();
+        let (rows, cols) = self.terminal_parser.screen().size();
+        self.terminal_parser = vt100::Parser::new(rows, cols, 1_000);
+        self.terminal_display.clear();
         self.terminal_marked_text.clear();
         self.terminal_marked_selection = 0..0;
         if let Some(cancelled) = self.terminal_input_cancel.take() {
             cancelled.store(true, Ordering::Release);
         }
         self.terminal_input.take();
+        self.terminal_resize.take();
+        self.terminal_resize_result.take();
+        self.terminal_resize_pending = None;
+        self.terminal_resize_failed = None;
         cx.notify();
         let registry = Arc::clone(&self.terminal_registry);
         let writer_registry = Arc::clone(&self.terminal_registry);
+        let resize_registry = Arc::clone(&self.terminal_registry);
         let output = Arc::new(PtyOutputBuffer::default());
         let callback_output = Arc::clone(&output);
+        let resize_output = Arc::clone(&output);
         let session_id = self.terminal_session_id.clone();
         let writer_session_id = session_id.clone();
         let generation = self.terminal_generation;
         let workspace = self.terminal_workspace.clone();
+        let (rows, cols) = self.terminal_parser.screen().size();
         cx.spawn(async move |this, cx| {
             let opened = cx
                 .background_executor()
                 .spawn(async move {
-                    registry.open(&session_id, &workspace, None, 100, 30, move |_, chunk| {
-                        match chunk {
+                    registry.open(
+                        &session_id,
+                        &workspace,
+                        None,
+                        cols,
+                        rows,
+                        move |_, chunk| match chunk {
                             Some(bytes) => callback_output.push(bytes),
                             None => callback_output.mark_exited(),
-                        }
-                    })
+                        },
+                    )
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 match opened {
                     Ok(()) => {
                         let (sender, receiver) = sync_channel::<Vec<u8>>(256);
+                        let (resize_sender, resize_receiver) = sync_channel::<(u16, u16)>(1);
+                        let resize_result = Arc::new(Mutex::new(None));
+                        let thread_resize_result = Arc::clone(&resize_result);
                         let cancelled = Arc::new(AtomicBool::new(false));
                         let writer_cancelled = Arc::clone(&cancelled);
+                        let resize_cancelled = Arc::clone(&cancelled);
+                        let resize_session_id = writer_session_id.clone();
                         let writer_started = thread::Builder::new()
                             .name(format!("gpui-pty-writer-{generation}"))
                             .spawn(move || {
@@ -472,15 +592,48 @@ impl WorkspacePrototype {
                                 });
                             })
                             .is_ok();
+                        let resizer_started = thread::Builder::new()
+                            .name(format!("gpui-pty-resizer-{generation}"))
+                            .spawn(move || {
+                                while let Ok((cols, rows)) = resize_receiver.recv() {
+                                    if resize_cancelled.load(Ordering::Acquire) {
+                                        break;
+                                    }
+                                    let mut boundary = None;
+                                    let result = resize_registry
+                                        .resize_ordered(&resize_session_id, cols, rows, || {
+                                            boundary = Some(resize_output.cursor());
+                                        })
+                                        .map_err(|error| error.to_string());
+                                    *thread_resize_result.lock().unwrap() =
+                                        Some(TerminalResizeOutcome {
+                                            cols,
+                                            rows,
+                                            boundary,
+                                            result,
+                                        });
+                                }
+                            })
+                            .is_ok();
                         this.terminal_input = writer_started.then_some(sender);
-                        this.terminal_input_cancel = writer_started.then_some(cancelled);
+                        this.terminal_resize = resizer_started.then_some(resize_sender);
+                        this.terminal_resize_result = resizer_started.then_some(resize_result);
+                        this.terminal_resize_pending = None;
+                        this.terminal_resize_failed = None;
+                        this.terminal_input_cancel =
+                            (writer_started || resizer_started).then_some(cancelled);
                         this.terminal_state = TerminalState::Running;
-                        this.terminal_status = if writer_started {
-                            "Terminal running · raw PTY output".to_owned()
+                        this.terminal_status = if writer_started && resizer_started {
+                            "Terminal running · VT screen active".to_owned()
                         } else {
-                            "Terminal running · input writer unavailable".to_owned()
+                            "Terminal running · control worker unavailable".to_owned()
                         };
-                        this.start_terminal_poll(output, this.terminal_generation, cx);
+                        this.start_terminal_poll(
+                            output,
+                            this.terminal_generation,
+                            this.terminal_resize_result.clone(),
+                            cx,
+                        );
                     }
                     Err(error) => {
                         this.terminal_state = TerminalState::Failed;
@@ -498,6 +651,7 @@ impl WorkspacePrototype {
         &mut self,
         output: Arc<PtyOutputBuffer>,
         generation: u64,
+        resize_result: Option<Arc<Mutex<Option<TerminalResizeOutcome>>>>,
         cx: &mut Context<Self>,
     ) {
         let registry = Arc::clone(&self.terminal_registry);
@@ -511,21 +665,35 @@ impl WorkspacePrototype {
                 let delta = output.read_since(cursor);
                 cursor = delta.next_cursor;
                 let exited = delta.exited;
-                if delta.truncated || !delta.bytes.is_empty() || exited {
+                let resize_outcome = resize_result
+                    .as_ref()
+                    .and_then(|result| result.lock().unwrap().take());
+                if delta.truncated || !delta.bytes.is_empty() || exited || resize_outcome.is_some()
+                {
                     let _ = this.update(cx, |this, cx| {
                         if this.terminal_generation != generation {
                             return;
                         }
-                        apply_terminal_delta(
-                            &mut this.terminal_bytes,
+                        let resize_applied = apply_terminal_update(
+                            &mut this.terminal_parser,
+                            &mut this.terminal_display,
                             &mut this.terminal_status,
                             &delta,
+                            resize_outcome,
                         );
+                        if let Some((applied, cols, rows)) = resize_applied {
+                            this.terminal_resize_pending = None;
+                            this.terminal_resize_failed = (!applied).then_some((cols, rows));
+                        }
                         if exited {
                             if let Some(cancelled) = this.terminal_input_cancel.take() {
                                 cancelled.store(true, Ordering::Release);
                             }
                             this.terminal_input.take();
+                            this.terminal_resize.take();
+                            this.terminal_resize_result.take();
+                            this.terminal_resize_pending = None;
+                            this.terminal_resize_failed = None;
                             this.terminal_marked_text.clear();
                             this.terminal_marked_selection = 0..0;
                             this.terminal_state = TerminalState::Stopping;
@@ -597,30 +765,37 @@ impl WorkspacePrototype {
 
     #[cfg(target_os = "macos")]
     fn resize_terminal(&mut self, cols: u16, rows: u16, cx: &mut Context<Self>) {
-        let registry = Arc::clone(&self.terminal_registry);
-        let session_id = self.terminal_session_id.clone();
-        let generation = self.terminal_generation;
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { registry.resize(&session_id, cols, rows) })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if !accepts_terminal_control_result(
-                    this.terminal_generation,
-                    generation,
-                    this.terminal_state,
-                ) {
-                    return;
-                }
-                this.terminal_status = match result {
-                    Ok(()) => format!("Terminal resized to {cols}×{rows}"),
-                    Err(error) => format!("Terminal resize failed: {error}"),
-                };
-                cx.notify();
+        if self.terminal_resize_pending.is_some() {
+            return;
+        }
+        let result = self
+            .terminal_resize
+            .as_ref()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "terminal resizer unavailable")
+            })
+            .and_then(|sender| {
+                sender.try_send((cols, rows)).map_err(|error| match error {
+                    TrySendError::Full(_) => {
+                        io::Error::new(io::ErrorKind::WouldBlock, "terminal resize already queued")
+                    }
+                    TrySendError::Disconnected(_) => {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "terminal resizer is closed")
+                    }
+                })
             });
-        })
-        .detach();
+        match result {
+            Ok(()) => {
+                self.terminal_resize_pending = Some((cols, rows));
+                self.terminal_resize_failed = None;
+                self.terminal_status = format!("Resizing terminal to {cols}×{rows}…");
+            }
+            Err(error) => {
+                self.terminal_resize_failed = Some((cols, rows));
+                self.terminal_status = format!("Terminal resize deferred: {error}");
+            }
+        }
+        cx.notify();
     }
 
     #[cfg(target_os = "macos")]
@@ -633,6 +808,10 @@ impl WorkspacePrototype {
             cancelled.store(true, Ordering::Release);
         }
         self.terminal_input.take();
+        self.terminal_resize.take();
+        self.terminal_resize_result.take();
+        self.terminal_resize_pending = None;
+        self.terminal_resize_failed = None;
         self.terminal_status = "Stopping terminal…".to_owned();
         cx.notify();
         let registry = Arc::clone(&self.terminal_registry);
@@ -1177,7 +1356,7 @@ impl Render for WorkspacePrototype {
                 cx,
             ))
             .child(terminal_pane(
-                &String::from_utf8_lossy(&self.terminal_bytes),
+                &self.terminal_display,
                 &self.terminal_status,
                 self.terminal_state,
                 &self.terminal_focus,
@@ -1227,30 +1406,6 @@ fn terminal_pane(
                 )
                 .child(
                     div()
-                        .id("terminal-resize-small")
-                        .mr_2()
-                        .px_2()
-                        .py_1()
-                        .bg(rgb(0x30363d))
-                        .child("80×24")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.resize_terminal(80, 24, cx);
-                        })),
-                )
-                .child(
-                    div()
-                        .id("terminal-resize-large")
-                        .mr_2()
-                        .px_2()
-                        .py_1()
-                        .bg(rgb(0x30363d))
-                        .child("120×40")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.resize_terminal(120, 40, cx);
-                        })),
-                )
-                .child(
-                    div()
                         .id("terminal-kill")
                         .px_2()
                         .py_1()
@@ -1264,6 +1419,9 @@ fn terminal_pane(
     }
     div()
         .id("native-terminal-pane")
+        .role(gpui::Role::Terminal)
+        .aria_label("Interactive native terminal")
+        .aria_description(status.to_owned())
         .relative()
         .track_focus(focus)
         .on_click(cx.listener(|this, _, window, cx| {
@@ -1292,7 +1450,23 @@ fn terminal_pane(
             canvas(
                 |bounds, _, _| bounds,
                 move |bounds, _, window, cx| {
-                    window.handle_input(&input_focus, ElementInputHandler::new(bounds, entity), cx);
+                    window.handle_input(
+                        &input_focus,
+                        ElementInputHandler::new(bounds, entity.clone()),
+                        cx,
+                    );
+                    let (cols, rows) = terminal_grid_for_bounds(bounds);
+                    entity.update(cx, |this, cx| {
+                        if should_request_terminal_resize(
+                            this.terminal_state,
+                            this.terminal_parser.screen().size(),
+                            this.terminal_resize_pending,
+                            this.terminal_resize_failed,
+                            (cols, rows),
+                        ) {
+                            this.resize_terminal(cols, rows, cx);
+                        }
+                    });
                 },
             )
             .absolute()
@@ -1648,7 +1822,8 @@ fn main() -> io::Result<()> {
                     provider_edit_targets,
                     custom_provider_edit_targets,
                     provider_operation_in_flight: false,
-                    terminal_bytes: Vec::new(),
+                    terminal_parser: vt100::Parser::new(30, 100, 1_000),
+                    terminal_display: String::new(),
                     terminal_status: "Terminal closed".to_owned(),
                     terminal_state: TerminalState::Closed,
                     terminal_focus: cx.focus_handle(),
@@ -1666,6 +1841,14 @@ fn main() -> io::Result<()> {
                     terminal_input: None,
                     #[cfg(target_os = "macos")]
                     terminal_input_cancel: None,
+                    #[cfg(target_os = "macos")]
+                    terminal_resize: None,
+                    #[cfg(target_os = "macos")]
+                    terminal_resize_result: None,
+                    #[cfg(target_os = "macos")]
+                    terminal_resize_pending: None,
+                    #[cfg(target_os = "macos")]
+                    terminal_resize_failed: None,
                     #[cfg(target_os = "macos")]
                     terminal_poll: None,
                 })
@@ -1738,10 +1921,13 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn terminal_delta_replaces_truncated_history_and_marks_exit() {
-        let mut bytes = b"stale".to_vec();
+        let mut parser = vt100::Parser::new(2, 10, 10);
+        parser.process(b"stale");
+        let mut display = parser.screen().contents();
         let mut status = "running".to_owned();
         super::apply_terminal_delta(
-            &mut bytes,
+            &mut parser,
+            &mut display,
             &mut status,
             &PtyOutputDelta {
                 bytes: b"tail".to_vec(),
@@ -1750,8 +1936,51 @@ mod tests {
                 exited: true,
             },
         );
-        assert_eq!(bytes, b"tail");
+        assert_eq!(display, "tail");
         assert_eq!(status, "Terminal exited");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_delta_applies_cursor_and_erase_escape_sequences() {
+        let mut parser = vt100::Parser::new(3, 12, 10);
+        let mut display = String::new();
+        let mut status = "running".to_owned();
+        super::apply_terminal_delta(
+            &mut parser,
+            &mut display,
+            &mut status,
+            &PtyOutputDelta {
+                bytes: b"hello\r\x1b[2Kworld\x1b[2D!!".to_vec(),
+                next_cursor: 20,
+                truncated: false,
+                exited: false,
+            },
+        );
+        assert_eq!(display, "wor!!");
+        assert_eq!(parser.screen().cursor_position(), (0, 5));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_replay_keeps_visible_screen_bounded() {
+        let mut parser = vt100::Parser::new(24, 80, 1_000);
+        let mut display = String::new();
+        let mut status = "running".to_owned();
+        let replay = "0123456789abcdef\r\n".repeat(20_000).into_bytes();
+        super::apply_terminal_delta(
+            &mut parser,
+            &mut display,
+            &mut status,
+            &PtyOutputDelta {
+                next_cursor: replay.len() as u64,
+                bytes: replay,
+                truncated: false,
+                exited: false,
+            },
+        );
+        assert!(display.len() <= 24 * 81);
+        assert_eq!(parser.screen().size(), (24, 80));
     }
 
     #[test]
@@ -1765,21 +1994,39 @@ mod tests {
     }
 
     #[test]
-    fn late_terminal_control_result_cannot_overwrite_stopped_state() {
-        assert!(super::accepts_terminal_control_result(
-            3,
-            3,
+    fn terminal_grid_tracks_rendered_bounds_with_safe_minimums() {
+        let bounds = gpui::Bounds::new(
+            gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            gpui::size(gpui::px(824.0), gpui::px(452.0)),
+        );
+        assert_eq!(super::terminal_grid_for_bounds(bounds), (100, 20));
+        let tiny = gpui::Bounds::new(
+            gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            gpui::size(gpui::px(1.0), gpui::px(1.0)),
+        );
+        assert_eq!(super::terminal_grid_for_bounds(tiny), (2, 1));
+        let huge = gpui::Bounds::new(
+            gpui::point(gpui::px(0.0), gpui::px(0.0)),
+            gpui::size(gpui::px(1_000_000.0), gpui::px(1_000_000.0)),
+        );
+        assert_eq!(super::terminal_grid_for_bounds(huge), (500, 200));
+    }
+
+    #[test]
+    fn failed_resize_is_not_resubmitted_each_render() {
+        assert!(!super::should_request_terminal_resize(
             super::TerminalState::Running,
+            (24, 80),
+            None,
+            Some((120, 40)),
+            (120, 40),
         ));
-        assert!(!super::accepts_terminal_control_result(
-            3,
-            3,
-            super::TerminalState::Stopping,
-        ));
-        assert!(!super::accepts_terminal_control_result(
-            4,
-            3,
+        assert!(super::should_request_terminal_resize(
             super::TerminalState::Running,
+            (24, 80),
+            None,
+            Some((120, 40)),
+            (100, 30),
         ));
     }
 
@@ -1909,5 +2156,56 @@ mod tests {
             Ok(())
         });
         assert!(writes.lock().unwrap().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn failed_terminal_resize_does_not_mutate_parser_geometry() {
+        let mut parser = vt100::Parser::new(24, 80, 10);
+        let mut display = String::new();
+        let mut status = String::new();
+        let applied = super::apply_terminal_resize_outcome(
+            &mut parser,
+            &mut display,
+            &mut status,
+            super::TerminalResizeOutcome {
+                cols: 120,
+                rows: 40,
+                boundary: None,
+                result: Err("ioctl rejected".to_owned()),
+            },
+        );
+        assert!(!applied);
+        assert_eq!(parser.screen().size(), (24, 80));
+        assert_eq!(status, "Terminal resize failed: ioctl rejected");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn resize_boundary_parses_post_sigwinch_redraw_at_new_geometry() {
+        let mut parser = vt100::Parser::new(2, 5, 10);
+        let mut display = String::new();
+        let mut status = String::new();
+        let delta = PtyOutputDelta {
+            bytes: b"abcde\x1b[2J\x1b[H123456789".to_vec(),
+            next_cursor: 21,
+            truncated: false,
+            exited: false,
+        };
+        let applied = super::apply_terminal_update(
+            &mut parser,
+            &mut display,
+            &mut status,
+            &delta,
+            Some(super::TerminalResizeOutcome {
+                cols: 10,
+                rows: 2,
+                boundary: Some(5),
+                result: Ok(()),
+            }),
+        );
+        assert_eq!(applied, Some((true, 10, 2)));
+        assert_eq!(parser.screen().size(), (2, 10));
+        assert_eq!(display, "123456789");
     }
 }

@@ -32,7 +32,13 @@ same native registry.
 - Keyboard input now uses one generation-scoped bounded FIFO writer, GPUI's
   committed-text/IME path for Unicode input, xterm control/navigation/function
   sequences, and cancellation that discards queued bytes before shutdown.
+- PTY output now feeds a bounded VT100 screen model instead of rendering raw
+  escape bytes. Resize requests are coalesced, acknowledged by the kernel, and
+  correlated with output cursor boundaries so redraw bytes use the correct
+  geometry; failed geometry is stable rather than retried every paint.
+- The terminal surface exposes a native accessibility role and its replay test
+  holds visible output to the measured screen bounds under sustained output.
 - Exit and stop clean up unique native session IDs and permit a fresh buffer,
   poll task, and PTY generation on reopen.
-- Remaining: terminal escape-state emulation, dynamic geometry,
-  accessibility/performance replay, and packaged parity evidence.
+- Remaining: packaged interactive parity evidence before retiring the fallback
+  terminal surface.
