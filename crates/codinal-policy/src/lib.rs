@@ -5,6 +5,10 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io;
 
+mod audit;
+
+pub use audit::{AuditLedger, AuditLedgerEvent, AuditLedgerInput, AuditRedactor};
+
 const MAX_PENDING_GLOBAL: usize = 1_024;
 const MAX_PENDING_PER_SESSION: usize = 128;
 

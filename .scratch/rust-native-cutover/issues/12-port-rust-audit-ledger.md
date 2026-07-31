@@ -1,5 +1,5 @@
 Type: task
-Status: open
+Status: resolved
 Blocked by: 11
 
 ## Question
@@ -23,3 +23,19 @@ share one Rust approval chokepoint and durable audit contract.
 ## Out of scope
 
 - Enabling production mutation routes before the full R2 gate passes.
+
+## Evidence
+
+- `codinal-policy::AuditLedger` opens the migrated Python v1 database only
+  after schema, SQLite integrity, retained-sequence, and full hash-chain checks.
+- Python-compatible canonical JSON vectors cover ASCII, Thai/Unicode,
+  surrogate pairs, fixed floats, and exponent-formatted floats.
+- Immediate transactions serialize concurrent appends; tamper, tail
+  truncation, malformed metadata, oversized payloads, and exhausted capacity
+  fail closed.
+- Recursive payload and metadata redaction supports live secret rotation and
+  zeroizes replaced exact-secret values.
+- Rust policy tests cover restart, retained/pruned ledgers, concurrency,
+  persisted redaction, and compatible approval allow/deny metadata. Python's
+  reference audit suite remains green.
+- Production mutation routes remain disabled pending the rest of the R2 gate.
