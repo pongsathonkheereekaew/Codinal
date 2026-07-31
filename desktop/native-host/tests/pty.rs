@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use codinal_native_host::pty::{Emit, PtyRegistry};
+use codinal_native_host::pty::{Emit, PtyOutputBuffer, PtyRegistry};
 
 /// Wait until `predicate` is true, polling every 10ms, up to `timeout`.
 /// Used to assert on async reader-thread output.
@@ -177,4 +177,73 @@ fn pty_write_to_unknown_session_errors() {
     let registry = PtyRegistry::default();
     let err = registry.write("nonexistent", b"x").unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+}
+
+#[test]
+fn bounded_output_buffer_keeps_tail_and_exit_state() {
+    let output = PtyOutputBuffer::new(5);
+    output.push(b"abc");
+    output.push(b"defg");
+    output.mark_exited();
+    let delta = output.read_since(0);
+    assert_eq!(delta.bytes, b"cdefg");
+    assert_eq!(delta.next_cursor, 7);
+    assert!(delta.truncated);
+    assert!(delta.exited);
+}
+
+#[test]
+fn output_buffer_reads_incrementally_and_bounds_oversized_chunks() {
+    let output = PtyOutputBuffer::new(4);
+    output.push(b"ab");
+    let first = output.read_since(0);
+    assert_eq!(first.bytes, b"ab");
+    assert!(!first.truncated);
+
+    output.push(b"cdefgh");
+    let delta = output.read_since(first.next_cursor);
+    assert_eq!(delta.bytes, b"efgh");
+    assert_eq!(delta.next_cursor, 8);
+    assert!(delta.truncated);
+}
+
+#[test]
+fn concurrent_output_reads_are_monotonic_and_observe_exit() {
+    let expected = (0_u8..100).collect::<Vec<_>>();
+    let output = Arc::new(PtyOutputBuffer::new(expected.len()));
+    let writer = Arc::clone(&output);
+    let writer_bytes = expected.clone();
+    let handle = std::thread::spawn(move || {
+        for chunk in writer_bytes.chunks(5) {
+            writer.push(chunk);
+            std::thread::yield_now();
+        }
+        writer.mark_exited();
+    });
+    let mut cursor = 0;
+    let mut observed = Vec::new();
+    loop {
+        let delta = output.read_since(cursor);
+        assert!(delta.next_cursor >= cursor);
+        assert!(delta.bytes.len() <= expected.len());
+        assert!(!delta.truncated);
+        observed.extend_from_slice(&delta.bytes);
+        cursor = delta.next_cursor;
+        if delta.exited {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    handle.join().expect("writer");
+    assert_eq!(observed, expected);
+}
+
+#[test]
+fn zero_capacity_is_normalized_to_one_byte() {
+    let output = PtyOutputBuffer::new(0);
+    output.push(b"abc");
+    let delta = output.read_since(0);
+    assert_eq!(delta.bytes, b"c");
+    assert_eq!(delta.next_cursor, 3);
+    assert!(delta.truncated);
 }

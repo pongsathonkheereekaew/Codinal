@@ -13,7 +13,7 @@
 
 #![cfg(target_os = "macos")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -38,6 +38,76 @@ pub type Emit = Arc<dyn Fn(&str, Option<&[u8]>) + Send + Sync>;
 const DEFAULT_COLS: u16 = 80;
 #[allow(dead_code)]
 const DEFAULT_ROWS: u16 = 24;
+
+pub const DEFAULT_OUTPUT_CAPACITY: usize = 1024 * 1024;
+
+#[derive(Default)]
+struct PtyOutputState {
+    bytes: VecDeque<u8>,
+    next_cursor: u64,
+    exited: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PtyOutputDelta {
+    pub bytes: Vec<u8>,
+    pub next_cursor: u64,
+    pub truncated: bool,
+    pub exited: bool,
+}
+
+/// Bounded shell-neutral PTY output model suitable for native UI polling.
+pub struct PtyOutputBuffer {
+    capacity: usize,
+    state: Mutex<PtyOutputState>,
+}
+
+impl Default for PtyOutputBuffer {
+    fn default() -> Self {
+        Self::new(DEFAULT_OUTPUT_CAPACITY)
+    }
+}
+
+impl PtyOutputBuffer {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            state: Mutex::new(PtyOutputState::default()),
+        }
+    }
+
+    pub fn push(&self, bytes: &[u8]) {
+        let mut state = self.state.lock().expect("pty output lock poisoned");
+        state.next_cursor = state.next_cursor.saturating_add(bytes.len() as u64);
+        let overflow = state
+            .bytes
+            .len()
+            .saturating_add(bytes.len())
+            .saturating_sub(self.capacity);
+        let retained_len = state.bytes.len();
+        state.bytes.drain(..overflow.min(retained_len));
+        let start = bytes.len().saturating_sub(self.capacity);
+        state.bytes.extend(&bytes[start..]);
+    }
+
+    pub fn mark_exited(&self) {
+        self.state.lock().expect("pty output lock poisoned").exited = true;
+    }
+
+    pub fn read_since(&self, cursor: u64) -> PtyOutputDelta {
+        let state = self.state.lock().expect("pty output lock poisoned");
+        let retained_start = state.next_cursor.saturating_sub(state.bytes.len() as u64);
+        let truncated = cursor < retained_start || cursor > state.next_cursor;
+        let effective_cursor = if truncated { retained_start } else { cursor };
+        let skip = effective_cursor.saturating_sub(retained_start) as usize;
+        PtyOutputDelta {
+            bytes: state.bytes.iter().skip(skip).copied().collect(),
+            next_cursor: state.next_cursor,
+            truncated,
+            exited: state.exited,
+        }
+    }
+}
 
 /// A live interactive PTY session and its background reader.
 pub struct PtySession {
