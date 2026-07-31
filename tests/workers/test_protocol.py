@@ -10,6 +10,41 @@ from runtime.workers import (
     negotiate,
 )
 from runtime.workers.protocol import normalize_persisted_version
+from runtime.workers.protocol import RemoteLeaseAuthority
+
+
+def test_remote_lease_is_bound_to_worker_revision_and_capabilities():
+    authority = RemoteLeaseAuthority(b"x" * 32, now=lambda: 100)
+    lease = authority.issue(
+        worker_id="worker-abc",
+        revision="a" * 40,
+        capabilities=REQUIRED_CAPABILITIES,
+        ttl_seconds=60,
+    )
+
+    assert authority.attest(
+        lease.token,
+        worker_id="worker-abc",
+        revision="a" * 40,
+        capabilities=REQUIRED_CAPABILITIES,
+        now=120,
+    ) == lease
+    with pytest.raises(WorkerProtocolError):
+        authority.attest(
+            lease.token,
+            worker_id="worker-abc",
+            revision="b" * 40,
+            capabilities=REQUIRED_CAPABILITIES,
+            now=120,
+        )
+    with pytest.raises(WorkerProtocolError):
+        authority.attest(
+            lease.token,
+            worker_id="worker-abc",
+            revision="a" * 40,
+            capabilities=REQUIRED_CAPABILITIES,
+            now=161,
+        )
 
 
 def test_worker_protocol_negotiates_required_local_capabilities():

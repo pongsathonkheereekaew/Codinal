@@ -4,6 +4,8 @@ from .protocol import (
     PROTOCOL_VERSION,
     REQUIRED_CAPABILITIES,
     WorkerHello,
+    RemoteLease,
+    RemoteLeaseAuthority,
     WorkerProtocolError,
     negotiate,
 )
@@ -19,6 +21,8 @@ __all__ = [
     "PROTOCOL_VERSION",
     "REQUIRED_CAPABILITIES",
     "WorkerHello",
+    "RemoteLease",
+    "RemoteLeaseAuthority",
     "WorkerRecord",
     "WorkerState",
     "WorkerStore",
