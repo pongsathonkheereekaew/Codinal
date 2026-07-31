@@ -26,5 +26,10 @@ same native registry.
 
 - PTY implementation and integration tests moved from Tauri to `native-host`.
 - Tauri now re-exports the native module and retains only event adaptation.
-- Remaining: GPUI terminal stream/render/input/resize/kill wiring and parity
-  verification.
+- GPUI now opens the trusted shell only after explicit user action, consumes
+  bounded cursor-based output on a per-open generation, and dispatches
+  interrupt/resize/kill operations off the foreground executor.
+- Exit and stop clean up unique native session IDs and permit a fresh buffer,
+  poll task, and PTY generation on reopen.
+- Remaining: full keyboard input, terminal escape-state emulation, dynamic
+  geometry, accessibility/performance replay, and packaged parity evidence.

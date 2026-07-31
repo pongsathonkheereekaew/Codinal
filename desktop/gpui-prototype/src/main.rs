@@ -43,6 +43,10 @@ mod secure_prompt {
 use codinal_control_plane_client::{
     ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient, PendingApproval,
 };
+#[cfg(target_os = "macos")]
+use codinal_native_host::pty::{
+    PtyOutputBuffer, PtyOutputDelta, PtyRegistry, DEFAULT_OUTPUT_CAPACITY,
+};
 use codinal_native_host::{
     free_loopback_port, launch_shadow_runtime_with_bootstrap, mint_session_token,
     secrets::{
@@ -51,6 +55,8 @@ use codinal_native_host::{
     },
     ShadowRuntime,
 };
+#[cfg(target_os = "macos")]
+use gpui::Task;
 use gpui::{
     div, px, rgb, size, App, AppContext, Bounds, Context, InteractiveElement, ParentElement,
     PromptLevel, Render, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
@@ -59,6 +65,8 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 use zeroize::Zeroizing;
 
 static NEXT_SHADOW: AtomicU64 = AtomicU64::new(0);
@@ -80,6 +88,43 @@ struct WorkspacePrototype {
     provider_edit_targets: Vec<String>,
     custom_provider_edit_targets: Vec<CustomProviderEditTarget>,
     provider_operation_in_flight: bool,
+    terminal_bytes: Vec<u8>,
+    terminal_status: String,
+    #[cfg(target_os = "macos")]
+    terminal_registry: Arc<PtyRegistry>,
+    #[cfg(target_os = "macos")]
+    terminal_session_id: String,
+    #[cfg(target_os = "macos")]
+    terminal_generation: u64,
+    #[cfg(target_os = "macos")]
+    terminal_workspace: String,
+    terminal_state: TerminalState,
+    #[cfg(target_os = "macos")]
+    terminal_poll: Option<Task<()>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalState {
+    Closed,
+    Opening,
+    Running,
+    Stopping,
+    Exited,
+    Failed,
+}
+
+impl TerminalState {
+    fn can_open(self) -> bool {
+        matches!(self, Self::Closed | Self::Exited | Self::Failed)
+    }
+}
+
+fn accepts_terminal_control_result(
+    current_generation: u64,
+    result_generation: u64,
+    state: TerminalState,
+) -> bool {
+    current_generation == result_generation && state == TerminalState::Running
 }
 
 #[derive(Clone)]
@@ -161,7 +206,215 @@ fn custom_provider_edit_targets(custom: &[CustomProviderRecord]) -> Vec<CustomPr
         .collect()
 }
 
+#[cfg(target_os = "macos")]
+fn apply_terminal_delta(bytes: &mut Vec<u8>, status: &mut String, delta: &PtyOutputDelta) {
+    if delta.truncated {
+        bytes.clear();
+        *status = "Terminal history truncated to bounded tail".to_owned();
+    }
+    bytes.extend_from_slice(&delta.bytes);
+    let overflow = bytes.len().saturating_sub(DEFAULT_OUTPUT_CAPACITY);
+    if overflow > 0 {
+        bytes.drain(..overflow);
+    }
+    if delta.exited {
+        *status = "Terminal exited".to_owned();
+    }
+}
+
 impl WorkspacePrototype {
+    #[cfg(target_os = "macos")]
+    fn open_terminal(&mut self, cx: &mut Context<Self>) {
+        if !self.terminal_state.can_open() {
+            return;
+        }
+        self.terminal_state = TerminalState::Opening;
+        self.terminal_generation = self.terminal_generation.saturating_add(1);
+        self.terminal_session_id = format!("gpui-main-terminal-{}", self.terminal_generation);
+        self.terminal_status = "Opening terminal…".to_owned();
+        self.terminal_bytes.clear();
+        cx.notify();
+        let registry = Arc::clone(&self.terminal_registry);
+        let output = Arc::new(PtyOutputBuffer::default());
+        let callback_output = Arc::clone(&output);
+        let session_id = self.terminal_session_id.clone();
+        let workspace = self.terminal_workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let opened = cx
+                .background_executor()
+                .spawn(async move {
+                    registry.open(&session_id, &workspace, None, 100, 30, move |_, chunk| {
+                        match chunk {
+                            Some(bytes) => callback_output.push(bytes),
+                            None => callback_output.mark_exited(),
+                        }
+                    })
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match opened {
+                    Ok(()) => {
+                        this.terminal_state = TerminalState::Running;
+                        this.terminal_status = "Terminal running · raw PTY output".to_owned();
+                        this.start_terminal_poll(output, this.terminal_generation, cx);
+                    }
+                    Err(error) => {
+                        this.terminal_state = TerminalState::Failed;
+                        this.terminal_status = format!("Terminal open failed: {error}");
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_terminal_poll(
+        &mut self,
+        output: Arc<PtyOutputBuffer>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let registry = Arc::clone(&self.terminal_registry);
+        let session_id = self.terminal_session_id.clone();
+        self.terminal_poll = Some(cx.spawn(async move |this, cx| {
+            let mut cursor = 0;
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(33))
+                    .await;
+                let delta = output.read_since(cursor);
+                cursor = delta.next_cursor;
+                let exited = delta.exited;
+                if delta.truncated || !delta.bytes.is_empty() || exited {
+                    let _ = this.update(cx, |this, cx| {
+                        if this.terminal_generation != generation {
+                            return;
+                        }
+                        apply_terminal_delta(
+                            &mut this.terminal_bytes,
+                            &mut this.terminal_status,
+                            &delta,
+                        );
+                        if exited {
+                            this.terminal_state = TerminalState::Stopping;
+                            this.terminal_status = "Terminal exited · cleaning up".to_owned();
+                        }
+                        cx.notify();
+                    });
+                }
+                if exited {
+                    break;
+                }
+            }
+            let _ = cx
+                .background_executor()
+                .spawn(async move { registry.kill(&session_id) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.terminal_generation != generation {
+                    return;
+                }
+                this.terminal_state = TerminalState::Exited;
+                this.terminal_status = "Terminal exited".to_owned();
+                cx.notify();
+            });
+        }));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn send_terminal_interrupt(&mut self, cx: &mut Context<Self>) {
+        let registry = Arc::clone(&self.terminal_registry);
+        let session_id = self.terminal_session_id.clone();
+        let generation = self.terminal_generation;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { registry.write(&session_id, b"\x03") })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !accepts_terminal_control_result(
+                    this.terminal_generation,
+                    generation,
+                    this.terminal_state,
+                ) {
+                    return;
+                }
+                this.terminal_status = match result {
+                    Ok(()) => "Sent Ctrl-C".to_owned(),
+                    Err(error) => format!("Terminal input failed: {error}"),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn resize_terminal(&mut self, cols: u16, rows: u16, cx: &mut Context<Self>) {
+        let registry = Arc::clone(&self.terminal_registry);
+        let session_id = self.terminal_session_id.clone();
+        let generation = self.terminal_generation;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { registry.resize(&session_id, cols, rows) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !accepts_terminal_control_result(
+                    this.terminal_generation,
+                    generation,
+                    this.terminal_state,
+                ) {
+                    return;
+                }
+                this.terminal_status = match result {
+                    Ok(()) => format!("Terminal resized to {cols}×{rows}"),
+                    Err(error) => format!("Terminal resize failed: {error}"),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn kill_terminal(&mut self, cx: &mut Context<Self>) {
+        if self.terminal_state != TerminalState::Running {
+            return;
+        }
+        self.terminal_state = TerminalState::Stopping;
+        self.terminal_status = "Stopping terminal…".to_owned();
+        cx.notify();
+        let registry = Arc::clone(&self.terminal_registry);
+        let session_id = self.terminal_session_id.clone();
+        let generation = self.terminal_generation;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { registry.kill(&session_id) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.terminal_generation != generation {
+                    return;
+                }
+                match result {
+                    Ok(_) => {
+                        this.terminal_state = TerminalState::Exited;
+                        this.terminal_status = "Terminal stopped".to_owned();
+                    }
+                    Err(error) => {
+                        this.terminal_state = TerminalState::Failed;
+                        this.terminal_status = format!("Terminal stop failed: {error}");
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn show_approval_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(detail) = self.approval_prompt_detail.as_deref() else {
             return;
@@ -572,7 +825,104 @@ impl Render for WorkspacePrototype {
                 !self.provider_operation_in_flight,
                 cx,
             ))
+            .child(terminal_pane(
+                &String::from_utf8_lossy(&self.terminal_bytes),
+                &self.terminal_status,
+                self.terminal_state,
+                cx,
+            ))
     }
+}
+
+fn terminal_pane(
+    output: &str,
+    status: &str,
+    state: TerminalState,
+    cx: &mut Context<WorkspacePrototype>,
+) -> impl gpui::IntoElement {
+    let mut actions = div().flex().flex_row().flex_wrap();
+    #[cfg(target_os = "macos")]
+    {
+        if state.can_open() {
+            actions = actions.child(
+                div()
+                    .id("terminal-open")
+                    .px_2()
+                    .py_1()
+                    .bg(rgb(0x30363d))
+                    .child("Open terminal")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_terminal(cx);
+                    })),
+            );
+        } else if state == TerminalState::Running {
+            actions = actions
+                .child(
+                    div()
+                        .id("terminal-interrupt")
+                        .mr_2()
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(0x30363d))
+                        .child("Ctrl-C")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.send_terminal_interrupt(cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("terminal-resize-small")
+                        .mr_2()
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(0x30363d))
+                        .child("80×24")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.resize_terminal(80, 24, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("terminal-resize-large")
+                        .mr_2()
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(0x30363d))
+                        .child("120×40")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.resize_terminal(120, 40, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("terminal-kill")
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(0x5a1d1d))
+                        .child("Stop terminal")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.kill_terminal(cx);
+                        })),
+                );
+        }
+    }
+    div()
+        .id("native-terminal-pane")
+        .h(px(220.0))
+        .overflow_y_scroll()
+        .border_t_1()
+        .border_color(rgb(0x30363d))
+        .p_3()
+        .child(div().text_lg().child("Native terminal stream"))
+        .child(div().mt_2().text_sm().child(status.to_owned()))
+        .child(actions)
+        .child(
+            div()
+                .mt_2()
+                .text_sm()
+                .text_color(rgb(0xc9d1d9))
+                .child(output.to_owned()),
+        )
 }
 
 fn provider_settings_pane(
@@ -836,8 +1186,29 @@ fn start_native_runtime() -> io::Result<(
     Ok((client, runtime, provider_settings))
 }
 
+#[cfg(target_os = "macos")]
+fn prepare_native_terminal() -> io::Result<(Arc<PtyRegistry>, String, String)> {
+    let workspace = std::env::var_os("CODINAL_WORKSPACE")
+        .map(PathBuf::from)
+        .unwrap_or(development_data_dir()?);
+    let workspace = workspace
+        .to_str()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "terminal workspace is not UTF-8",
+            )
+        })?
+        .to_owned();
+    let registry = Arc::new(PtyRegistry::default());
+    let session_id = "gpui-main-terminal".to_owned();
+    Ok((registry, session_id, workspace))
+}
+
 fn main() -> io::Result<()> {
     let (client, runtime, provider_settings_controller) = start_native_runtime()?;
+    #[cfg(target_os = "macos")]
+    let (terminal_registry, terminal_session_id, terminal_workspace) = prepare_native_terminal()?;
     let sessions = client.list_sessions()?;
     let session_count = sessions.len();
     let session_labels = if sessions.is_empty() {
@@ -885,7 +1256,7 @@ fn main() -> io::Result<()> {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_| WorkspacePrototype {
+                cx.new(|_cx: &mut Context<WorkspacePrototype>| WorkspacePrototype {
                     _runtime: runtime,
                     client,
                     approval_session_id,
@@ -902,6 +1273,19 @@ fn main() -> io::Result<()> {
                     provider_edit_targets,
                     custom_provider_edit_targets,
                     provider_operation_in_flight: false,
+                    terminal_bytes: Vec::new(),
+                    terminal_status: "Terminal closed".to_owned(),
+                    terminal_state: TerminalState::Closed,
+                    #[cfg(target_os = "macos")]
+                    terminal_registry,
+                    #[cfg(target_os = "macos")]
+                    terminal_session_id,
+                    #[cfg(target_os = "macos")]
+                    terminal_generation: 0,
+                    #[cfg(target_os = "macos")]
+                    terminal_workspace,
+                    #[cfg(target_os = "macos")]
+                    terminal_poll: None,
                 })
             },
         )
@@ -918,6 +1302,8 @@ mod tests {
         custom_provider_edit_targets, CustomProviderRecord, ProviderDeleteOutcome,
         ProviderEditOutcome,
     };
+    #[cfg(target_os = "macos")]
+    use codinal_native_host::pty::PtyOutputDelta;
     use std::io;
 
     #[test]
@@ -964,5 +1350,53 @@ mod tests {
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].slug, "remaining");
         assert!(!targets.iter().any(|provider| provider.slug == "deleted"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_delta_replaces_truncated_history_and_marks_exit() {
+        let mut bytes = b"stale".to_vec();
+        let mut status = "running".to_owned();
+        super::apply_terminal_delta(
+            &mut bytes,
+            &mut status,
+            &PtyOutputDelta {
+                bytes: b"tail".to_vec(),
+                next_cursor: 10,
+                truncated: true,
+                exited: true,
+            },
+        );
+        assert_eq!(bytes, b"tail");
+        assert_eq!(status, "Terminal exited");
+    }
+
+    #[test]
+    fn terminal_lifecycle_allows_reopen_only_after_terminal_states() {
+        assert!(super::TerminalState::Closed.can_open());
+        assert!(super::TerminalState::Exited.can_open());
+        assert!(super::TerminalState::Failed.can_open());
+        assert!(!super::TerminalState::Opening.can_open());
+        assert!(!super::TerminalState::Running.can_open());
+        assert!(!super::TerminalState::Stopping.can_open());
+    }
+
+    #[test]
+    fn late_terminal_control_result_cannot_overwrite_stopped_state() {
+        assert!(super::accepts_terminal_control_result(
+            3,
+            3,
+            super::TerminalState::Running,
+        ));
+        assert!(!super::accepts_terminal_control_result(
+            3,
+            3,
+            super::TerminalState::Stopping,
+        ));
+        assert!(!super::accepts_terminal_control_result(
+            4,
+            3,
+            super::TerminalState::Running,
+        ));
     }
 }
