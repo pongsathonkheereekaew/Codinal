@@ -347,6 +347,7 @@ name = "codinal-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.0",
+ "codinal-native-host",
  "getrandom 0.4.3",
  "libc",
  "nix",
@@ -364,6 +365,19 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "url",
+ "zeroize",
+]
+
+[[package]]
+name = "codinal-native-host"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.0",
+ "getrandom 0.4.3",
+ "security-framework",
+ "security-framework-sys",
+ "serde",
+ "serde_json",
  "zeroize",
 ]
 

@@ -17,6 +17,7 @@ path = "src/main.rs"
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
+codinal-native-host = { path = "../native-host" }
 base64 = "=0.23.0"
 getrandom = "=0.4.3"
 rfd = "=0.17.2"

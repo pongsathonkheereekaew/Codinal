@@ -1,13 +1,13 @@
 pub mod control_client;
 pub mod gpui_control_plane;
-pub mod host;
+pub use codinal_native_host::host;
 #[cfg(target_os = "macos")]
 pub mod lsp;
 pub mod oauth;
 pub mod project_open;
 #[cfg(target_os = "macos")]
 pub mod pty;
-pub mod secrets;
+pub use codinal_native_host::secrets;
 pub mod workspace;
 
 use std::process::Child;
