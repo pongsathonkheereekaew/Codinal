@@ -34,6 +34,7 @@ struct WorkspacePrototype {
     session_count: usize,
     session_labels: String,
     conversation: String,
+    approvals: String,
 }
 
 impl Render for WorkspacePrototype {
@@ -55,7 +56,7 @@ impl Render for WorkspacePrototype {
                     .flex_1()
                     .child(session_pane(&self.session_labels))
                     .child(conversation_pane(&self.conversation))
-                    .child(pane("Review", "diff and explicit apply evidence")),
+                    .child(approval_pane(&self.approvals)),
             )
             .child(
                 div()
@@ -79,23 +80,6 @@ fn header(sidecar: String) -> impl gpui::IntoElement {
         .border_color(rgb(0x30363d))
         .child(format!("Codinal GPUI prototype — {sidecar}"))
         .child("⌘K command palette · ⌘. cancel")
-}
-
-fn pane(title: &'static str, state: &'static str) -> impl gpui::IntoElement {
-    div()
-        .flex_1()
-        .min_w(px(220.0))
-        .border_r_1()
-        .border_color(rgb(0x30363d))
-        .p_3()
-        .child(div().text_lg().child(title))
-        .child(
-            div()
-                .mt_2()
-                .text_sm()
-                .text_color(rgb(0x8b949e))
-                .child(state),
-        )
 }
 
 fn session_pane(labels: &str) -> impl gpui::IntoElement {
@@ -129,6 +113,23 @@ fn conversation_pane(messages: &str) -> impl gpui::IntoElement {
                 .text_sm()
                 .text_color(rgb(0x8b949e))
                 .child(messages.to_owned()),
+        )
+}
+
+fn approval_pane(approvals: &str) -> impl gpui::IntoElement {
+    div()
+        .flex_1()
+        .min_w(px(220.0))
+        .border_r_1()
+        .border_color(rgb(0x30363d))
+        .p_3()
+        .child(div().text_lg().child("Approvals"))
+        .child(
+            div()
+                .mt_2()
+                .text_sm()
+                .text_color(rgb(0x8b949e))
+                .child(approvals.to_owned()),
         )
 }
 
@@ -194,6 +195,31 @@ fn main() -> io::Result<()> {
             .join("\n\n"),
         None => "Select a session to view its conversation".to_owned(),
     };
+    let approvals = match sessions.first() {
+        Some(session) => {
+            let approvals = client.pending_approvals(&session.session_id)?;
+            if approvals.is_empty() {
+                "No pending approvals".to_owned()
+            } else {
+                approvals
+                    .iter()
+                    .map(|approval| {
+                        let command = approval
+                            .command
+                            .as_deref()
+                            .map(|value| format!("\n{value}"))
+                            .unwrap_or_default();
+                        format!(
+                            "{} · {}\n{}{}\nRead-only until native confirmation UI ships",
+                            approval.risk, approval.tool_name, approval.reason, command
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            }
+        }
+        None => "No pending approvals".to_owned(),
+    };
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -207,6 +233,7 @@ fn main() -> io::Result<()> {
                     session_count,
                     session_labels,
                     conversation,
+                    approvals,
                 })
             },
         )

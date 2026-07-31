@@ -26,6 +26,15 @@ pub struct MessageSummary {
     pub text: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct PendingApproval {
+    pub approval_id: String,
+    pub tool_name: String,
+    pub reason: String,
+    pub risk: String,
+    pub command: Option<String>,
+}
+
 impl ControlPlaneClient {
     pub fn new(port: u16, token: &str) -> io::Result<Self> {
         if port == 0
@@ -95,6 +104,18 @@ impl ControlPlaneClient {
             )
         })?;
         messages.iter().map(parse_message_summary).collect()
+    }
+
+    pub fn pending_approvals(&self, session_id: &str) -> io::Result<Vec<PendingApproval>> {
+        validate_session_id(session_id)?;
+        let response = self.get_json(&format!("sessions/{session_id}/approvals"))?;
+        let approvals = response.as_array().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "approvals response must be an array",
+            )
+        })?;
+        approvals.iter().map(parse_pending_approval).collect()
     }
 }
 
@@ -166,6 +187,41 @@ fn parse_message_summary(value: &serde_json::Value) -> io::Result<MessageSummary
     })
 }
 
+fn parse_pending_approval(value: &serde_json::Value) -> io::Result<PendingApproval> {
+    let object = value.as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "approval response must be an object",
+        )
+    })?;
+    let required = |field| {
+        object
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid approval response"))
+    };
+    let approval_id = required("approval_id")?;
+    if approval_id.len() != 32 || !approval_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid approval response",
+        ));
+    }
+    Ok(PendingApproval {
+        approval_id,
+        tool_name: required("tool_name")?,
+        reason: required("reason")?,
+        risk: required("risk")?,
+        command: object
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned),
+    })
+}
+
 fn validate_route(path: &str) -> io::Result<()> {
     if path.is_empty() || path.starts_with('/') || path.contains('?') || path.contains('#') {
         return Err(io::Error::new(
@@ -215,7 +271,7 @@ impl Request {
 
 #[cfg(test)]
 mod tests {
-    use super::ControlPlaneClient;
+    use super::{parse_pending_approval, ControlPlaneClient};
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -260,5 +316,19 @@ mod tests {
         let client = ControlPlaneClient::new(1, TOKEN).expect("client");
         assert!(client.session_messages("../secrets").is_err());
         assert!(client.session_messages("__internal").is_err());
+    }
+
+    #[test]
+    fn parses_pending_approval_without_arguments() {
+        let approval = parse_pending_approval(&serde_json::json!({
+            "approval_id": "0123456789abcdef0123456789abcdef",
+            "tool_name": "shell",
+            "reason": "writes a local file",
+            "risk": "write_local",
+            "command": ""
+        }))
+        .expect("approval");
+        assert_eq!(approval.risk, "write_local");
+        assert_eq!(approval.command, None);
     }
 }
