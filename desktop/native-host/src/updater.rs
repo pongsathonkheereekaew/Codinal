@@ -10,6 +10,7 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use tar::EntryType;
 use tempfile::TempDir;
@@ -25,6 +26,8 @@ const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const RESTART_HELPER_FLAG: &str = "--codinal-restart-after-pid";
+const RESTART_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub enum UpdateError {
@@ -182,6 +185,100 @@ impl NativeUpdater {
     pub fn rollback(&self) -> Result<(), UpdateError> {
         rollback_app(&self.app_bundle)
     }
+
+    pub fn spawn_restart_helper(&self) -> Result<(), UpdateError> {
+        let executable = std::env::current_exe()?;
+        Command::new(executable)
+            .arg(RESTART_HELPER_FLAG)
+            .arg(std::process::id().to_string())
+            .arg(&self.app_bundle)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_restart_helper_if_requested() -> Result<bool, UpdateError> {
+    let mut arguments = std::env::args_os();
+    let _executable = arguments.next();
+    let Some(flag) = arguments.next() else {
+        return Ok(false);
+    };
+    if flag != RESTART_HELPER_FLAG {
+        return Ok(false);
+    }
+    let pid = arguments
+        .next()
+        .ok_or_else(|| UpdateError::InvalidConfig("restart helper PID is missing".to_owned()))?
+        .into_string()
+        .map_err(|_| UpdateError::InvalidConfig("restart helper PID is invalid".to_owned()))?
+        .parse::<i32>()
+        .map_err(|_| UpdateError::InvalidConfig("restart helper PID is invalid".to_owned()))?;
+    let app_bundle = arguments.next().map(PathBuf::from).ok_or_else(|| {
+        UpdateError::InvalidConfig("restart helper app bundle is missing".to_owned())
+    })?;
+    if arguments.next().is_some() || pid <= 1 || pid == std::process::id() as i32 {
+        return Err(UpdateError::InvalidConfig(
+            "restart helper arguments are invalid".to_owned(),
+        ));
+    }
+    validate_app_bundle_path(&app_bundle)?;
+    let helper_bundle = app_bundle_for_executable(&std::env::current_exe()?)?;
+    if fs::canonicalize(&app_bundle)? != fs::canonicalize(helper_bundle)? {
+        return Err(UpdateError::InvalidConfig(
+            "restart helper may reopen only its containing app bundle".to_owned(),
+        ));
+    }
+    let deadline = std::time::Instant::now() + RESTART_WAIT_TIMEOUT;
+    while process_exists(pid) {
+        if std::time::Instant::now() >= deadline {
+            return Err(UpdateError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out waiting for Codinal to exit",
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !app_bundle.is_dir() {
+        return Err(UpdateError::InvalidConfig(
+            "restart helper app bundle does not exist".to_owned(),
+        ));
+    }
+    let status = Command::new("/usr/bin/open")
+        .arg("-n")
+        .arg(&app_bundle)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if !status.success() {
+        return Err(UpdateError::Io(io::Error::other(
+            "could not reopen Codinal after update",
+        )));
+    }
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn process_exists(pid: i32) -> bool {
+    let result = unsafe { libc::kill(pid, 0) };
+    result == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+fn app_bundle_for_executable(executable: &Path) -> Result<PathBuf, UpdateError> {
+    let contents = executable
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| UpdateError::InvalidConfig("invalid app bundle layout".to_owned()))?;
+    let app_bundle = contents
+        .parent()
+        .ok_or_else(|| UpdateError::InvalidConfig("invalid app bundle layout".to_owned()))?
+        .to_owned();
+    validate_app_bundle_path(&app_bundle)?;
+    Ok(app_bundle)
 }
 
 fn https_redirect(attempt: Attempt<'_>) -> Action {
@@ -546,6 +643,16 @@ mod tests {
         .err()
         .expect("invalid version must be rejected");
         assert!(matches!(error, UpdateError::InvalidConfig(_)));
+    }
+
+    #[test]
+    fn restart_helper_derives_only_the_containing_app_bundle() {
+        let bundle = app_bundle_for_executable(Path::new(
+            "/Applications/Codinal.app/Contents/MacOS/codinal",
+        ))
+        .unwrap();
+        assert_eq!(bundle, Path::new("/Applications/Codinal.app"));
+        assert!(app_bundle_for_executable(Path::new("/tmp/codinal")).is_err());
     }
 
     #[test]

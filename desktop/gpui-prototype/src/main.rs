@@ -47,6 +47,8 @@ use codinal_native_host::control_client::OAuthRelayController;
 #[cfg(target_os = "macos")]
 use codinal_native_host::pty::{PtyOutputBuffer, PtyOutputDelta, PtyRegistry};
 #[cfg(target_os = "macos")]
+use codinal_native_host::updater::run_restart_helper_if_requested;
+#[cfg(target_os = "macos")]
 use codinal_native_host::workspace::choose_workspace as choose_native_workspace;
 use codinal_native_host::{
     free_loopback_port, launch_native_runtime_with_bootstrap, launch_shadow_runtime_with_bootstrap,
@@ -557,6 +559,22 @@ fn should_request_terminal_resize(
 }
 
 impl WorkspacePrototype {
+    fn restart_after_update(&mut self, cx: &mut Context<Self>) {
+        if !self.updater_restart_required || self.updater_operation_in_flight {
+            return;
+        }
+        let Some(updater) = self.updater.as_ref() else {
+            return;
+        };
+        match updater.spawn_restart_helper() {
+            Ok(()) => cx.quit(),
+            Err(error) => {
+                self.updater_status = format!("Could not restart Codinal: {error}");
+                cx.notify();
+            }
+        }
+    }
+
     fn check_for_update(&mut self, cx: &mut Context<Self>) {
         if self.updater_operation_in_flight || self.updater_restart_required {
             return;
@@ -1671,6 +1689,18 @@ fn updater_pane(
         }
     }
     if configured && idle {
+        if restart_required {
+            actions = actions.child(
+                div()
+                    .id("update-restart")
+                    .mr_2()
+                    .px_2()
+                    .py_1()
+                    .bg(rgb(0x245c35))
+                    .child("Restart now")
+                    .on_click(cx.listener(|this, _, _, cx| this.restart_after_update(cx))),
+            );
+        }
         actions = actions.child(
             div()
                 .id("update-rollback")
@@ -2171,6 +2201,10 @@ fn prepare_native_terminal() -> io::Result<(Arc<PtyRegistry>, String, String)> {
 }
 
 fn main() -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    if run_restart_helper_if_requested().map_err(io::Error::other)? {
+        return Ok(());
+    }
     let (client, runtime, provider_settings_controller, oauth_relay) = start_native_runtime()?;
     let updater = release_updater()?;
     #[cfg(target_os = "macos")]
