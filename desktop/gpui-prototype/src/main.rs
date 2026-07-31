@@ -6,7 +6,9 @@
 //! This development shell boots the authenticated Rust runtime on an isolated
 //! snapshot, while its UI remains an opt-in prototype.
 
-use codinal_control_plane_client::ControlPlaneClient;
+use codinal_control_plane_client::{
+    ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient, PendingApproval,
+};
 use codinal_native_host::{
     free_loopback_port, launch_shadow_runtime_with_bootstrap, mint_session_token,
     secrets::{encode_secret_bootstrap, PlatformSecretVault},
@@ -19,12 +21,16 @@ use gpui::{
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use zeroize::Zeroizing;
 
 static NEXT_SHADOW: AtomicU64 = AtomicU64::new(0);
 
 struct WorkspacePrototype {
     _runtime: ShadowRuntime,
+    client: Arc<ControlPlaneClient>,
+    approval_session_id: Option<String>,
+    approval_id: Option<String>,
     session_count: usize,
     session_labels: String,
     conversation: String,
@@ -42,23 +48,87 @@ impl WorkspacePrototype {
             PromptLevel::Warning,
             "Review pending approval",
             Some(detail),
-            &["Cancel", "Review only"],
+            &["Cancel", "Deny request"],
             cx,
         );
+        let client = Arc::clone(&self.client);
+        let session_id = self.approval_session_id.clone();
+        let approval_id = self.approval_id.clone();
         cx.spawn(async move |this, cx| {
             let choice = response.await.unwrap_or(0);
-            let status = if choice == 0 {
-                "Approval review cancelled — no action sent"
+            let (status, pending) = if choice == 1 {
+                match (session_id, approval_id) {
+                    (Some(session_id), Some(approval_id)) => {
+                        let submission = (|| {
+                            let mut confirmation = ApprovalConfirmation::new(
+                                &session_id,
+                                &approval_id,
+                                ApprovalOutcome::Deny,
+                            )?;
+                            confirmation.confirm();
+                            client.resolve_confirmation(&confirmation)
+                        })();
+                        match submission {
+                            Ok(true) => match client.pending_approvals(&session_id) {
+                                Ok(pending) => {
+                                    ("Request denied — live state reloaded", Some(pending))
+                                }
+                                Err(_) => (
+                                    "Request denied — reload failed; reopen the pane to refresh",
+                                    Some(Vec::new()),
+                                ),
+                            },
+                            Ok(false) | Err(_) => ("Decision failed — live state unchanged", None),
+                        }
+                    }
+                    _ => ("Decision cancelled — approval is no longer pending", None),
+                }
             } else {
-                "Approval reviewed — no action sent"
+                ("Approval review cancelled — no action sent", None)
             };
             let _ = this.update(cx, |this, cx| {
                 this.approval_review_status = status.to_owned();
+                if let Some(pending) = pending {
+                    this.set_pending_approvals(pending);
+                }
                 cx.notify();
             });
         })
         .detach();
     }
+
+    fn set_pending_approvals(&mut self, pending: Vec<PendingApproval>) {
+        self.approvals = format_pending_approvals(&pending);
+        self.approval_id = pending.first().map(|approval| approval.approval_id.clone());
+        self.approval_prompt_detail = pending.first().map(format_approval_detail);
+    }
+}
+
+fn format_pending_approvals(pending: &[PendingApproval]) -> String {
+    if pending.is_empty() {
+        "No pending approvals".to_owned()
+    } else {
+        pending
+            .iter()
+            .take(20)
+            .map(|approval| {
+                format!(
+                    "{} · {} · {}",
+                    approval.risk, approval.tool_name, approval.reason
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn format_approval_detail(approval: &PendingApproval) -> String {
+    let arguments = serde_json::to_string_pretty(&approval.arguments)
+        .unwrap_or_else(|_| "[invalid arguments]".to_owned());
+    format!(
+        "Risk: {}\nTool: {}\nReason: {}\nArguments:\n{}",
+        approval.risk, approval.tool_name, approval.reason, arguments
+    )
 }
 
 impl Render for WorkspacePrototype {
@@ -260,9 +330,15 @@ fn main() -> io::Result<()> {
             .join("\n\n"),
         None => "Select a session to view its conversation".to_owned(),
     };
-    let approvals =
-        "Approval producer is not yet connected to the Rust runtime — review disabled".to_owned();
-    let approval_prompt_detail = None;
+    let client = Arc::new(client);
+    let approval_session_id = sessions.first().map(|session| session.session_id.clone());
+    let pending = match approval_session_id.as_deref() {
+        Some(session_id) => client.pending_approvals(session_id)?,
+        None => Vec::new(),
+    };
+    let approvals = format_pending_approvals(&pending);
+    let approval_id = pending.first().map(|approval| approval.approval_id.clone());
+    let approval_prompt_detail = pending.first().map(format_approval_detail);
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -273,6 +349,9 @@ fn main() -> io::Result<()> {
             |_, cx| {
                 cx.new(|_| WorkspacePrototype {
                     _runtime: runtime,
+                    client,
+                    approval_session_id,
+                    approval_id,
                     session_count,
                     session_labels,
                     conversation,

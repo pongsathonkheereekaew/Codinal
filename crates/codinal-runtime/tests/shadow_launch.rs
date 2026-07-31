@@ -72,6 +72,21 @@ fn create_fixture_databases(path: &Path) {
         .databases
     {
         let connection = Connection::open(path.join(&database.file)).expect("database");
+        if database.file == "audit.db" {
+            connection
+                .execute_batch(
+                    "CREATE TABLE events (
+                       seq INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL,
+                       domain TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL,
+                       subject TEXT NOT NULL, payload TEXT NOT NULL,
+                       prev_hash TEXT NOT NULL, hash TEXT NOT NULL
+                     );
+                     CREATE INDEX events_domain_seq ON events(domain, seq);
+                     PRAGMA user_version = 1;",
+                )
+                .expect("audit schema");
+            continue;
+        }
         connection
             .execute_batch(&format!("PRAGMA user_version = {};", database.user_version))
             .expect("version");

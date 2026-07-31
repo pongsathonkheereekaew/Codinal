@@ -188,6 +188,7 @@ pub struct RuntimeConfig {
     token: Zeroizing<String>,
     data_dir: PathBuf,
     approval_broker: Arc<Mutex<ApprovalBroker>>,
+    audit_ledger: Option<codinal_policy::AuditLedger>,
     ollama_port: u16,
 }
 
@@ -229,8 +230,9 @@ impl Drop for RuntimeOwnerLock {
 
 impl RuntimeBootstrap {
     pub fn from_values(port: u16, token: &str, data_dir: &Path) -> io::Result<Self> {
-        let config = RuntimeConfig::new(port, token, data_dir)?;
+        let mut config = RuntimeConfig::new(port, token, data_dir)?;
         let owner_lock = RuntimeOwnerLock::acquire(config.data_dir())?;
+        config.attach_audit_ledger()?;
         Ok(Self {
             config,
             provider_secrets: ProviderSecrets::empty(),
@@ -338,6 +340,7 @@ impl RuntimeConfig {
             token: Zeroizing::new(token.to_owned()),
             data_dir: data_dir.to_owned(),
             approval_broker: Arc::new(Mutex::new(ApprovalBroker::default())),
+            audit_ledger: None,
             ollama_port,
         })
     }
@@ -352,6 +355,21 @@ impl RuntimeConfig {
 
     pub fn approval_broker(&self) -> Arc<Mutex<ApprovalBroker>> {
         Arc::clone(&self.approval_broker)
+    }
+
+    fn attach_audit_ledger(&mut self) -> io::Result<()> {
+        self.audit_ledger = self
+            .data_dir
+            .join("audit.db")
+            .exists()
+            .then(|| {
+                codinal_policy::AuditLedger::open(
+                    &self.data_dir,
+                    codinal_policy::AuditRedactor::default(),
+                )
+            })
+            .transpose()?;
+        Ok(())
     }
 
     pub fn ingest_provider_turn(
@@ -616,6 +634,117 @@ fn serve_stream(mut stream: TcpStream, config: &RuntimeConfig) -> io::Result<()>
             };
         }
     }
+    if request.method == "POST" {
+        if let Some((session_id, approval_id)) = parse_approval_decision_path(&request.path) {
+            if !codinal_storage::public_session_exists(config.data_dir(), session_id)? {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid session id\"}",
+                    None,
+                );
+            }
+            if approval_id.len() != 32
+                || !approval_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid approval id\"}",
+                    None,
+                );
+            }
+            let decision: serde_json::Value = match serde_json::from_slice(&request.body) {
+                Ok(decision) => decision,
+                Err(_) => {
+                    return write_response(
+                        &mut stream,
+                        "400 Bad Request",
+                        "{\"detail\":\"invalid approval decision\"}",
+                        None,
+                    );
+                }
+            };
+            let outcome = decision
+                .as_object()
+                .filter(|object| object.len() == 1)
+                .and_then(|object| object.get("outcome"))
+                .and_then(serde_json::Value::as_str);
+            if !matches!(
+                outcome,
+                Some("once" | "always_tool" | "always_command" | "deny")
+            ) {
+                return write_response(
+                    &mut stream,
+                    "400 Bad Request",
+                    "{\"detail\":\"invalid approval decision\"}",
+                    None,
+                );
+            }
+            if outcome != Some("deny") {
+                return write_response(
+                    &mut stream,
+                    "409 Conflict",
+                    "{\"detail\":\"approval outcome is not yet applicable\"}",
+                    None,
+                );
+            }
+            let mut broker = config
+                .approval_broker
+                .lock()
+                .map_err(|_| io::Error::other("approval broker lock poisoned"))?;
+            if !broker
+                .pending(session_id)
+                .iter()
+                .any(|pending| pending.approval_id == approval_id)
+            {
+                return write_response(
+                    &mut stream,
+                    "409 Conflict",
+                    "{\"detail\":\"approval is no longer pending\"}",
+                    None,
+                );
+            }
+            let Some(audit) = config.audit_ledger.as_ref() else {
+                return write_response(
+                    &mut stream,
+                    "503 Service Unavailable",
+                    "{\"detail\":\"approval decision could not be saved\"}",
+                    None,
+                );
+            };
+            if audit
+                .record(codinal_policy::AuditLedgerInput {
+                    domain: "approval".to_owned(),
+                    action: "resolve".to_owned(),
+                    actor: "system".to_owned(),
+                    subject: approval_id.to_owned(),
+                    payload: serde_json::json!({"outcome": outcome.expect("validated outcome")}),
+                })
+                .is_err()
+            {
+                return write_response(
+                    &mut stream,
+                    "503 Service Unavailable",
+                    "{\"detail\":\"approval decision could not be saved\"}",
+                    None,
+                );
+            }
+            let resolved = broker.resolve(session_id, approval_id);
+            return if resolved {
+                write_response(&mut stream, "200 OK", "{\"ok\":true}", None)
+            } else {
+                write_response(
+                    &mut stream,
+                    "409 Conflict",
+                    "{\"detail\":\"approval is no longer pending\"}",
+                    None,
+                )
+            };
+        }
+    }
     write_response(
         &mut stream,
         "404 Not Found",
@@ -682,6 +811,7 @@ struct RequestHead {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
+    body: Vec<u8>,
 }
 
 fn read_headers(stream: &mut TcpStream) -> io::Result<RequestHead> {
@@ -735,11 +865,50 @@ fn read_headers(stream: &mut TcpStream) -> io::Result<RequestHead> {
             Ok((name.trim().to_ascii_lowercase(), value.trim().to_owned()))
         })
         .collect::<io::Result<Vec<_>>>()?;
+    let content_lengths = headers
+        .iter()
+        .filter(|(name, _)| name == "content-length")
+        .map(|(_, value)| value.parse::<usize>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid content length"))?;
+    if content_lengths.len() > 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "duplicate content length",
+        ));
+    }
+    let content_length = content_lengths.first().copied().unwrap_or(0);
+    if content_length > MAX_REQUEST_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "request body exceeds limit",
+        ));
+    }
+    let body_start = end + 4;
+    while request.len() < body_start + content_length {
+        let read = stream.read(&mut buffer)?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "incomplete request body",
+            ));
+        }
+        request.extend_from_slice(&buffer[..read]);
+    }
+    let body = request[body_start..body_start + content_length].to_vec();
     Ok(RequestHead {
         method,
         path,
         headers,
+        body,
     })
+}
+
+fn parse_approval_decision_path(path: &str) -> Option<(&str, &str)> {
+    let path = path.strip_prefix("/v1/sessions/")?;
+    let (session_id, remainder) = path.split_once("/approvals/")?;
+    (!session_id.is_empty() && !remainder.is_empty() && !remainder.contains('/'))
+        .then_some((session_id, remainder))
 }
 
 fn write_response(
@@ -836,6 +1005,21 @@ mod tests {
             .databases
         {
             let connection = rusqlite::Connection::open(path.join(&database.file)).expect("db");
+            if database.file == "audit.db" {
+                connection
+                    .execute_batch(
+                        "CREATE TABLE events (
+                           seq INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL,
+                           domain TEXT NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL,
+                           subject TEXT NOT NULL, payload TEXT NOT NULL,
+                           prev_hash TEXT NOT NULL, hash TEXT NOT NULL
+                         );
+                         CREATE INDEX events_domain_seq ON events(domain, seq);
+                         PRAGMA user_version = 1;",
+                    )
+                    .expect("audit schema");
+                continue;
+            }
             connection
                 .execute_batch(&format!("PRAGMA user_version = {};", database.user_version))
                 .expect("version");
@@ -1266,6 +1450,77 @@ mod tests {
             .expect("response");
         assert!(worker_response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
         worker_server.join().expect("server").expect("serve");
+        fs::remove_dir_all(data_dir).expect("remove");
+    }
+
+    #[test]
+    fn confirmed_approval_decision_removes_only_the_selected_pending_item() {
+        let data_dir = fixture_data_dir();
+        let mut config =
+            RuntimeConfig::new(free_loopback_port(), TOKEN, &data_dir).expect("config");
+        config.attach_audit_ledger().expect("audit ledger");
+        let broker = config.approval_broker();
+        let approval_id = broker
+            .lock()
+            .expect("broker")
+            .request(
+                "session-1",
+                super::PermissionRequest {
+                    tool_call_id: "call-1".to_owned(),
+                    tool_name: "write_file".to_owned(),
+                    arguments: serde_json::json!({"path": "README.md"}),
+                    reason: "write workspace file".to_owned(),
+                    risk: "write_local".to_owned(),
+                    command: None,
+                },
+            )
+            .expect("approval");
+        let listener = config.bind().expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            serve_one(&listener, &config)?;
+            serve_one(&listener, &config)
+        });
+        let unsupported = r#"{"outcome":"once"}"#;
+        let mut unsupported_stream =
+            TcpStream::connect(("127.0.0.1", port)).expect("connect unsupported");
+        write!(
+            unsupported_stream,
+            "POST /v1/sessions/session-1/approvals/{approval_id} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{unsupported}",
+            unsupported.len()
+        )
+        .expect("unsupported request");
+        let mut unsupported_response = String::new();
+        unsupported_stream
+            .read_to_string(&mut unsupported_response)
+            .expect("unsupported response");
+        assert!(unsupported_response.starts_with("HTTP/1.1 409 Conflict\r\n"));
+        assert_eq!(broker.lock().expect("broker").pending("session-1").len(), 1);
+        let body = r#"{"outcome":"deny"}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        write!(
+            stream,
+            "POST /v1/sessions/session-1/approvals/{approval_id} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .expect("request");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("response");
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(broker
+            .lock()
+            .expect("broker")
+            .pending("session-1")
+            .is_empty());
+        server.join().expect("server").expect("serve");
+        let audit =
+            codinal_policy::AuditLedger::open(&data_dir, codinal_policy::AuditRedactor::default())
+                .expect("audit ledger");
+        let events = audit.list(Some("approval"), 10).expect("audit events");
+        assert_eq!(events[0].action, "resolve");
+        assert_eq!(events[0].subject, approval_id);
+        assert_eq!(events[0].payload["outcome"], "deny");
+        drop(audit);
         fs::remove_dir_all(data_dir).expect("remove");
     }
 

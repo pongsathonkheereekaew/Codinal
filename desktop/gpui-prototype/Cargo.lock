@@ -964,6 +964,7 @@ dependencies = [
  "codinal-native-host",
  "gpui",
  "gpui_platform",
+ "serde_json",
  "zeroize",
 ]
 
