@@ -402,6 +402,28 @@ mod tests {
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
     #[test]
+    fn golden_v1_fixture_stays_versioned_and_secret_free() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/v1/control-plane.json"
+        ))
+        .expect("valid golden fixture");
+        assert_eq!(fixture["fixture_version"], 1);
+        assert_eq!(fixture["contract"], "codinal.control-plane.v1");
+        let mut payload = fixture.clone();
+        payload.as_object_mut().expect("fixture object").remove("redaction");
+        let serialized = payload.to_string().to_ascii_lowercase();
+        for marker in fixture["redaction"]["forbidden_value_markers"]
+            .as_array()
+            .expect("markers")
+        {
+            assert!(
+                !serialized.contains(marker.as_str().expect("string marker")),
+                "fixture must not contain secret-shaped material"
+            );
+        }
+    }
+
+    #[test]
     fn gets_authenticated_json_from_loopback() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
         let port = listener.local_addr().expect("address").port();

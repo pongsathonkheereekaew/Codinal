@@ -1,0 +1,57 @@
+{
+  "fixture_version": 1,
+  "contract": "codinal.control-plane.v1",
+  "redaction": {
+    "forbidden_value_markers": ["sk-", "AIza", "ghp_"]
+  },
+  "http": [
+    {
+      "id": "health-without-bearer-is-rejected",
+      "request": {"method": "GET", "path": "/v1/health", "headers": {}},
+      "response": {
+        "status": 401,
+        "headers": {"www-authenticate": "Bearer"},
+        "json": {"detail": "unauthorized"}
+      }
+    },
+    {
+      "id": "health-with-bearer-is-accepted",
+      "request": {
+        "method": "GET",
+        "path": "/v1/health",
+        "headers": {"authorization": "Bearer <session-token>"}
+      },
+      "response": {"status": 200, "json": {"status": "ok"}}
+    }
+  ],
+  "websocket": [
+    {
+      "id": "missing-protocol-is-rejected",
+      "path": "/ws/events",
+      "protocols": [],
+      "close_code": 4401
+    },
+    {
+      "id": "wrong-origin-is-rejected-before-auth",
+      "path": "/ws/events",
+      "origin": "https://untrusted.invalid",
+      "protocols": ["codinal.v1", "codinal.auth.<session-token>"],
+      "close_code": 4403
+    },
+    {
+      "id": "valid-protocol-uses-no-url-token",
+      "path": "/ws/events",
+      "protocols": ["codinal.v1", "codinal.auth.<session-token>"],
+      "forbidden_url_parts": ["?", "<session-token>"],
+      "accepted_subprotocol": "codinal.v1",
+      "ping_response": {"type": "pong"}
+    }
+  ],
+  "events": [
+    {
+      "id": "reconnect-preserves-published-order",
+      "stream": "session",
+      "sequence": ["turn_started", "tool_proposed", "turn_completed"]
+    }
+  ]
+}
