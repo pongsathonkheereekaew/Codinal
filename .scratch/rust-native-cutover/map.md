@@ -21,6 +21,7 @@ Do not dual-write production SQLite data or expose bearer/provider secrets.
 - [Port native provider-secret bootstrap](issues/09-port-native-secret-bootstrap.md) — GPUI now transfers Keychain profiles directly to Rust through bounded one-shot stdin; tokens and API keys remain in redacted zeroizing memory.
 - [Port native PTY terminal](issues/14-port-native-pty-terminal.md) — PTY ownership and tests are moving out of Tauri into the shared native host before GPUI terminal wiring.
 - [Port native LSP client](issues/15-port-native-lsp.md) — subprocess lifecycle and JSON-RPC now live in the shared native host; GPUI document integration remains.
+- [Port native shell integrations](issues/16-port-native-shell-integrations.md) — workspace, project-item, and OAuth primitives now live in native-host; GPUI event wiring remains.
 
 ## Not yet specified
 
