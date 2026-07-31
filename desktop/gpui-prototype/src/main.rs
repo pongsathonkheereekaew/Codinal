@@ -45,6 +45,8 @@ use codinal_control_plane_client::{
 };
 #[cfg(target_os = "macos")]
 use codinal_native_host::pty::{PtyOutputBuffer, PtyOutputDelta, PtyRegistry};
+#[cfg(target_os = "macos")]
+use codinal_native_host::workspace::choose_workspace as choose_native_workspace;
 use codinal_native_host::{
     free_loopback_port, launch_shadow_runtime_with_bootstrap, mint_session_token,
     secrets::{
@@ -522,6 +524,26 @@ fn should_request_terminal_resize(
 }
 
 impl WorkspacePrototype {
+    #[cfg(target_os = "macos")]
+    fn choose_workspace(&mut self, cx: &mut Context<Self>) {
+        if !self.terminal_state.can_open() {
+            return;
+        }
+        match choose_native_workspace() {
+            Ok(path) => {
+                self.terminal_workspace = path.to_string_lossy().into_owned();
+                self.terminal_status = format!("Workspace selected: {}", path.display());
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                self.terminal_status = "Workspace selection cancelled".to_owned();
+            }
+            Err(error) => {
+                self.terminal_status = format!("Workspace selection failed: {error}");
+            }
+        }
+        cx.notify();
+    }
+
     #[cfg(target_os = "macos")]
     fn open_terminal(&mut self, cx: &mut Context<Self>) {
         if !self.terminal_state.can_open() {
@@ -1327,6 +1349,10 @@ impl Render for WorkspacePrototype {
             "authenticated Rust runtime ready · {} sessions",
             self.session_count
         );
+        #[cfg(target_os = "macos")]
+        let terminal_workspace = self.terminal_workspace.clone();
+        #[cfg(not(target_os = "macos"))]
+        let terminal_workspace = "Native workspace selection unavailable".to_owned();
         div()
             .size_full()
             .flex()
@@ -1359,6 +1385,7 @@ impl Render for WorkspacePrototype {
                 &self.terminal_display,
                 &self.terminal_status,
                 self.terminal_state,
+                &terminal_workspace,
                 &self.terminal_focus,
                 cx.entity(),
                 cx,
@@ -1370,6 +1397,7 @@ fn terminal_pane(
     output: &str,
     status: &str,
     state: TerminalState,
+    workspace: &str,
     focus: &FocusHandle,
     entity: gpui::Entity<WorkspacePrototype>,
     cx: &mut Context<WorkspacePrototype>,
@@ -1379,17 +1407,30 @@ fn terminal_pane(
     #[cfg(target_os = "macos")]
     {
         if state.can_open() {
-            actions = actions.child(
-                div()
-                    .id("terminal-open")
-                    .px_2()
-                    .py_1()
-                    .bg(rgb(0x30363d))
-                    .child("Open terminal")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.open_terminal(cx);
-                    })),
-            );
+            actions = actions
+                .child(
+                    div()
+                        .id("terminal-workspace")
+                        .mr_2()
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(0x30363d))
+                        .child("Choose workspace")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.choose_workspace(cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("terminal-open")
+                        .px_2()
+                        .py_1()
+                        .bg(rgb(0x30363d))
+                        .child("Open terminal")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open_terminal(cx);
+                        })),
+                );
         } else if state == TerminalState::Running {
             actions = actions
                 .child(
@@ -1438,6 +1479,13 @@ fn terminal_pane(
         .p_3()
         .child(div().text_lg().child("Native terminal stream"))
         .child(div().mt_2().text_sm().child(status.to_owned()))
+        .child(
+            div()
+                .mt_1()
+                .text_sm()
+                .text_color(rgb(0x8b949e))
+                .child(format!("Workspace: {workspace}")),
+        )
         .child(actions)
         .child(
             div()

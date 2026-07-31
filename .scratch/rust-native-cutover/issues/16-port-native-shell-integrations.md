@@ -26,4 +26,7 @@ Tauri remains only a temporary adapter.
   into `native-host`; their existing identity/path tests moved with them.
 - Tauri direct native-dialog, Objective-C, Keychain, and libc dependencies were
   removed where the shared host now owns them.
-- Remaining: GPUI workspace/deep-link wiring and packaged parity evidence.
+- GPUI now invokes the native workspace picker directly, displays the canonical
+  selection, and uses it for subsequent terminal sessions without a WebView
+  command bridge.
+- Remaining: GPUI deep-link wiring and packaged parity evidence.
