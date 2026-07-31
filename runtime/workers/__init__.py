@@ -6,8 +6,10 @@ from .protocol import (
     WorkerHello,
     RemoteLease,
     RemoteLeaseAuthority,
+    RemoteArtifact,
     WorkerProtocolError,
     negotiate,
+    verify_remote_artifact,
 )
 from .models import (
     TERMINAL_WORKER_STATES,
@@ -23,6 +25,7 @@ __all__ = [
     "WorkerHello",
     "RemoteLease",
     "RemoteLeaseAuthority",
+    "RemoteArtifact",
     "WorkerRecord",
     "WorkerState",
     "WorkerStore",
@@ -30,5 +33,6 @@ __all__ = [
     "TERMINAL_WORKER_STATES",
     "WorkerProtocolError",
     "negotiate",
+    "verify_remote_artifact",
     "worker_to_dict",
 ]

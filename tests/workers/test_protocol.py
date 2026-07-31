@@ -11,6 +11,21 @@ from runtime.workers import (
 )
 from runtime.workers.protocol import normalize_persisted_version
 from runtime.workers.protocol import RemoteLeaseAuthority
+from runtime.workers.protocol import RemoteArtifact, verify_remote_artifact
+
+
+def test_remote_artifact_is_revision_bound_and_bounded():
+    artifact = RemoteArtifact(
+        revision="a" * 40,
+        diff_digest="sha256:" + "b" * 64,
+        evidence_digest="sha256:" + "c" * 64,
+        changed_paths=("runtime/worker.py",),
+        size_bytes=128,
+    )
+
+    assert verify_remote_artifact(artifact, revision="a" * 40) == artifact
+    with pytest.raises(WorkerProtocolError):
+        verify_remote_artifact(artifact, revision="d" * 40)
 
 
 def test_remote_lease_is_bound_to_worker_revision_and_capabilities():

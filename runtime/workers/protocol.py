@@ -21,6 +21,9 @@ REQUIRED_CAPABILITIES: Final = frozenset(
         "task.steer",
     }
 )
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_MAX_REMOTE_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 
 class WorkerProtocolError(ValueError):
@@ -51,6 +54,42 @@ class RemoteLease:
     expires_at: int
 
 
+@dataclass(frozen=True)
+class RemoteArtifact:
+    """Review-only output a remote worker may return after attestation."""
+
+    revision: str
+    diff_digest: str
+    evidence_digest: str
+    changed_paths: tuple[str, ...]
+    size_bytes: int
+
+
+def verify_remote_artifact(
+    artifact: RemoteArtifact,
+    *,
+    revision: str,
+) -> RemoteArtifact:
+    if (
+        not isinstance(artifact, RemoteArtifact)
+        or artifact.revision != revision
+        or _COMMIT.fullmatch(revision) is None
+        or _DIGEST.fullmatch(artifact.diff_digest) is None
+        or _DIGEST.fullmatch(artifact.evidence_digest) is None
+        or not 0 <= artifact.size_bytes <= _MAX_REMOTE_ARTIFACT_BYTES
+        or not 0 <= len(artifact.changed_paths) <= 10_000
+        or any(
+            not path
+            or path.startswith("/")
+            or "\\" in path
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            for path in artifact.changed_paths
+        )
+    ):
+        raise WorkerProtocolError("remote artifact verification failed")
+    return artifact
+
+
 class RemoteLeaseAuthority:
     """Issues opaque, connection-scoped leases for an opted-in remote runner."""
 
@@ -71,7 +110,7 @@ class RemoteLeaseAuthority:
         ttl_seconds: int,
     ) -> RemoteLease:
         if (not 1 <= ttl_seconds <= 3600
-                or re.fullmatch(r"[0-9a-f]{40}", revision) is None
+                or _COMMIT.fullmatch(revision) is None
                 or len(connection_fingerprint) != 64):
             raise WorkerProtocolError("invalid remote lease")
         negotiate(WorkerHello(PROTOCOL_VERSION, "remote", capabilities))
