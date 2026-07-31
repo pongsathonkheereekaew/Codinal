@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from runtime.control_plane import create_control_plane_app
-from runtime.control_plane.contracts import v1_route_surface
+from runtime.control_plane.contracts import v1_route_surface, v1_route_surface_json
 from runtime.control_plane.server import ServerConfig, build_services
 from runtime.events import EventHub
 from runtime.secrets import ProviderSecretService
@@ -101,8 +101,9 @@ def test_every_reference_v1_route_matches_golden_auth_negative_case(
     )
     expected_surface = _fixture()["route_surface"]
     assert len(surface) == expected_surface["count"]
-    canonical = json.dumps(surface, sort_keys=True, separators=(",", ":"))
-    assert hashlib.sha256(canonical.encode()).hexdigest() == expected_surface[
+    canonical = v1_route_surface_json(app)
+    assert json.loads(canonical) == surface
+    assert hashlib.sha256(canonical).hexdigest() == expected_surface[
         "sha256"
     ]
     for route in routes:
