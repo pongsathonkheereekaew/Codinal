@@ -23,6 +23,7 @@ REQUIRED_CAPABILITIES: Final = frozenset(
 )
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 _MAX_REMOTE_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 
@@ -120,9 +121,12 @@ class RemoteLeaseAuthority:
         connection_fingerprint: str,
         ttl_seconds: int,
     ) -> RemoteLease:
-        if (not 1 <= ttl_seconds <= 3600
+        if (not isinstance(worker_id, str)
+                or not isinstance(revision, str)
+                or not isinstance(connection_fingerprint, str)
+                or not 1 <= ttl_seconds <= 3600
                 or _COMMIT.fullmatch(revision) is None
-                or len(connection_fingerprint) != 64):
+                or _FINGERPRINT.fullmatch(connection_fingerprint) is None):
             raise WorkerProtocolError("invalid remote lease")
         negotiate(WorkerHello(PROTOCOL_VERSION, "remote", capabilities))
         now = int(self._now() if self._now else time.time())
@@ -144,7 +148,11 @@ class RemoteLeaseAuthority:
     ) -> RemoteLease:
         lease = self._leases.get(token)
         current = int(now if now is not None else (self._now() if self._now else time.time()))
-        if (lease is None or not hmac.compare_digest(lease.token, token)
+        if (not isinstance(token, str)
+                or not isinstance(worker_id, str)
+                or not isinstance(revision, str)
+                or not isinstance(connection_fingerprint, str)
+                or lease is None or not hmac.compare_digest(lease.token, token)
                 or lease.expires_at <= current or lease.worker_id != worker_id
                 or lease.revision != revision or lease.capabilities != capabilities
                 or not hmac.compare_digest(lease.connection_fingerprint, connection_fingerprint)):
