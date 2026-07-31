@@ -29,7 +29,10 @@ same native registry.
 - GPUI now opens the trusted shell only after explicit user action, consumes
   bounded cursor-based output on a per-open generation, and dispatches
   interrupt/resize/kill operations off the foreground executor.
+- Keyboard input now uses one generation-scoped bounded FIFO writer, GPUI's
+  committed-text/IME path for Unicode input, xterm control/navigation/function
+  sequences, and cancellation that discards queued bytes before shutdown.
 - Exit and stop clean up unique native session IDs and permit a fresh buffer,
   poll task, and PTY generation on reopen.
-- Remaining: full keyboard input, terminal escape-state emulation, dynamic
-  geometry, accessibility/performance replay, and packaged parity evidence.
+- Remaining: terminal escape-state emulation, dynamic geometry,
+  accessibility/performance replay, and packaged parity evidence.

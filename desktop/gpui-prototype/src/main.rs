@@ -58,13 +58,20 @@ use codinal_native_host::{
 #[cfg(target_os = "macos")]
 use gpui::Task;
 use gpui::{
-    div, px, rgb, size, App, AppContext, Bounds, Context, InteractiveElement, ParentElement,
-    PromptLevel, Render, StatefulInteractiveElement, Styled, Window, WindowBounds, WindowOptions,
+    canvas, div, px, rgb, size, App, AppContext, Bounds, Context, ElementInputHandler,
+    EntityInputHandler, FocusHandle, InteractiveElement, KeyDownEvent, ParentElement, Pixels,
+    Point, PromptLevel, Render, StatefulInteractiveElement, Styled, UTF16Selection, Window,
+    WindowBounds, WindowOptions,
 };
 use std::io;
+use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::thread;
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 use zeroize::Zeroizing;
@@ -99,6 +106,13 @@ struct WorkspacePrototype {
     #[cfg(target_os = "macos")]
     terminal_workspace: String,
     terminal_state: TerminalState,
+    terminal_focus: FocusHandle,
+    terminal_marked_text: String,
+    terminal_marked_selection: Range<usize>,
+    #[cfg(target_os = "macos")]
+    terminal_input: Option<SyncSender<Vec<u8>>>,
+    #[cfg(target_os = "macos")]
+    terminal_input_cancel: Option<Arc<AtomicBool>>,
     #[cfg(target_os = "macos")]
     terminal_poll: Option<Task<()>>,
 }
@@ -125,6 +139,190 @@ fn accepts_terminal_control_result(
     state: TerminalState,
 ) -> bool {
     current_generation == result_generation && state == TerminalState::Running
+}
+
+fn terminal_key_bytes(event: &KeyDownEvent) -> Option<Vec<u8>> {
+    let keystroke = &event.keystroke;
+    if keystroke.modifiers.platform {
+        return None;
+    }
+    let modifier = 1
+        + usize::from(keystroke.modifiers.shift)
+        + 2 * usize::from(keystroke.modifiers.alt)
+        + 4 * usize::from(keystroke.modifiers.control);
+    let modified_csi = |final_byte: char| format!("\x1b[1;{modifier}{final_byte}").into_bytes();
+    let modified_tilde = |code: usize| format!("\x1b[{code};{modifier}~").into_bytes();
+    let navigation = match keystroke.key.as_str() {
+        "up" => Some(if modifier == 1 {
+            b"\x1b[A".to_vec()
+        } else {
+            modified_csi('A')
+        }),
+        "down" => Some(if modifier == 1 {
+            b"\x1b[B".to_vec()
+        } else {
+            modified_csi('B')
+        }),
+        "right" => Some(if modifier == 1 {
+            b"\x1b[C".to_vec()
+        } else {
+            modified_csi('C')
+        }),
+        "left" => Some(if modifier == 1 {
+            b"\x1b[D".to_vec()
+        } else {
+            modified_csi('D')
+        }),
+        "home" => Some(if modifier == 1 {
+            b"\x1b[H".to_vec()
+        } else {
+            modified_csi('H')
+        }),
+        "end" => Some(if modifier == 1 {
+            b"\x1b[F".to_vec()
+        } else {
+            modified_csi('F')
+        }),
+        "insert" => Some(if modifier == 1 {
+            b"\x1b[2~".to_vec()
+        } else {
+            modified_tilde(2)
+        }),
+        "delete" => Some(if modifier == 1 {
+            b"\x1b[3~".to_vec()
+        } else {
+            modified_tilde(3)
+        }),
+        "pageup" => Some(if modifier == 1 {
+            b"\x1b[5~".to_vec()
+        } else {
+            modified_tilde(5)
+        }),
+        "pagedown" => Some(if modifier == 1 {
+            b"\x1b[6~".to_vec()
+        } else {
+            modified_tilde(6)
+        }),
+        _ => None,
+    };
+    if navigation.is_some() {
+        return navigation;
+    }
+    let function = match keystroke.key.as_str() {
+        "f1" if modifier == 1 => Some(b"\x1bOP".to_vec()),
+        "f2" if modifier == 1 => Some(b"\x1bOQ".to_vec()),
+        "f3" if modifier == 1 => Some(b"\x1bOR".to_vec()),
+        "f4" if modifier == 1 => Some(b"\x1bOS".to_vec()),
+        "f1" => Some(modified_csi('P')),
+        "f2" => Some(modified_csi('Q')),
+        "f3" => Some(modified_csi('R')),
+        "f4" => Some(modified_csi('S')),
+        "f5" => Some(if modifier == 1 {
+            b"\x1b[15~".to_vec()
+        } else {
+            modified_tilde(15)
+        }),
+        "f6" => Some(if modifier == 1 {
+            b"\x1b[17~".to_vec()
+        } else {
+            modified_tilde(17)
+        }),
+        "f7" => Some(if modifier == 1 {
+            b"\x1b[18~".to_vec()
+        } else {
+            modified_tilde(18)
+        }),
+        "f8" => Some(if modifier == 1 {
+            b"\x1b[19~".to_vec()
+        } else {
+            modified_tilde(19)
+        }),
+        "f9" => Some(if modifier == 1 {
+            b"\x1b[20~".to_vec()
+        } else {
+            modified_tilde(20)
+        }),
+        "f10" => Some(if modifier == 1 {
+            b"\x1b[21~".to_vec()
+        } else {
+            modified_tilde(21)
+        }),
+        "f11" => Some(if modifier == 1 {
+            b"\x1b[23~".to_vec()
+        } else {
+            modified_tilde(23)
+        }),
+        "f12" => Some(if modifier == 1 {
+            b"\x1b[24~".to_vec()
+        } else {
+            modified_tilde(24)
+        }),
+        _ => None,
+    };
+    if function.is_some() {
+        return function;
+    }
+    let mut bytes = if keystroke.modifiers.control {
+        let key = keystroke.key.to_ascii_lowercase();
+        match key.as_bytes() {
+            [value @ b'a'..=b'z'] => vec![value - b'a' + 1],
+            [b'@'] | [b' '] | b"space" => vec![0],
+            [b'['] => vec![0x1b],
+            [b'\\'] => vec![0x1c],
+            [b']'] => vec![0x1d],
+            [b'^'] => vec![0x1e],
+            [b'_'] => vec![0x1f],
+            _ => return None,
+        }
+    } else {
+        match keystroke.key.as_str() {
+            "enter" => b"\r".to_vec(),
+            "backspace" => vec![0x7f],
+            "tab" if keystroke.modifiers.shift => b"\x1b[Z".to_vec(),
+            "tab" => b"\t".to_vec(),
+            "escape" => vec![0x1b],
+            _ => return None,
+        }
+    };
+    if keystroke.modifiers.alt {
+        bytes.insert(0, 0x1b);
+    }
+    Some(bytes)
+}
+
+#[cfg(target_os = "macos")]
+fn enqueue_terminal_input(sender: &SyncSender<Vec<u8>>, bytes: Vec<u8>) -> io::Result<()> {
+    const MAX_INPUT_MESSAGE_BYTES: usize = 16 * 1024;
+    if bytes.len() > MAX_INPUT_MESSAGE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "terminal input exceeds 16 KiB message limit",
+        ));
+    }
+    match sender.try_send(bytes) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "terminal input queue is full",
+        )),
+        Err(TrySendError::Disconnected(_)) => Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "terminal input queue is closed",
+        )),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_terminal_writer(
+    receiver: Receiver<Vec<u8>>,
+    cancelled: Arc<AtomicBool>,
+    mut write: impl FnMut(&[u8]) -> io::Result<()>,
+) {
+    while let Ok(bytes) = receiver.recv() {
+        if cancelled.load(Ordering::Acquire) || write(&bytes).is_err() {
+            break;
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -233,11 +431,20 @@ impl WorkspacePrototype {
         self.terminal_session_id = format!("gpui-main-terminal-{}", self.terminal_generation);
         self.terminal_status = "Opening terminal…".to_owned();
         self.terminal_bytes.clear();
+        self.terminal_marked_text.clear();
+        self.terminal_marked_selection = 0..0;
+        if let Some(cancelled) = self.terminal_input_cancel.take() {
+            cancelled.store(true, Ordering::Release);
+        }
+        self.terminal_input.take();
         cx.notify();
         let registry = Arc::clone(&self.terminal_registry);
+        let writer_registry = Arc::clone(&self.terminal_registry);
         let output = Arc::new(PtyOutputBuffer::default());
         let callback_output = Arc::clone(&output);
         let session_id = self.terminal_session_id.clone();
+        let writer_session_id = session_id.clone();
+        let generation = self.terminal_generation;
         let workspace = self.terminal_workspace.clone();
         cx.spawn(async move |this, cx| {
             let opened = cx
@@ -254,8 +461,25 @@ impl WorkspacePrototype {
             let _ = this.update(cx, |this, cx| {
                 match opened {
                     Ok(()) => {
+                        let (sender, receiver) = sync_channel::<Vec<u8>>(256);
+                        let cancelled = Arc::new(AtomicBool::new(false));
+                        let writer_cancelled = Arc::clone(&cancelled);
+                        let writer_started = thread::Builder::new()
+                            .name(format!("gpui-pty-writer-{generation}"))
+                            .spawn(move || {
+                                run_terminal_writer(receiver, writer_cancelled, |bytes| {
+                                    writer_registry.write(&writer_session_id, bytes)
+                                });
+                            })
+                            .is_ok();
+                        this.terminal_input = writer_started.then_some(sender);
+                        this.terminal_input_cancel = writer_started.then_some(cancelled);
                         this.terminal_state = TerminalState::Running;
-                        this.terminal_status = "Terminal running · raw PTY output".to_owned();
+                        this.terminal_status = if writer_started {
+                            "Terminal running · raw PTY output".to_owned()
+                        } else {
+                            "Terminal running · input writer unavailable".to_owned()
+                        };
                         this.start_terminal_poll(output, this.terminal_generation, cx);
                     }
                     Err(error) => {
@@ -298,6 +522,12 @@ impl WorkspacePrototype {
                             &delta,
                         );
                         if exited {
+                            if let Some(cancelled) = this.terminal_input_cancel.take() {
+                                cancelled.store(true, Ordering::Release);
+                            }
+                            this.terminal_input.take();
+                            this.terminal_marked_text.clear();
+                            this.terminal_marked_selection = 0..0;
                             this.terminal_state = TerminalState::Stopping;
                             this.terminal_status = "Terminal exited · cleaning up".to_owned();
                         }
@@ -325,30 +555,44 @@ impl WorkspacePrototype {
 
     #[cfg(target_os = "macos")]
     fn send_terminal_interrupt(&mut self, cx: &mut Context<Self>) {
-        let registry = Arc::clone(&self.terminal_registry);
-        let session_id = self.terminal_session_id.clone();
-        let generation = self.terminal_generation;
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { registry.write(&session_id, b"\x03") })
-                .await;
-            let _ = this.update(cx, |this, cx| {
-                if !accepts_terminal_control_result(
-                    this.terminal_generation,
-                    generation,
-                    this.terminal_state,
-                ) {
-                    return;
-                }
-                this.terminal_status = match result {
-                    Ok(()) => "Sent Ctrl-C".to_owned(),
-                    Err(error) => format!("Terminal input failed: {error}"),
-                };
+        self.send_terminal_bytes(vec![0x03], true, cx);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn send_terminal_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if self.terminal_state != TerminalState::Running {
+            return;
+        }
+        let Some(bytes) = terminal_key_bytes(event) else {
+            return;
+        };
+        cx.stop_propagation();
+        self.send_terminal_bytes(bytes, false, cx);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn send_terminal_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+        report_success: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let result = self
+            .terminal_input
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "terminal input unavailable"))
+            .and_then(|sender| enqueue_terminal_input(sender, bytes));
+        match result {
+            Ok(()) if report_success => {
+                self.terminal_status = "Sent Ctrl-C".to_owned();
                 cx.notify();
-            });
-        })
-        .detach();
+            }
+            Ok(()) => {}
+            Err(error) => {
+                self.terminal_status = format!("Terminal input failed: {error}");
+                cx.notify();
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -385,6 +629,10 @@ impl WorkspacePrototype {
             return;
         }
         self.terminal_state = TerminalState::Stopping;
+        if let Some(cancelled) = self.terminal_input_cancel.take() {
+            cancelled.store(true, Ordering::Release);
+        }
+        self.terminal_input.take();
         self.terminal_status = "Stopping terminal…".to_owned();
         cx.notify();
         let registry = Arc::clone(&self.terminal_registry);
@@ -791,6 +1039,109 @@ fn format_approval_detail(approval: &PendingApproval) -> String {
     )
 }
 
+impl EntityInputHandler for WorkspacePrototype {
+    fn text_for_range(
+        &mut self,
+        range: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let utf16: Vec<u16> = self.terminal_marked_text.encode_utf16().collect();
+        let end = range.end.min(utf16.len());
+        let start = range.start.min(end);
+        *adjusted_range = Some(start..end);
+        String::from_utf16(&utf16[start..end]).ok()
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        Some(UTF16Selection {
+            range: self.terminal_marked_selection.clone(),
+            reversed: false,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        let len = self.terminal_marked_text.encode_utf16().count();
+        (len > 0).then_some(0..len)
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let text = std::mem::take(&mut self.terminal_marked_text);
+        self.terminal_marked_selection = 0..0;
+        #[cfg(target_os = "macos")]
+        if self.terminal_state == TerminalState::Running && !text.is_empty() {
+            self.send_terminal_bytes(text.into_bytes(), false, cx);
+        }
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal_marked_text.clear();
+        self.terminal_marked_selection = 0..0;
+        #[cfg(target_os = "macos")]
+        if self.terminal_state == TerminalState::Running && !text.is_empty() {
+            self.send_terminal_bytes(text.as_bytes().to_vec(), false, cx);
+        }
+        cx.notify();
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        _range: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.terminal_marked_text.clear();
+        self.terminal_marked_text.push_str(new_text);
+        let len = new_text.encode_utf16().count();
+        self.terminal_marked_selection = new_selected_range
+            .map(|range| range.start.min(len)..range.end.min(len))
+            .unwrap_or(len..len);
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        Some(element_bounds)
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        Some(0)
+    }
+
+    fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
+        self.terminal_state == TerminalState::Running
+    }
+}
+
 impl Render for WorkspacePrototype {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let runtime = format!(
@@ -829,6 +1180,8 @@ impl Render for WorkspacePrototype {
                 &String::from_utf8_lossy(&self.terminal_bytes),
                 &self.terminal_status,
                 self.terminal_state,
+                &self.terminal_focus,
+                cx.entity(),
                 cx,
             ))
     }
@@ -838,8 +1191,11 @@ fn terminal_pane(
     output: &str,
     status: &str,
     state: TerminalState,
+    focus: &FocusHandle,
+    entity: gpui::Entity<WorkspacePrototype>,
     cx: &mut Context<WorkspacePrototype>,
 ) -> impl gpui::IntoElement {
+    let input_focus = focus.clone();
     let mut actions = div().flex().flex_row().flex_wrap();
     #[cfg(target_os = "macos")]
     {
@@ -908,6 +1264,15 @@ fn terminal_pane(
     }
     div()
         .id("native-terminal-pane")
+        .relative()
+        .track_focus(focus)
+        .on_click(cx.listener(|this, _, window, cx| {
+            this.terminal_focus.focus(window, cx);
+        }))
+        .on_key_down(cx.listener(|this, event, _, cx| {
+            #[cfg(target_os = "macos")]
+            this.send_terminal_key(event, cx);
+        }))
         .h(px(220.0))
         .overflow_y_scroll()
         .border_t_1()
@@ -922,6 +1287,16 @@ fn terminal_pane(
                 .text_sm()
                 .text_color(rgb(0xc9d1d9))
                 .child(output.to_owned()),
+        )
+        .child(
+            canvas(
+                |bounds, _, _| bounds,
+                move |bounds, _, window, cx| {
+                    window.handle_input(&input_focus, ElementInputHandler::new(bounds, entity), cx);
+                },
+            )
+            .absolute()
+            .size_full(),
         )
 }
 
@@ -1256,7 +1631,7 @@ fn main() -> io::Result<()> {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_cx: &mut Context<WorkspacePrototype>| WorkspacePrototype {
+                cx.new(|cx: &mut Context<WorkspacePrototype>| WorkspacePrototype {
                     _runtime: runtime,
                     client,
                     approval_session_id,
@@ -1276,6 +1651,9 @@ fn main() -> io::Result<()> {
                     terminal_bytes: Vec::new(),
                     terminal_status: "Terminal closed".to_owned(),
                     terminal_state: TerminalState::Closed,
+                    terminal_focus: cx.focus_handle(),
+                    terminal_marked_text: String::new(),
+                    terminal_marked_selection: 0..0,
                     #[cfg(target_os = "macos")]
                     terminal_registry,
                     #[cfg(target_os = "macos")]
@@ -1284,6 +1662,10 @@ fn main() -> io::Result<()> {
                     terminal_generation: 0,
                     #[cfg(target_os = "macos")]
                     terminal_workspace,
+                    #[cfg(target_os = "macos")]
+                    terminal_input: None,
+                    #[cfg(target_os = "macos")]
+                    terminal_input_cancel: None,
                     #[cfg(target_os = "macos")]
                     terminal_poll: None,
                 })
@@ -1304,6 +1686,7 @@ mod tests {
     };
     #[cfg(target_os = "macos")]
     use codinal_native_host::pty::PtyOutputDelta;
+    use gpui::{KeyDownEvent, Keystroke, Modifiers};
     use std::io;
 
     #[test]
@@ -1398,5 +1781,133 @@ mod tests {
             3,
             super::TerminalState::Running,
         ));
+    }
+
+    #[test]
+    fn terminal_key_mapping_leaves_text_to_ime_and_covers_xterm_controls() {
+        let event = |key: &str, key_char: Option<&str>, modifiers: Modifiers| KeyDownEvent {
+            keystroke: Keystroke {
+                key: key.to_owned(),
+                key_char: key_char.map(str::to_owned),
+                modifiers,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+        assert_eq!(
+            super::terminal_key_bytes(&event("a", Some("ก"), Modifiers::default())),
+            None
+        );
+        assert_eq!(
+            super::terminal_key_bytes(&event(
+                "c",
+                Some("c"),
+                Modifiers {
+                    control: true,
+                    ..Default::default()
+                }
+            )),
+            Some(vec![3])
+        );
+        assert_eq!(
+            super::terminal_key_bytes(&event(
+                "space",
+                Some(" "),
+                Modifiers {
+                    control: true,
+                    ..Default::default()
+                }
+            )),
+            Some(vec![0])
+        );
+        assert_eq!(
+            super::terminal_key_bytes(&event("up", None, Modifiers::default())),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            super::terminal_key_bytes(&event(
+                "left",
+                None,
+                Modifiers {
+                    control: true,
+                    shift: true,
+                    ..Default::default()
+                }
+            )),
+            Some(b"\x1b[1;6D".to_vec())
+        );
+        assert_eq!(
+            super::terminal_key_bytes(&event(
+                "tab",
+                None,
+                Modifiers {
+                    shift: true,
+                    ..Default::default()
+                }
+            )),
+            Some(b"\x1b[Z".to_vec())
+        );
+        assert_eq!(
+            super::terminal_key_bytes(&event(
+                "f5",
+                None,
+                Modifiers {
+                    alt: true,
+                    ..Default::default()
+                }
+            )),
+            Some(b"\x1b[15;3~".to_vec())
+        );
+        assert_eq!(
+            super::terminal_key_bytes(&event(
+                "k",
+                Some("k"),
+                Modifiers {
+                    platform: true,
+                    ..Default::default()
+                }
+            )),
+            None
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_input_queue_is_bounded_fifo_and_reports_disconnect() {
+        use std::sync::mpsc::sync_channel;
+
+        let (sender, receiver) = sync_channel(2);
+        super::enqueue_terminal_input(&sender, b"first".to_vec()).unwrap();
+        super::enqueue_terminal_input(&sender, "ไทย🙂".as_bytes().to_vec()).unwrap();
+        let full = super::enqueue_terminal_input(&sender, b"third".to_vec()).unwrap_err();
+        assert_eq!(full.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(receiver.recv().unwrap(), b"first");
+        assert_eq!(receiver.recv().unwrap(), "ไทย🙂".as_bytes());
+        drop(receiver);
+        let closed = super::enqueue_terminal_input(&sender, b"after".to_vec()).unwrap_err();
+        assert_eq!(closed.kind(), io::ErrorKind::BrokenPipe);
+
+        let (sender, _receiver) = sync_channel(2);
+        let oversized = super::enqueue_terminal_input(&sender, vec![0; 16 * 1024 + 1]).unwrap_err();
+        assert_eq!(oversized.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn terminal_writer_discards_queued_input_after_cancellation() {
+        use std::sync::atomic::AtomicBool;
+        use std::sync::{mpsc::sync_channel, Arc, Mutex};
+
+        let (sender, receiver) = sync_channel(2);
+        sender.send(b"unsafe-after-stop".to_vec()).unwrap();
+        drop(sender);
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&writes);
+        super::run_terminal_writer(receiver, cancelled, |bytes| {
+            observed.lock().unwrap().push(bytes.to_vec());
+            Ok(())
+        });
+        assert!(writes.lock().unwrap().is_empty());
     }
 }
