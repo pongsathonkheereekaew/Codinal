@@ -48,4 +48,7 @@ one-shot updates authenticated by both bearer and secret-sync tokens.
   Keychain APIs without exposing values or invoking Tauri.
 - GPUI now owns a native provider-settings controller and a confirmed delete
   action that updates Keychain/runtime state without invoking Tauri.
-- Remaining: GPUI provider edit controls with secure native text input.
+- GPUI standard-provider rotation now uses a native macOS secure text field;
+  the Rust copy is zeroized and the AppKit field is cleared before release.
+- Remaining: native multi-field editing for OmniRoute/custom provider URL and
+  failover metadata.

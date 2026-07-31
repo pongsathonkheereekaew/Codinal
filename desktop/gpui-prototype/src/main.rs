@@ -6,6 +6,22 @@
 //! This development shell boots the authenticated Rust runtime on an isolated
 //! snapshot, while its UI remains an opt-in prototype.
 
+#[cfg(target_os = "macos")]
+mod secure_prompt;
+
+#[cfg(not(target_os = "macos"))]
+mod secure_prompt {
+    use std::io;
+    use zeroize::Zeroizing;
+
+    pub fn prompt_api_key(_provider: &str) -> io::Result<Option<Zeroizing<String>>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "secure credential editing is currently available only on macOS",
+        ))
+    }
+}
+
 use codinal_control_plane_client::{
     ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient, PendingApproval,
 };
@@ -43,6 +59,8 @@ struct WorkspacePrototype {
     provider_settings: String,
     provider_settings_controller: Arc<ProviderSettingsController>,
     provider_delete_target: Option<ProviderDeleteTarget>,
+    provider_edit_targets: Vec<String>,
+    provider_operation_in_flight: bool,
 }
 
 #[derive(Clone)]
@@ -55,6 +73,38 @@ enum ProviderDeleteOutcome {
     Refreshed(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>),
     DeletedRefreshFailed,
     DeleteFailed,
+}
+
+enum ProviderEditOutcome {
+    Refreshed(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>),
+    SavedRefreshFailed,
+    SyncIndeterminate,
+    SaveFailed,
+}
+
+fn begin_provider_operation(in_flight: &mut bool) -> bool {
+    if *in_flight {
+        false
+    } else {
+        *in_flight = true;
+        true
+    }
+}
+
+fn classify_provider_edit_result(
+    saved: io::Result<()>,
+    refresh: impl FnOnce() -> io::Result<(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>)>,
+) -> ProviderEditOutcome {
+    match saved {
+        Ok(()) => match refresh() {
+            Ok((standard, custom)) => ProviderEditOutcome::Refreshed(standard, custom),
+            Err(_) => ProviderEditOutcome::SavedRefreshFailed,
+        },
+        Err(error) if error.kind() == io::ErrorKind::ConnectionAborted => {
+            ProviderEditOutcome::SyncIndeterminate
+        }
+        Err(_) => ProviderEditOutcome::SaveFailed,
+    }
 }
 
 impl WorkspacePrototype {
@@ -122,7 +172,11 @@ impl WorkspacePrototype {
     }
 
     fn show_provider_delete_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !begin_provider_operation(&mut self.provider_operation_in_flight) {
+            return;
+        }
         let Some(target) = self.provider_delete_target.clone() else {
+            self.provider_operation_in_flight = false;
             return;
         };
         let label = match &target {
@@ -140,6 +194,10 @@ impl WorkspacePrototype {
         let controller = Arc::clone(&self.provider_settings_controller);
         cx.spawn(async move |this, cx| {
             if response.await.unwrap_or(0) != 1 {
+                let _ = this.update(cx, |this, cx| {
+                    this.provider_operation_in_flight = false;
+                    cx.notify();
+                });
                 return;
             }
             let outcome = cx
@@ -165,6 +223,7 @@ impl WorkspacePrototype {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                this.provider_operation_in_flight = false;
                 match outcome {
                     ProviderDeleteOutcome::Refreshed(standard, custom) => {
                         let (summary, target) = format_provider_settings(&standard, &custom);
@@ -181,6 +240,59 @@ impl WorkspacePrototype {
                         this.provider_settings =
                             "Provider deletion failed — Keychain status requires reload".to_owned();
                         this.provider_delete_target = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn show_provider_edit_prompt(&mut self, provider: String, cx: &mut Context<Self>) {
+        if self.provider_operation_in_flight {
+            return;
+        }
+        let api_key = match secure_prompt::prompt_api_key(&provider) {
+            Ok(Some(api_key)) => api_key,
+            Ok(None) => return,
+            Err(_) => {
+                self.provider_settings = "Secure credential prompt failed".to_owned();
+                cx.notify();
+                return;
+            }
+        };
+        if !begin_provider_operation(&mut self.provider_operation_in_flight) {
+            return;
+        }
+        cx.notify();
+        let controller = Arc::clone(&self.provider_settings_controller);
+        cx.spawn(async move |this, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let saved = controller.set_standard(&provider, api_key, None);
+                    classify_provider_edit_result(saved, || controller.status())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.provider_operation_in_flight = false;
+                match outcome {
+                    ProviderEditOutcome::Refreshed(standard, custom) => {
+                        let (summary, target) = format_provider_settings(&standard, &custom);
+                        this.provider_settings = summary;
+                        this.provider_delete_target = target;
+                    }
+                    ProviderEditOutcome::SavedRefreshFailed => {
+                        this.provider_settings =
+                            "Credential saved — status reload failed; restart to refresh"
+                                .to_owned();
+                    }
+                    ProviderEditOutcome::SyncIndeterminate => {
+                        this.provider_settings = "Credential saved to Keychain — runtime sync indeterminate; restart required".to_owned();
+                    }
+                    ProviderEditOutcome::SaveFailed => {
+                        this.provider_settings =
+                            "Credential save failed — live state unchanged".to_owned();
                     }
                 }
                 cx.notify();
@@ -282,6 +394,8 @@ impl Render for WorkspacePrototype {
             .child(provider_settings_pane(
                 &self.provider_settings,
                 self.provider_delete_target.is_some(),
+                &self.provider_edit_targets,
+                !self.provider_operation_in_flight,
                 cx,
             ))
     }
@@ -290,9 +404,11 @@ impl Render for WorkspacePrototype {
 fn provider_settings_pane(
     settings: &str,
     has_delete_target: bool,
+    edit_targets: &[String],
+    actions_enabled: bool,
     cx: &mut Context<WorkspacePrototype>,
 ) -> impl gpui::IntoElement {
-    let pane = div()
+    let mut pane = div()
         .h(px(180.0))
         .border_t_1()
         .border_color(rgb(0x30363d))
@@ -305,7 +421,29 @@ fn provider_settings_pane(
                 .text_color(rgb(0x8b949e))
                 .child(settings.to_owned()),
         );
-    if has_delete_target {
+    let mut edit_actions = div().flex().flex_row().flex_wrap();
+    for (index, provider) in edit_targets.iter().enumerate() {
+        if !actions_enabled {
+            break;
+        }
+        let provider = provider.clone();
+        let label = format!("Set {provider} credential…");
+        edit_actions = edit_actions.child(
+            div()
+                .id(("set-provider-credential", index))
+                .mt_2()
+                .mr_2()
+                .px_2()
+                .py_1()
+                .bg(rgb(0x30363d))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.show_provider_edit_prompt(provider.clone(), cx);
+                })),
+        );
+    }
+    pane = pane.child(edit_actions);
+    if has_delete_target && actions_enabled {
         pane.child(
             div()
                 .id("delete-provider-credential")
@@ -508,6 +646,11 @@ fn main() -> io::Result<()> {
     let (standard_status, custom_status) = provider_settings_controller.status()?;
     let (provider_settings, provider_delete_target) =
         format_provider_settings(&standard_status, &custom_status);
+    let provider_edit_targets = standard_status
+        .iter()
+        .filter(|status| status.provider != "omniroute")
+        .map(|status| status.provider.to_owned())
+        .collect();
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -530,6 +673,8 @@ fn main() -> io::Result<()> {
                     provider_settings,
                     provider_settings_controller,
                     provider_delete_target,
+                    provider_edit_targets,
+                    provider_operation_in_flight: false,
                 })
             },
         )
@@ -537,4 +682,31 @@ fn main() -> io::Result<()> {
         cx.activate(true);
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{begin_provider_operation, classify_provider_edit_result, ProviderEditOutcome};
+    use std::io;
+
+    #[test]
+    fn duplicate_provider_operation_is_rejected_until_completion() {
+        let mut in_flight = false;
+        assert!(begin_provider_operation(&mut in_flight));
+        assert!(!begin_provider_operation(&mut in_flight));
+        in_flight = false;
+        assert!(begin_provider_operation(&mut in_flight));
+    }
+
+    #[test]
+    fn indeterminate_sync_is_not_reported_as_unchanged() {
+        let outcome = classify_provider_edit_result(
+            Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "response lost after commit",
+            )),
+            || panic!("indeterminate writes must not be refreshed as definite success"),
+        );
+        assert!(matches!(outcome, ProviderEditOutcome::SyncIndeterminate));
+    }
 }
