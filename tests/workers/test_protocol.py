@@ -29,6 +29,17 @@ def test_remote_artifact_is_revision_bound_and_bounded():
     assert verify_remote_artifact(artifact, revision="a" * 40) == artifact
     with pytest.raises(WorkerProtocolError):
         verify_remote_artifact(artifact, revision="d" * 40)
+    malformed = RemoteArtifact(
+        revision="a" * 40,
+        diff_digest=artifact.diff_digest,
+        evidence_digest=artifact.evidence_digest,
+        changed_paths=("..",),
+        size_bytes=12,
+        diff=b"diff",
+        evidence=b"evidence",
+    )
+    with pytest.raises(WorkerProtocolError):
+        verify_remote_artifact(malformed, revision="a" * 40)
 
 
 def test_remote_lease_is_bound_to_worker_revision_and_capabilities():
