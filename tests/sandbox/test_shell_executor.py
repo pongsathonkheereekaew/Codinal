@@ -277,3 +277,33 @@ def test_rejects_filesystem_root_as_additional_write_root(
             temp_dir=tmp_path / "scratch",
             additional_write_roots=[Path(os.sep)],
         )
+
+
+def test_read_profile_rejects_workspace_write_authority(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="read profile"):
+        SandboxedShell(
+            workspace=tmp_path,
+            temp_dir=tmp_path / "scratch",
+            profile="read",
+            workspace_writable=True,
+        )
+
+
+@requires_seatbelt
+def test_test_profile_denies_workspace_writes_and_records_profile(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shell = SandboxedShell(
+        workspace=workspace,
+        temp_dir=tmp_path / "scratch",
+        profile="test",
+        workspace_writable=False,
+    )
+
+    result = shell.run(f"/usr/bin/touch {workspace / 'blocked'}")
+
+    assert result.exit_code != 0
+    assert not (workspace / "blocked").exists()
+    assert result.as_dict()["profile"] == "test"

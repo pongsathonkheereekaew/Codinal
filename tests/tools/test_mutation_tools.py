@@ -591,10 +591,11 @@ def test_run_shell_returns_bounded_executor_result(tmp_path: Path) -> None:
         "exit_code": 0,
         "stdout": "done\n",
         "stderr": "",
-        "timed_out": False,
-        "interrupted": False,
-        "output_truncated": False,
-    }
+            "timed_out": False,
+            "interrupted": False,
+            "output_truncated": False,
+            "profile": "build",
+        }
 
 
 def test_run_shell_surfaces_only_stable_validation_error(

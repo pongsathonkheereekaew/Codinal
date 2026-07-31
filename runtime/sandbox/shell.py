@@ -59,6 +59,7 @@ _PROFILE_PREFIX = """
 (deny network*)
 """
 _SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM")
+_PROFILES = frozenset({"read", "test", "build"})
 
 
 def _sandbox_profile(read_count: int, write_count: int) -> str:
@@ -97,6 +98,7 @@ class SandboxResult:
     timed_out: bool = False
     interrupted: bool = False
     output_truncated: bool = False
+    profile: str = "build"
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -106,6 +108,7 @@ class SandboxResult:
             "timed_out": self.timed_out,
             "interrupted": self.interrupted,
             "output_truncated": self.output_truncated,
+            "profile": self.profile,
         }
 
 
@@ -151,7 +154,18 @@ class SandboxedShell:
         workspace_writable: bool = True,
         additional_read_roots: Iterable[str | Path] = (),
         additional_write_roots: Iterable[str | Path] = (),
+        profile: str = "build",
     ) -> None:
+        if profile not in _PROFILES:
+            raise ValueError("unsupported sandbox profile")
+        declared_writes = tuple(additional_write_roots)
+        if profile in {"read", "test"} and (
+            workspace_writable or declared_writes
+        ):
+            raise ValueError(
+                f"{profile} profile cannot grant workspace write authority"
+            )
+        self.profile = profile
         self.workspace = Path(workspace).expanduser().resolve()
         self.temp_dir = Path(temp_dir).expanduser().resolve()
         if not self.workspace.is_dir():
@@ -169,7 +183,7 @@ class SandboxedShell:
             label="read root",
         )
         extra_writes = _existing_roots(
-            additional_write_roots,
+            declared_writes,
             label="write root",
         )
         self.read_roots = _deduplicate_paths(
@@ -246,6 +260,7 @@ class SandboxedShell:
                     stdout="",
                     stderr="",
                     interrupted=True,
+                    profile=self.profile,
                 )
             process = subprocess.Popen(
                 argv,
@@ -299,6 +314,7 @@ class SandboxedShell:
             timed_out=timed_out,
             interrupted=interrupted,
             output_truncated=capture.truncated,
+            profile=self.profile,
         )
 
     def interrupt(self) -> bool:
