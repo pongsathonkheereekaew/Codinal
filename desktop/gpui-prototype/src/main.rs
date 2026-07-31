@@ -32,6 +32,7 @@ impl Drop for SidecarProcess {
 struct WorkspacePrototype {
     _sidecar: SidecarProcess,
     session_count: usize,
+    session_labels: String,
 }
 
 impl Render for WorkspacePrototype {
@@ -51,7 +52,7 @@ impl Render for WorkspacePrototype {
                 div()
                     .flex()
                     .flex_1()
-                    .child(pane("Files", "10,000-file virtual tree boundary"))
+                    .child(session_pane(&self.session_labels))
                     .child(pane("Conversation", "streamed assistant events"))
                     .child(pane("Review", "diff and explicit apply evidence")),
             )
@@ -96,6 +97,23 @@ fn pane(title: &'static str, state: &'static str) -> impl gpui::IntoElement {
         )
 }
 
+fn session_pane(labels: &str) -> impl gpui::IntoElement {
+    div()
+        .flex_1()
+        .min_w(px(220.0))
+        .border_r_1()
+        .border_color(rgb(0x30363d))
+        .p_3()
+        .child(div().text_lg().child("Sessions"))
+        .child(
+            div()
+                .mt_2()
+                .text_sm()
+                .text_color(rgb(0x8b949e))
+                .child(labels.to_owned()),
+        )
+}
+
 fn development_data_dir() -> io::Result<PathBuf> {
     std::env::var_os("CODINAL_DATA_DIR")
         .map(PathBuf::from)
@@ -136,7 +154,18 @@ fn start_sidecar() -> io::Result<(ControlPlaneClient, SidecarProcess)> {
 
 fn main() -> io::Result<()> {
     let (client, sidecar) = start_sidecar()?;
-    let session_count = client.get_json("sessions")?.as_array().map_or(0, Vec::len);
+    let sessions = client.list_sessions()?;
+    let session_count = sessions.len();
+    let session_labels = if sessions.is_empty() {
+        "No sessions yet".to_owned()
+    } else {
+        sessions
+            .iter()
+            .take(10)
+            .map(|session| format!("{} · {} messages", session.title, session.messages))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -148,6 +177,7 @@ fn main() -> io::Result<()> {
                 cx.new(|_| WorkspacePrototype {
                     _sidecar: sidecar,
                     session_count,
+                    session_labels,
                 })
             },
         )

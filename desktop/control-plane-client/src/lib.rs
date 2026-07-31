@@ -12,6 +12,14 @@ pub struct ControlPlaneClient {
     token: Zeroizing<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub title: String,
+    pub workspace: String,
+    pub messages: u64,
+}
+
 impl ControlPlaneClient {
     pub fn new(port: u16, token: &str) -> io::Result<Self> {
         if port == 0
@@ -59,6 +67,45 @@ impl ControlPlaneClient {
         stream.read_to_end(&mut response)?;
         parse_json_response(&response)
     }
+
+    pub fn list_sessions(&self) -> io::Result<Vec<SessionSummary>> {
+        let response = self.get_json("sessions")?;
+        let sessions = response.as_array().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "sessions response must be an array",
+            )
+        })?;
+        sessions.iter().map(parse_session_summary).collect()
+    }
+}
+
+fn parse_session_summary(value: &serde_json::Value) -> io::Result<SessionSummary> {
+    let object = value.as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "session response must be an object",
+        )
+    })?;
+    let required = |field| {
+        object
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid session response"))
+    };
+    Ok(SessionSummary {
+        session_id: required("session_id")?,
+        title: required("title")?,
+        workspace: required("workspace")?,
+        messages: object
+            .get("messages")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid session response")
+            })?,
+    })
 }
 
 fn validate_route(path: &str) -> io::Result<()> {
@@ -136,15 +183,17 @@ mod tests {
             assert!(request.starts_with("GET /v1/sessions HTTP/1.1\r\n"));
             assert!(request.contains(&format!("Authorization: Bearer {TOKEN}\r\n")));
             stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]")
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[{\"session_id\":\"session-1\",\"title\":\"Migration\",\"workspace\":\"/tmp/workspace\",\"messages\":3}]")
                 .expect("write response");
         });
 
-        let value = ControlPlaneClient::new(port, TOKEN)
+        let sessions = ControlPlaneClient::new(port, TOKEN)
             .expect("client")
-            .get_json("sessions")
+            .list_sessions()
             .expect("JSON response");
-        assert_eq!(value, serde_json::json!([]));
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title, "Migration");
+        assert_eq!(sessions[0].messages, 3);
         server.join().expect("server");
     }
 }
