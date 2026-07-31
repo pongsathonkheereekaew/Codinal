@@ -17,6 +17,7 @@ verification before each completed implementation ticket.
 - [G0 authenticated native contract](issues/01-g0-authenticated-native-contract.md) — native client owns bearer credentials; REST and WebSocket descriptors are versioned and no token enters a URL.
 - [G1 GPUI compatibility and native shell](issues/02-g1-gpui-compatibility-and-native-shell.md) — pin GPUI 0.2.2 in a standalone development shell; keep Tauri's release graph intact.
 - [G2 coding workspace parity](issues/03-g2-coding-workspace-parity.md) — an isolated native four-pane prototype compiles; production panes need decoded-event reducers and virtualization.
+- [G3 safety surfaces](issues/04-g3-safety-surfaces.md) — GPUI stays read-only until every mutation follows explicit confirmation and sidecar-state reload.
 
 ## Not yet specified
 
