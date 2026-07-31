@@ -247,6 +247,7 @@ class TransactionalShell:
                 exit_code=1,
                 stdout="",
                 stderr="shell transaction unavailable",
+                profile="build",
             )
 
     def interrupt(self) -> None:
@@ -605,6 +606,7 @@ def _failed(result: SandboxResult, message: str) -> SandboxResult:
         stdout=result.stdout,
         stderr=f"{stderr}{message}",
         output_truncated=result.output_truncated,
+        profile=result.profile,
     )
 
 
@@ -615,6 +617,7 @@ def _interrupted(result: SandboxResult | None) -> SandboxResult:
             stdout="",
             stderr="",
             interrupted=True,
+            profile="build",
         )
     return SandboxResult(
         exit_code=result.exit_code,
@@ -623,6 +626,7 @@ def _interrupted(result: SandboxResult | None) -> SandboxResult:
         timed_out=result.timed_out,
         interrupted=True,
         output_truncated=result.output_truncated,
+        profile=result.profile,
     )
 
 
@@ -640,4 +644,5 @@ def _with_warning(
         timed_out=result.timed_out,
         interrupted=result.interrupted,
         output_truncated=result.output_truncated,
+        profile=result.profile,
     )

@@ -289,6 +289,35 @@ def test_read_profile_rejects_workspace_write_authority(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize("profile", ["read", "test"])
+def test_non_build_profile_rejects_scratch_inside_workspace(
+    tmp_path: Path,
+    profile: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(ValueError, match="scratch directory"):
+        SandboxedShell(
+            workspace=workspace,
+            temp_dir=workspace / "scratch",
+            profile=profile,
+            workspace_writable=False,
+        )
+
+
+def test_profile_cannot_be_mutated_after_authority_is_constructed(
+    tmp_path: Path,
+) -> None:
+    shell = SandboxedShell(
+        workspace=tmp_path,
+        temp_dir=tmp_path.parent / "scratch",
+    )
+
+    with pytest.raises(AttributeError):
+        shell.profile = "read"
+
+
 @requires_seatbelt
 def test_test_profile_denies_workspace_writes_and_records_profile(
     tmp_path: Path,

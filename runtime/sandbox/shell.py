@@ -165,13 +165,18 @@ class SandboxedShell:
             raise ValueError(
                 f"{profile} profile cannot grant workspace write authority"
             )
-        self.profile = profile
         self.workspace = Path(workspace).expanduser().resolve()
         self.temp_dir = Path(temp_dir).expanduser().resolve()
         if not self.workspace.is_dir():
             raise ValueError("workspace must be an existing directory")
         if self.temp_dir == Path(self.temp_dir.anchor):
             raise ValueError("temp directory cannot be a filesystem root")
+        if profile in {"read", "test"} and self.temp_dir.is_relative_to(
+            self.workspace
+        ):
+            raise ValueError(
+                f"{profile} profile scratch directory must be outside workspace"
+            )
         if timeout_seconds <= 0:
             raise ValueError("timeout must be positive")
         if max_output_bytes <= 0:
@@ -203,6 +208,7 @@ class SandboxedShell:
             raise ValueError("too many sandbox roots")
         self.timeout_seconds = float(timeout_seconds)
         self.max_output_bytes = int(max_output_bytes)
+        self._profile = profile
         self.sandbox_executable = Path(sandbox_executable).expanduser().resolve()
         self._source_environment = dict(
             os.environ if environment is None else environment
@@ -210,6 +216,10 @@ class SandboxedShell:
         self._active_lock = threading.Lock()
         self._active: Optional[subprocess.Popen[bytes]] = None
         self._interrupted = False
+
+    @property
+    def profile(self) -> str:
+        return self._profile
 
     def run(
         self,
