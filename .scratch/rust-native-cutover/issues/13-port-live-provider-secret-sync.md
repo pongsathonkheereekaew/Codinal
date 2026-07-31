@@ -46,4 +46,6 @@ one-shot updates authenticated by both bearer and secret-sync tokens.
   instead of creating permanent inverse state.
 - GPUI now renders standard/custom configured status directly from native-host
   Keychain APIs without exposing values or invoking Tauri.
-- Remaining: GPUI provider edit/delete controls with secure native text input.
+- GPUI now owns a native provider-settings controller and a confirmed delete
+  action that updates Keychain/runtime state without invoking Tauri.
+- Remaining: GPUI provider edit controls with secure native text input.

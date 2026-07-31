@@ -59,6 +59,119 @@ pub trait SecretVault: Send + Sync {
 #[derive(Default)]
 pub struct PlatformSecretVault;
 
+pub struct ProviderSettingsController<V = PlatformSecretVault> {
+    vault: V,
+    port: u16,
+    token: zeroize::Zeroizing<String>,
+    secret_sync_token: zeroize::Zeroizing<String>,
+}
+
+impl<V: SecretVault> ProviderSettingsController<V> {
+    pub fn new(vault: V, port: u16, token: &str, secret_sync_token: &str) -> io::Result<Self> {
+        if port == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid runtime port",
+            ));
+        }
+        validate_session_token(token)?;
+        validate_session_token(secret_sync_token)?;
+        Ok(Self {
+            vault,
+            port,
+            token: zeroize::Zeroizing::new(token.to_owned()),
+            secret_sync_token: zeroize::Zeroizing::new(secret_sync_token.to_owned()),
+        })
+    }
+
+    pub fn status(&self) -> io::Result<(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>)> {
+        Ok((
+            provider_secret_status(&self.vault)?,
+            list_custom_providers(&self.vault)?,
+        ))
+    }
+
+    pub fn set_standard(
+        &self,
+        provider: &str,
+        api_key: zeroize::Zeroizing<String>,
+        base_url: Option<&str>,
+    ) -> io::Result<()> {
+        update_provider_secret(
+            &self.vault,
+            provider,
+            Some(api_key.as_str()),
+            base_url,
+            || {
+                sync_runtime_provider_secret(
+                    self.port,
+                    &self.token,
+                    &self.secret_sync_token,
+                    provider,
+                    Some(api_key.as_str()),
+                    base_url,
+                )
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_standard(&self, provider: &str) -> io::Result<()> {
+        update_provider_secret(&self.vault, provider, None, None, || {
+            sync_runtime_provider_secret(
+                self.port,
+                &self.token,
+                &self.secret_sync_token,
+                provider,
+                None,
+                None,
+            )
+        })?;
+        Ok(())
+    }
+
+    pub fn set_custom(
+        &self,
+        slug: &str,
+        base_url: &str,
+        api_key: zeroize::Zeroizing<String>,
+        failover_eligible: bool,
+    ) -> io::Result<()> {
+        set_custom_provider(
+            &self.vault,
+            slug,
+            base_url,
+            api_key.as_str(),
+            failover_eligible,
+            || {
+                sync_runtime_custom_provider(
+                    self.port,
+                    &self.token,
+                    &self.secret_sync_token,
+                    slug,
+                    base_url,
+                    Some(api_key.as_str()),
+                    failover_eligible,
+                )
+            },
+        )
+    }
+
+    pub fn delete_custom(&self, slug: &str) -> io::Result<bool> {
+        delete_custom_provider(&self.vault, slug, || {
+            sync_runtime_custom_provider(
+                self.port,
+                &self.token,
+                &self.secret_sync_token,
+                slug,
+                "",
+                None,
+                false,
+            )
+        })
+    }
+}
+
 #[derive(Serialize)]
 struct ProviderSecret {
     api_key: String,
@@ -903,7 +1016,7 @@ impl SecretVault for PlatformSecretVault {
 mod tests {
     use super::{
         delete_custom_provider, encode_secret_bootstrap, set_custom_provider,
-        update_provider_secret, validate_provider_account, SecretVault,
+        update_provider_secret, validate_provider_account, ProviderSettingsController, SecretVault,
     };
     use codinal_providers::{ProviderId, ProviderSecrets};
     use std::collections::{BTreeMap, BTreeSet};
@@ -1021,6 +1134,37 @@ mod tests {
         let provider = ProviderId::Custom("Local".to_owned());
         assert_eq!(parsed.api_key(&provider), Some("custom-secret"));
         assert_eq!(parsed.base_url(&provider), Some("localhost:8080"));
+    }
+
+    #[test]
+    fn provider_settings_controller_reports_only_configuration_metadata() {
+        let vault = MemoryVault::default();
+        vault.set("openai", "super-secret").expect("standard key");
+        vault
+            .set("custom:local", "another-secret")
+            .expect("custom key");
+        vault
+            .set_base_url("custom:local", Some("http://127.0.0.1:1234/v1"))
+            .expect("custom URL");
+        vault
+            .set_custom_slug_registered("local", true)
+            .expect("custom index");
+        let controller = ProviderSettingsController::new(
+            vault,
+            1,
+            "0123456789abcdef0123456789abcdef",
+            "fedcba9876543210fedcba9876543210",
+        )
+        .expect("controller");
+
+        let (standard, custom) = controller.status().expect("status");
+
+        assert!(standard
+            .iter()
+            .any(|row| row.provider == "openai" && row.configured));
+        assert_eq!(custom.len(), 1);
+        assert_eq!(custom[0].slug, "local");
+        assert_eq!(custom[0].base_url, "http://127.0.0.1:1234/v1");
     }
 
     #[test]

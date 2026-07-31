@@ -11,7 +11,10 @@ use codinal_control_plane_client::{
 };
 use codinal_native_host::{
     free_loopback_port, launch_shadow_runtime_with_bootstrap, mint_session_token,
-    secrets::{encode_secret_bootstrap, PlatformSecretVault},
+    secrets::{
+        encode_secret_bootstrap, CustomProviderRecord, PlatformSecretVault, ProviderSecretStatus,
+        ProviderSettingsController,
+    },
     ShadowRuntime,
 };
 use gpui::{
@@ -38,6 +41,20 @@ struct WorkspacePrototype {
     approval_prompt_detail: Option<String>,
     approval_review_status: String,
     provider_settings: String,
+    provider_settings_controller: Arc<ProviderSettingsController>,
+    provider_delete_target: Option<ProviderDeleteTarget>,
+}
+
+#[derive(Clone)]
+enum ProviderDeleteTarget {
+    Standard(String),
+    Custom(String),
+}
+
+enum ProviderDeleteOutcome {
+    Refreshed(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>),
+    DeletedRefreshFailed,
+    DeleteFailed,
 }
 
 impl WorkspacePrototype {
@@ -103,6 +120,110 @@ impl WorkspacePrototype {
         self.approval_id = pending.first().map(|approval| approval.approval_id.clone());
         self.approval_prompt_detail = pending.first().map(format_approval_detail);
     }
+
+    fn show_provider_delete_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.provider_delete_target.clone() else {
+            return;
+        };
+        let label = match &target {
+            ProviderDeleteTarget::Standard(provider) => provider.as_str(),
+            ProviderDeleteTarget::Custom(slug) => slug.as_str(),
+        };
+        let detail = format!("Delete the Keychain credential for {label}? This cannot be undone.");
+        let response = window.prompt(
+            PromptLevel::Critical,
+            "Delete provider credential",
+            Some(&detail),
+            &["Cancel", "Delete"],
+            cx,
+        );
+        let controller = Arc::clone(&self.provider_settings_controller);
+        cx.spawn(async move |this, cx| {
+            if response.await.unwrap_or(0) != 1 {
+                return;
+            }
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let deleted = match &target {
+                        ProviderDeleteTarget::Standard(provider) => {
+                            controller.delete_standard(provider)
+                        }
+                        ProviderDeleteTarget::Custom(slug) => {
+                            controller.delete_custom(slug).map(|_| ())
+                        }
+                    };
+                    match deleted {
+                        Ok(()) => match controller.status() {
+                            Ok((standard, custom)) => {
+                                ProviderDeleteOutcome::Refreshed(standard, custom)
+                            }
+                            Err(_) => ProviderDeleteOutcome::DeletedRefreshFailed,
+                        },
+                        Err(_) => ProviderDeleteOutcome::DeleteFailed,
+                    }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match outcome {
+                    ProviderDeleteOutcome::Refreshed(standard, custom) => {
+                        let (summary, target) = format_provider_settings(&standard, &custom);
+                        this.provider_settings = summary;
+                        this.provider_delete_target = target;
+                    }
+                    ProviderDeleteOutcome::DeletedRefreshFailed => {
+                        this.provider_settings =
+                            "Credential deleted — status reload failed; restart to refresh"
+                                .to_owned();
+                        this.provider_delete_target = None;
+                    }
+                    ProviderDeleteOutcome::DeleteFailed => {
+                        this.provider_settings =
+                            "Provider deletion failed — Keychain status requires reload".to_owned();
+                        this.provider_delete_target = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+}
+
+fn format_provider_settings(
+    standard: &[ProviderSecretStatus],
+    custom: &[CustomProviderRecord],
+) -> (String, Option<ProviderDeleteTarget>) {
+    let mut rows = standard
+        .iter()
+        .map(|status| {
+            format!(
+                "{}: {}",
+                status.provider,
+                if status.configured {
+                    "configured"
+                } else {
+                    "not configured"
+                }
+            )
+        })
+        .collect::<Vec<_>>();
+    rows.extend(custom.iter().map(|provider| {
+        format!(
+            "custom:{}: configured · {}",
+            provider.slug, provider.base_url
+        )
+    }));
+    let target = standard
+        .iter()
+        .find(|status| status.configured)
+        .map(|status| ProviderDeleteTarget::Standard(status.provider.to_owned()))
+        .or_else(|| {
+            custom
+                .first()
+                .map(|provider| ProviderDeleteTarget::Custom(provider.slug.clone()))
+        });
+    (rows.join(" · "), target)
 }
 
 fn format_pending_approvals(pending: &[PendingApproval]) -> String {
@@ -158,21 +279,47 @@ impl Render for WorkspacePrototype {
                         cx,
                     )),
             )
-            .child(
-                div()
-                    .h(px(180.0))
-                    .border_t_1()
-                    .border_color(rgb(0x30363d))
-                    .p_3()
-                    .child(div().text_lg().child("Provider settings"))
-                    .child(
-                        div()
-                            .mt_2()
-                            .text_sm()
-                            .text_color(rgb(0x8b949e))
-                            .child(self.provider_settings.clone()),
-                    ),
-            )
+            .child(provider_settings_pane(
+                &self.provider_settings,
+                self.provider_delete_target.is_some(),
+                cx,
+            ))
+    }
+}
+
+fn provider_settings_pane(
+    settings: &str,
+    has_delete_target: bool,
+    cx: &mut Context<WorkspacePrototype>,
+) -> impl gpui::IntoElement {
+    let pane = div()
+        .h(px(180.0))
+        .border_t_1()
+        .border_color(rgb(0x30363d))
+        .p_3()
+        .child(div().text_lg().child("Provider settings"))
+        .child(
+            div()
+                .mt_2()
+                .text_sm()
+                .text_color(rgb(0x8b949e))
+                .child(settings.to_owned()),
+        );
+    if has_delete_target {
+        pane.child(
+            div()
+                .id("delete-provider-credential")
+                .mt_3()
+                .px_2()
+                .py_1()
+                .bg(rgb(0x5a1d1d))
+                .child("Delete first configured credential…")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.show_provider_delete_prompt(window, cx);
+                })),
+        )
+    } else {
+        pane
     }
 }
 
@@ -290,11 +437,16 @@ fn native_runtime_binary() -> io::Result<PathBuf> {
         })
 }
 
-fn start_native_runtime() -> io::Result<(ControlPlaneClient, ShadowRuntime)> {
+fn start_native_runtime() -> io::Result<(
+    ControlPlaneClient,
+    ShadowRuntime,
+    Arc<ProviderSettingsController>,
+)> {
     let data_dir = development_data_dir()?;
     let token = mint_session_token()?;
     let secret_sync_token = Zeroizing::new(mint_session_token()?);
-    let secret_bootstrap = encode_secret_bootstrap(&PlatformSecretVault, &secret_sync_token)?;
+    let vault = PlatformSecretVault;
+    let secret_bootstrap = encode_secret_bootstrap(&vault, &secret_sync_token)?;
     let port = free_loopback_port()?;
     let snapshot = std::env::temp_dir().join(format!(
         "codinal-gpui-shadow-{}-{}",
@@ -311,11 +463,17 @@ fn start_native_runtime() -> io::Result<(ControlPlaneClient, ShadowRuntime)> {
     )?;
     let client = ControlPlaneClient::new(port, &token)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.to_string()))?;
-    Ok((client, runtime))
+    let provider_settings = Arc::new(ProviderSettingsController::new(
+        vault,
+        port,
+        &token,
+        &secret_sync_token,
+    )?);
+    Ok((client, runtime, provider_settings))
 }
 
 fn main() -> io::Result<()> {
-    let (client, runtime) = start_native_runtime()?;
+    let (client, runtime, provider_settings_controller) = start_native_runtime()?;
     let sessions = client.list_sessions()?;
     let session_count = sessions.len();
     let session_labels = if sessions.is_empty() {
@@ -347,30 +505,9 @@ fn main() -> io::Result<()> {
     let approvals = format_pending_approvals(&pending);
     let approval_id = pending.first().map(|approval| approval.approval_id.clone());
     let approval_prompt_detail = pending.first().map(format_approval_detail);
-    let vault = PlatformSecretVault;
-    let standard_status = codinal_native_host::secrets::provider_secret_status(&vault)?;
-    let custom_status = codinal_native_host::secrets::list_custom_providers(&vault)?;
-    let mut provider_settings = standard_status
-        .iter()
-        .map(|status| {
-            format!(
-                "{}: {}",
-                status.provider,
-                if status.configured {
-                    "configured"
-                } else {
-                    "not configured"
-                }
-            )
-        })
-        .collect::<Vec<_>>();
-    provider_settings.extend(custom_status.iter().map(|provider| {
-        format!(
-            "custom:{}: configured · {}",
-            provider.slug, provider.base_url
-        )
-    }));
-    let provider_settings = provider_settings.join(" · ");
+    let (standard_status, custom_status) = provider_settings_controller.status()?;
+    let (provider_settings, provider_delete_target) =
+        format_provider_settings(&standard_status, &custom_status);
     gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
@@ -391,6 +528,8 @@ fn main() -> io::Result<()> {
                     approval_prompt_detail,
                     approval_review_status: "No approval action sent".to_owned(),
                     provider_settings,
+                    provider_settings_controller,
+                    provider_delete_target,
                 })
             },
         )
