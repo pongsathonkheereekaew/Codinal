@@ -1,6 +1,7 @@
 use std::io;
 
 use url::Url;
+use zeroize::Zeroizing;
 
 const MAX_FLOW_LEN: usize = 128;
 const MIN_STATE_LEN: usize = 32;
@@ -9,10 +10,10 @@ const MAX_CODE_LEN: usize = 8192;
 const MAX_ERROR_LEN: usize = 256;
 
 pub struct OAuthDeepLink {
-    flow: String,
-    state: String,
-    code: String,
-    error: String,
+    flow: Zeroizing<String>,
+    state: Zeroizing<String>,
+    code: Zeroizing<String>,
+    error: Zeroizing<String>,
 }
 
 impl OAuthDeepLink {
@@ -30,17 +31,6 @@ impl OAuthDeepLink {
 
     pub fn error(&self) -> &str {
         &self.error
-    }
-}
-
-impl Drop for OAuthDeepLink {
-    fn drop(&mut self) {
-        use zeroize::Zeroize;
-
-        self.flow.zeroize();
-        self.state.zeroize();
-        self.code.zeroize();
-        self.error.zeroize();
     }
 }
 
@@ -68,15 +58,15 @@ pub fn parse_oauth_deep_link(url: &Url) -> io::Result<OAuthDeepLink> {
             "error" => &mut error,
             _ => return Err(invalid_callback()),
         };
-        if slot.replace(value.into_owned()).is_some() {
+        if slot.replace(Zeroizing::new(value.into_owned())).is_some() {
             return Err(invalid_callback());
         }
     }
 
     let flow = flow.ok_or_else(invalid_callback)?;
     let state = state.ok_or_else(invalid_callback)?;
-    let code = code.unwrap_or_default();
-    let error = error.unwrap_or_default();
+    let code = code.unwrap_or_else(|| Zeroizing::new(String::new()));
+    let error = error.unwrap_or_else(|| Zeroizing::new(String::new()));
     if !valid_flow(&flow)
         || !valid_state(&state)
         || (code.is_empty() == error.is_empty())

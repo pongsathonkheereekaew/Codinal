@@ -43,6 +43,7 @@ mod secure_prompt {
 use codinal_control_plane_client::{
     ApprovalConfirmation, ApprovalOutcome, ControlPlaneClient, PendingApproval,
 };
+use codinal_native_host::control_client::OAuthRelayController;
 #[cfg(target_os = "macos")]
 use codinal_native_host::pty::{PtyOutputBuffer, PtyOutputDelta, PtyRegistry};
 #[cfg(target_os = "macos")]
@@ -55,7 +56,6 @@ use codinal_native_host::{
     },
     ShadowRuntime,
 };
-#[cfg(target_os = "macos")]
 use gpui::Task;
 use gpui::{
     canvas, div, px, rgb, size, App, AppContext, Bounds, Context, ElementInputHandler,
@@ -66,17 +66,34 @@ use gpui::{
 use std::io;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
 #[cfg(target_os = "macos")]
 use std::thread;
-#[cfg(target_os = "macos")]
 use std::time::Duration;
 use zeroize::Zeroizing;
 
 static NEXT_SHADOW: AtomicU64 = AtomicU64::new(0);
+
+fn enqueue_oauth_urls(
+    sender: &SyncSender<Zeroizing<String>>,
+    dropped: &AtomicU64,
+    urls: impl IntoIterator<Item = String>,
+) {
+    for url in urls {
+        if matches!(
+            sender.try_send(Zeroizing::new(url)),
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_))
+        ) {
+            dropped.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
 
 struct WorkspacePrototype {
     _runtime: ShadowRuntime,
@@ -95,6 +112,10 @@ struct WorkspacePrototype {
     provider_edit_targets: Vec<String>,
     custom_provider_edit_targets: Vec<CustomProviderEditTarget>,
     provider_operation_in_flight: bool,
+    oauth_relay: Arc<OAuthRelayController>,
+    oauth_status: String,
+    oauth_dropped: Arc<AtomicU64>,
+    oauth_poll: Option<Task<()>>,
     terminal_parser: vt100::Parser,
     terminal_display: String,
     terminal_status: String,
@@ -524,6 +545,43 @@ fn should_request_terminal_resize(
 }
 
 impl WorkspacePrototype {
+    fn start_oauth_poll(&mut self, receiver: Receiver<Zeroizing<String>>, cx: &mut Context<Self>) {
+        let relay = Arc::clone(&self.oauth_relay);
+        let dropped = Arc::clone(&self.oauth_dropped);
+        self.oauth_poll = Some(cx.spawn(async move |this, cx| loop {
+            let dropped_count = dropped.swap(0, Ordering::AcqRel);
+            if dropped_count > 0 {
+                let _ = this.update(cx, |this, cx| {
+                    this.oauth_status =
+                        format!("OAuth callback queue rejected {dropped_count} URL(s)");
+                    cx.notify();
+                });
+            }
+            let raw_url = match receiver.try_recv() {
+                Ok(url) => url,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                    continue;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+            };
+            let relay = Arc::clone(&relay);
+            let result = cx
+                .background_executor()
+                .spawn(async move { relay.relay_deep_link(&raw_url) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.oauth_status = match result {
+                    Ok(flow) => format!("OAuth callback relayed: {flow}"),
+                    Err(error) => format!("OAuth callback rejected: {error}"),
+                };
+                cx.notify();
+            });
+        }));
+    }
+
     #[cfg(target_os = "macos")]
     fn choose_workspace(&mut self, cx: &mut Context<Self>) {
         if !self.terminal_state.can_open() {
@@ -1346,8 +1404,8 @@ impl EntityInputHandler for WorkspacePrototype {
 impl Render for WorkspacePrototype {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let runtime = format!(
-            "authenticated Rust runtime ready · {} sessions",
-            self.session_count
+            "authenticated Rust runtime ready · {} sessions · {}",
+            self.session_count, self.oauth_status
         );
         #[cfg(target_os = "macos")]
         let terminal_workspace = self.terminal_workspace.clone();
@@ -1752,6 +1810,7 @@ fn start_native_runtime() -> io::Result<(
     ControlPlaneClient,
     ShadowRuntime,
     Arc<ProviderSettingsController>,
+    Arc<OAuthRelayController>,
 )> {
     let data_dir = development_data_dir()?;
     let token = mint_session_token()?;
@@ -1780,7 +1839,12 @@ fn start_native_runtime() -> io::Result<(
         &token,
         &secret_sync_token,
     )?);
-    Ok((client, runtime, provider_settings))
+    let oauth_relay = Arc::new(OAuthRelayController::new(
+        port,
+        token,
+        secret_sync_token.to_string(),
+    )?);
+    Ok((client, runtime, provider_settings, oauth_relay))
 }
 
 #[cfg(target_os = "macos")]
@@ -1803,7 +1867,7 @@ fn prepare_native_terminal() -> io::Result<(Arc<PtyRegistry>, String, String)> {
 }
 
 fn main() -> io::Result<()> {
-    let (client, runtime, provider_settings_controller) = start_native_runtime()?;
+    let (client, runtime, provider_settings_controller, oauth_relay) = start_native_runtime()?;
     #[cfg(target_os = "macos")]
     let (terminal_registry, terminal_session_id, terminal_workspace) = prepare_native_terminal()?;
     let sessions = client.list_sessions()?;
@@ -1845,7 +1909,14 @@ fn main() -> io::Result<()> {
         .map(|status| status.provider.to_owned())
         .collect();
     let custom_provider_edit_targets = custom_provider_edit_targets(&custom_status);
-    gpui_platform::application().run(move |cx: &mut App| {
+    let (oauth_url_sender, oauth_url_receiver) = sync_channel::<Zeroizing<String>>(32);
+    let oauth_dropped = Arc::new(AtomicU64::new(0));
+    let callback_dropped = Arc::clone(&oauth_dropped);
+    let application = gpui_platform::application();
+    application.on_open_urls(move |urls| {
+        enqueue_oauth_urls(&oauth_url_sender, &callback_dropped, urls);
+    });
+    application.run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -1853,7 +1924,7 @@ fn main() -> io::Result<()> {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|cx: &mut Context<WorkspacePrototype>| WorkspacePrototype {
+                let entity = cx.new(|cx: &mut Context<WorkspacePrototype>| WorkspacePrototype {
                     _runtime: runtime,
                     client,
                     approval_session_id,
@@ -1870,6 +1941,10 @@ fn main() -> io::Result<()> {
                     provider_edit_targets,
                     custom_provider_edit_targets,
                     provider_operation_in_flight: false,
+                    oauth_relay,
+                    oauth_status: "OAuth idle".to_owned(),
+                    oauth_dropped,
+                    oauth_poll: None,
                     terminal_parser: vt100::Parser::new(30, 100, 1_000),
                     terminal_display: String::new(),
                     terminal_status: "Terminal closed".to_owned(),
@@ -1899,7 +1974,11 @@ fn main() -> io::Result<()> {
                     terminal_resize_failed: None,
                     #[cfg(target_os = "macos")]
                     terminal_poll: None,
-                })
+                });
+                entity.update(cx, |this, cx| {
+                    this.start_oauth_poll(oauth_url_receiver, cx);
+                });
+                entity
             },
         )
         .expect("open GPUI prototype window");
@@ -1927,6 +2006,18 @@ mod tests {
         assert!(!begin_provider_operation(&mut in_flight));
         in_flight = false;
         assert!(begin_provider_operation(&mut in_flight));
+    }
+
+    #[test]
+    fn oauth_url_queue_is_bounded_and_counts_rejections() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::mpsc::sync_channel;
+
+        let (sender, receiver) = sync_channel(1);
+        let dropped = AtomicU64::new(0);
+        super::enqueue_oauth_urls(&sender, &dropped, ["first".to_owned(), "second".to_owned()]);
+        assert_eq!(receiver.recv().unwrap().as_str(), "first");
+        assert_eq!(dropped.load(Ordering::Relaxed), 1);
     }
 
     #[test]

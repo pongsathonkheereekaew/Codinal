@@ -5,7 +5,43 @@ use std::time::Duration;
 use zeroize::Zeroizing;
 
 use crate::host::validate_session_token;
-use crate::oauth::OAuthDeepLink;
+use crate::oauth::{parse_oauth_deep_link, OAuthDeepLink};
+use url::Url;
+
+pub struct OAuthRelayController {
+    port: u16,
+    token: Zeroizing<String>,
+    secret_sync_token: Zeroizing<String>,
+}
+
+impl OAuthRelayController {
+    pub fn new(port: u16, token: String, secret_sync_token: String) -> io::Result<Self> {
+        validate_session_token(&token)?;
+        validate_session_token(&secret_sync_token)?;
+        Ok(Self {
+            port,
+            token: Zeroizing::new(token),
+            secret_sync_token: Zeroizing::new(secret_sync_token),
+        })
+    }
+
+    /// Parse and relay an OS deep link without exposing either credential.
+    /// Returns the non-secret flow identifier for shell status rendering.
+    pub fn relay_url(&self, url: Url) -> io::Result<String> {
+        let parsed = parse_oauth_deep_link(&url);
+        let _serialized_url = Zeroizing::new(String::from(url));
+        let callback = parsed?;
+        let flow = callback.flow().to_owned();
+        relay_oauth_callback(self.port, &self.token, &self.secret_sync_token, &callback)?;
+        Ok(flow)
+    }
+
+    pub fn relay_deep_link(&self, raw_url: &str) -> io::Result<String> {
+        let url = Url::parse(raw_url)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid OAuth callback"))?;
+        self.relay_url(url)
+    }
+}
 
 pub fn relay_oauth_callback(
     port: u16,
@@ -72,4 +108,19 @@ fn send_json_request(
         return Err(io::Error::other(rejection_message));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_controller_rejects_invalid_credentials_and_urls_before_network() {
+        assert!(OAuthRelayController::new(1, "short".to_owned(), "short".to_owned()).is_err());
+        let controller = OAuthRelayController::new(1, "a".repeat(32), "b".repeat(32)).unwrap();
+        let error = controller
+            .relay_deep_link("https://example.com/not-oauth")
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
 }

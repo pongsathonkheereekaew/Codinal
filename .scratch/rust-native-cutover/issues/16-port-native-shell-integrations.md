@@ -29,4 +29,7 @@ Tauri remains only a temporary adapter.
 - GPUI now invokes the native workspace picker directly, displays the canonical
   selection, and uses it for subsequent terminal sessions without a WebView
   command bridge.
-- Remaining: GPUI deep-link wiring and packaged parity evidence.
+- GPUI now receives OS URLs directly from the platform, bounds and zeroizes the
+  raw callback queue, then relays strictly parsed OAuth callbacks through a
+  credential-owning native controller off the foreground executor.
+- Remaining: package URL-scheme registration and packaged parity evidence.
