@@ -88,7 +88,14 @@ def test_http_accepts_valid_bearer_token(client: TestClient) -> None:
     headers = {"Authorization": f"Bearer {TOKEN}"}
 
     assert client.get("/v1/health", headers=headers).json() == {
-        "status": "ok"
+        "status": "ok",
+        "capabilities": {
+            "runtime_owner": "python",
+            "turn_execution_owner": "python",
+            "receipt_write_owner": "python",
+            "start_turn": True,
+            "interrupt_turn": True,
+        },
     }
     assert client.get("/v1/settings", headers=headers).json() == {
         "model": "test/model",

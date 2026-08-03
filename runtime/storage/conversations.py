@@ -33,7 +33,7 @@ from .migrations import (
 
 _SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 10
 MAX_EXPORT_STORED_BYTES = 32 * 1024 * 1024
 MAX_PLAN_RESPONSE_BYTES = 128 * 1024
 MAX_LISTED_PLAN_ARTIFACTS = 100
@@ -222,6 +222,80 @@ def _migrate_to_v8(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v9(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS projects (
+            project_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT ({_NOW}),
+            updated_at TEXT NOT NULL DEFAULT ({_NOW})
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_roots (
+            project_id TEXT NOT NULL,
+            root_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (project_id, root_id),
+            UNIQUE (project_id, path),
+            FOREIGN KEY (project_id) REFERENCES projects(project_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_sessions (
+            project_id TEXT NOT NULL,
+            session_id TEXT PRIMARY KEY,
+            FOREIGN KEY (project_id) REFERENCES projects(project_id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS project_sessions_project
+        ON project_sessions(project_id, session_id)
+        """
+    )
+
+
+def _migrate_to_v10(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS source_attachments (
+            attachment_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            error TEXT,
+            attached_at TEXT NOT NULL DEFAULT ({_NOW}),
+            updated_at TEXT NOT NULL DEFAULT ({_NOW}),
+            PRIMARY KEY (session_id, attachment_id),
+            UNIQUE (session_id, path),
+            FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS source_attachments_session
+        ON source_attachments(session_id, attached_at, attachment_id)
+        """
+    )
+
+
 _MIGRATIONS = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
@@ -231,6 +305,8 @@ _MIGRATIONS = {
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: _migrate_to_v8,
+    9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }
 
 
@@ -497,6 +573,33 @@ class ConversationStore:
                 (session_id,),
             ).fetchone()
         return _turn_receipt_from_row(row) if row is not None else None
+
+    def list_turn_receipts(
+        self,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        _validate_session_id(session_id)
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("invalid turn receipt limit")
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT turn_id, session_id, outcome, message_count, created_at
+                FROM turn_receipts
+                WHERE session_id = ?
+                ORDER BY created_at, turn_id
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        receipts = []
+        for row in rows:
+            receipt = _turn_receipt_from_row(row)
+            receipt["created_at"] = str(row["created_at"])
+            receipts.append(receipt)
+        return receipts
 
     def load(self, session_id: str) -> Optional[SessionRecord]:
         _validate_session_id(session_id)

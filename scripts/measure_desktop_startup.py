@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Measure macOS desktop launch through the local sidecar listener.
+"""Measure macOS desktop launch through the bundled Rust runtime listener.
 
 The metric starts at the packaged Codinal executable and stops when its
-freshly spawned Python sidecar binds a loopback TCP port.  It deliberately
-does *not* call an authenticated endpoint or claim that WebView rendering or
+freshly spawned native Rust runtime binds a loopback TCP port.  It deliberately
+does *not* call an authenticated endpoint or claim that GPUI first paint or
 first-model-token latency has completed; those need separate probes.
 """
 
@@ -47,7 +47,7 @@ def _child_pid(parent_pid: int) -> int | None:
     return int(pids[0]) if pids else None
 
 
-def _sidecar_listener(pid: int) -> int | None:
+def _runtime_listener(pid: int) -> int | None:
     result = subprocess.run(
         ["/usr/sbin/lsof", "-nP", "-a", "-p", str(pid), "-iTCP", "-sTCP:LISTEN"],
         stdout=subprocess.PIPE,
@@ -75,7 +75,7 @@ def _matching_app_pids(app: Path) -> list[int]:
     return matches
 
 
-def _owned_sidecar_is_running(pid: int) -> bool:
+def _owned_runtime_is_running(pid: int) -> bool:
     result = subprocess.run(
         ["/bin/ps", "-p", str(pid), "-o", "command="],
         stdout=subprocess.PIPE,
@@ -83,7 +83,7 @@ def _owned_sidecar_is_running(pid: int) -> bool:
         text=True,
         check=False,
     )
-    return "runtime.control_plane" in result.stdout
+    return "codinal-runtime" in result.stdout
 
 
 def _stop(process: subprocess.Popen[bytes], child_pid: int | None) -> None:
@@ -100,9 +100,9 @@ def _stop(process: subprocess.Popen[bytes], child_pid: int | None) -> None:
     if child_pid is None:
         return
     deadline = time.monotonic() + 5
-    while _owned_sidecar_is_running(child_pid) and time.monotonic() < deadline:
+    while _owned_runtime_is_running(child_pid) and time.monotonic() < deadline:
         time.sleep(0.025)
-    if _owned_sidecar_is_running(child_pid):
+    if _owned_runtime_is_running(child_pid):
         try:
             os.kill(child_pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -123,12 +123,12 @@ def _run_sample(app: Path, timeout_seconds: float) -> float:
         deadline = started + timeout_seconds
         while time.perf_counter() < deadline:
             if process.poll() is not None:
-                raise RuntimeError("Codinal exited before its sidecar was ready")
+                raise RuntimeError("Codinal exited before its native runtime was ready")
             child_pid = child_pid or _child_pid(process.pid)
-            if child_pid is not None and _sidecar_listener(child_pid) is not None:
+            if child_pid is not None and _runtime_listener(child_pid) is not None:
                 return (time.perf_counter() - started) * 1000
             time.sleep(0.025)
-        raise TimeoutError(f"sidecar did not bind within {timeout_seconds:.1f}s")
+        raise TimeoutError(f"native runtime did not bind within {timeout_seconds:.1f}s")
     finally:
         _stop(process, child_pid)
 
@@ -152,7 +152,7 @@ def main() -> int:
     if running:
         parser.error(f"close Codinal before measuring a cold launch (running: {running})")
     result = summarize_samples([_run_sample(app, args.timeout) for _ in range(args.samples)])
-    print(json.dumps({"metric": "desktop_to_sidecar_listener", **result}, sort_keys=True))
+    print(json.dumps({"metric": "desktop_to_native_runtime_listener", **result}, sort_keys=True))
     return 0
 
 

@@ -129,7 +129,10 @@ def test_release_script_copies_the_canonical_runtime_tree() -> None:
     release_script = (
         Path(__file__).resolve().parents[2] / "scripts/build-macos-release.sh"
     ).read_text(encoding="utf-8")
-    assert 'ditto "$ROOT/runtime" "$BUILD_DIR/resources/runtime/runtime"' in release_script
+    assert (
+        'install -m 755 "$RUNTIME_ROOT/target/release/codinal-runtime" '
+        '"$RESOURCES/codinal-runtime"'
+    ) in release_script
 
 
 @pytest.mark.parametrize(

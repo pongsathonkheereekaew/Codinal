@@ -19,8 +19,8 @@ state.
 
 ### 1. Settings information architecture
 
-- Keep **General**, **Models & Gateway**, **Providers**, **Connections**,
-  **Workspace**, **Developer tools**, **Updates**, and **Diagnostics** as
+- Keep **General**, **Models & Gateway**, **Providers**, **Agents & Skills**,
+  **Connections**, **Workspace**, **Developer tools**, **Updates**, and **Diagnostics** as
   navigable, searchable categories.
 - General owns appearance, routing profile, and automatic failover.
 - Models & Gateway explicitly presents OmniRoute, Ollama, and registered
@@ -30,6 +30,15 @@ state.
 
 ### 2. Functional ecosystem controls
 
+- Add a Rust Harness Manager under **Agents & Skills**. Its first surface is a
+  read-only inventory of the Harness Source Bundle, User Overlay, Live
+  Projection, Host Projections, capability evidence, and drift. Write controls
+  remain unavailable until the Rust planner can show an ownership-aware diff,
+  obtain approval, apply atomically, verify, receipt, and roll back.
+- Enable host writes adapter by adapter, beginning with OpenCode after Rust
+  conformance. Never invoke the Bash/Python installer from the app, treat prompt
+  policy as runtime enforcement, overwrite non-owned host paths, or delete a
+  User Overlay during an update.
 - Add an Extension manager backed solely by `/v1/extensions`: list, local
   manifest registration, enable/disable, provenance verification, removal.
 - Add a keyboard-shortcuts reference generated from the existing application

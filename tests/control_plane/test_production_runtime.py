@@ -272,7 +272,7 @@ def test_production_startup_recovers_all_corrupt_durable_state(tmp_path):
     assert all(event["action"] == "preserved_corrupt_state" for event in events)
     with sqlite3.connect(data_dir / "codinal.db") as conversations:
         assert conversations.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert conversations.execute("PRAGMA user_version").fetchone()[0] == 10
     with sqlite3.connect(data_dir / "git-worktrees.db") as worktrees:
         assert worktrees.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert worktrees.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -1303,10 +1303,11 @@ def test_restart_restores_awaiting_approval_without_losing_tool_call(
             json={"outcome": "once"},
         )
         assert resolved.status_code == 200
-        for _ in range(100):
+        for _ in range(500):
             if not services.turns.is_active("session-recovery"):
                 break
             time.sleep(0.01)
+        assert not services.turns.is_active("session-recovery")
 
     assert provider.calls == 1
     assert (workspace / "recovered.txt").read_text(
@@ -1411,12 +1412,11 @@ def test_restart_restores_awaiting_question_and_resumes_once(tmp_path):
             json={"answer": "PostgreSQL"},
         )
         assert resolved.status_code == 200
-        for _ in range(100):
-            if not services.turns.is_active(
-                "session-question-recovery"
-            ):
+        for _ in range(500):
+            if not services.turns.is_active("session-question-recovery"):
                 break
             time.sleep(0.01)
+        assert not services.turns.is_active("session-question-recovery")
 
     assert provider.calls == 1
     recovered = ConversationStore(data_dir).load(
@@ -1551,10 +1551,11 @@ def test_restart_restores_other_interactions_and_resumes_once(
             json=response,
         )
         assert resolved.status_code == 200
-        for _ in range(100):
+        for _ in range(500):
             if not services.turns.is_active(session_id):
                 break
             time.sleep(0.01)
+        assert not services.turns.is_active(session_id)
 
     assert provider.calls == 1
     recovered = ConversationStore(data_dir).load(session_id)
@@ -1839,10 +1840,11 @@ def test_graceful_restart_preserves_live_waiting_interaction(
             json=response,
         )
         assert resolved.status_code == 200
-        for _ in range(100):
+        for _ in range(500):
             if not second.turns.is_active(session_id):
                 break
             time.sleep(0.01)
+        assert not second.turns.is_active(session_id)
 
     assert recovery_provider.calls == 1
     recovered = ConversationStore(config.data_dir).load(session_id)
@@ -2017,7 +2019,7 @@ def test_v6_legacy_plan_wait_recovers_with_required_verification(
     assert plans[0]["selected_task_ids"] == ["legacy-plan"]
     assert plans[0]["tasks"][0]["verification"] == "Migration E2E passes"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 def test_production_question_and_directory_cards_apply_selected_root(

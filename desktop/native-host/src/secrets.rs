@@ -8,10 +8,11 @@ use zeroize::Zeroize;
 
 use crate::host::validate_session_token;
 
-pub const SUPPORTED_PROVIDERS: [&str; 7] = [
+pub const SUPPORTED_PROVIDERS: [&str; 8] = [
     "anthropic",
     "gemini",
     "openai",
+    "opencode-go",
     "zai",
     "deepseek",
     "omniroute",
@@ -270,10 +271,23 @@ pub fn encode_secret_bootstrap(
             );
         }
     }
-    let mut bootstrap = SecretBootstrap {
+    serialize_secret_bootstrap(SecretBootstrap {
         sync_token: sync_token.to_owned(),
         profiles,
-    };
+    })
+}
+
+pub fn encode_empty_secret_bootstrap(sync_token: &str) -> io::Result<zeroize::Zeroizing<Vec<u8>>> {
+    validate_session_token(sync_token)?;
+    serialize_secret_bootstrap(SecretBootstrap {
+        sync_token: sync_token.to_owned(),
+        profiles: BTreeMap::new(),
+    })
+}
+
+fn serialize_secret_bootstrap(
+    mut bootstrap: SecretBootstrap,
+) -> io::Result<zeroize::Zeroizing<Vec<u8>>> {
     let result = serde_json::to_vec(&bootstrap)
         .map(zeroize::Zeroizing::new)
         .map_err(|error| io::Error::other(error.to_string()));
@@ -282,6 +296,56 @@ pub fn encode_secret_bootstrap(
         secret.api_key.zeroize();
     }
     result
+}
+
+fn run_platform_keychain_with_timeout<T>(
+    timeout: Duration,
+    operation: impl FnOnce() -> io::Result<T> + Send + 'static,
+) -> io::Result<T>
+where
+    T: Send + 'static,
+{
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("codinal-keychain-read".to_owned())
+        .spawn(move || {
+            let _ = sender.send(operation());
+        })
+        .map_err(|error| io::Error::other(format!("could not start Keychain read: {error}")))?;
+    receiver
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            std::sync::mpsc::RecvTimeoutError::Timeout => io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Keychain read timed out; provider state is unavailable",
+            ),
+            std::sync::mpsc::RecvTimeoutError::Disconnected => {
+                io::Error::other("Keychain read worker exited before returning")
+            }
+        })?
+}
+
+pub fn encode_platform_secret_bootstrap_with_timeout(
+    sync_token: &str,
+    timeout: Duration,
+) -> io::Result<zeroize::Zeroizing<Vec<u8>>> {
+    validate_session_token(sync_token)?;
+    let sync_token = zeroize::Zeroizing::new(sync_token.to_owned());
+    run_platform_keychain_with_timeout(timeout, move || {
+        encode_secret_bootstrap(&PlatformSecretVault, &sync_token)
+    })
+}
+
+pub fn platform_provider_status_with_timeout(
+    timeout: Duration,
+) -> io::Result<(Vec<ProviderSecretStatus>, Vec<CustomProviderRecord>)> {
+    run_platform_keychain_with_timeout(timeout, || {
+        let vault = PlatformSecretVault;
+        Ok((
+            provider_secret_status(&vault)?,
+            list_custom_providers(&vault)?,
+        ))
+    })
 }
 
 pub fn provider_secret_status(vault: &impl SecretVault) -> io::Result<Vec<ProviderSecretStatus>> {
@@ -1015,13 +1079,15 @@ impl SecretVault for PlatformSecretVault {
 #[cfg(test)]
 mod tests {
     use super::{
-        delete_custom_provider, encode_secret_bootstrap, set_custom_provider,
-        update_provider_secret, validate_provider_account, ProviderSettingsController, SecretVault,
+        delete_custom_provider, encode_secret_bootstrap, run_platform_keychain_with_timeout,
+        set_custom_provider, update_provider_secret, validate_provider_account,
+        ProviderSettingsController, SecretVault,
     };
     use codinal_providers::{ProviderId, ProviderSecrets};
     use std::collections::{BTreeMap, BTreeSet};
     use std::io;
-    use std::sync::Mutex;
+    use std::sync::{mpsc, Mutex};
+    use std::time::Duration;
 
     struct CustomVault;
 
@@ -1123,6 +1189,27 @@ mod tests {
         fn list_custom_slugs(&self) -> io::Result<Vec<String>> {
             Ok(vec!["Local".to_owned()])
         }
+    }
+
+    #[test]
+    fn bounded_keychain_read_returns_unavailable_without_waiting_for_worker() {
+        let (finished_sender, finished_receiver) = mpsc::channel();
+        let result = run_platform_keychain_with_timeout(Duration::from_millis(20), move || {
+            std::thread::sleep(Duration::from_millis(100));
+            finished_sender.send(()).expect("worker receiver");
+            Ok::<_, io::Error>(())
+        });
+
+        let error = result.expect_err("slow Keychain read should time out");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            error.to_string(),
+            "Keychain read timed out; provider state is unavailable"
+        );
+        assert!(finished_receiver.try_recv().is_err());
+        finished_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("detached worker should finish");
     }
 
     #[test]

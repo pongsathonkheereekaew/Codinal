@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Codinal product acceptance — harness, Python runtime, and macOS desktop shell
+# Codinal product acceptance — harness, Rust desktop stack, and macOS desktop shell
 # Codinal layout: harness content under harness/, product at root.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -31,6 +31,11 @@ for f in install.sh backup.sh verify.sh bootstrap.sh "$HARNESS"/scripts/*; do
   esac
   bash -n "$f"
 done
+for f in "$ROOT"/scripts/*.sh; do
+  [ -f "$f" ] || continue
+  bash -n "$f"
+done
+"$PYTHON_BIN" -c "import ast, pathlib; ast.parse(pathlib.Path('scripts/generate_rust_sbom.py').read_text())"
 echo "syntax: OK"
 
 echo "== skills =="
@@ -82,24 +87,49 @@ else
   echo "manifest: SKIP (pyyaml/jsonschema not installed; pip install -r requirements-dev.txt)"
 fi
 
+echo "== runtime truth =="
+"$PYTHON_BIN" scripts/runtime_truth_gate.py --check
+echo "runtime truth: OK"
+
 echo "== product tests =="
 if ! "$PYTHON_BIN" -c "import fastapi, httpx, pytest, uvicorn, yaml, jsonschema" 2>/dev/null; then
   echo "FAIL: test dependencies missing; install requirements-dev.txt" >&2
   exit 1
 fi
-"$PYTHON_BIN" -X faulthandler -m pytest -q \
+# Pytest's faulthandler plugin remains enabled by default. An empty environment
+# value is required to disable it; `PYTHONFAULTHANDLER=0` still enables it.
+PYTHONFAULTHANDLER= "$PYTHON_BIN" -m pytest -q \
   --timeout=90 --timeout-method=thread \
   -p no:cacheprovider
 echo "product tests: OK"
 
 echo "== desktop shell (macOS) =="
 if [ "$(uname -s)" = "Darwin" ] && command -v cargo >/dev/null 2>&1; then
-  cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
-  cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
-  cargo test --manifest-path desktop/src-tauri/Cargo.toml
+  cargo fmt --manifest-path desktop/gpui/Cargo.toml -- --check
+  cargo clippy --manifest-path desktop/gpui/Cargo.toml --all-targets -- -D warnings
+  cargo test --manifest-path desktop/gpui/Cargo.toml
   echo "desktop shell: OK"
 else
   echo "desktop shell: SKIP (macOS Rust gate runs in CI)"
+fi
+
+echo "== Rust cutover contracts =="
+if command -v cargo >/dev/null 2>&1; then
+  cargo test --manifest-path crates/codinal-harness/Cargo.toml --lib
+  cargo test --manifest-path crates/codinal-tools/Cargo.toml --all-targets
+  cargo test --manifest-path crates/codinal-providers/Cargo.toml
+  cargo test --manifest-path crates/codinal-storage/Cargo.toml --lib
+  cargo test --manifest-path crates/codinal-policy/Cargo.toml
+  # The C1 gate requires proving the runtime is safe under Cargo's default
+  # parallel scheduler before the environment-mutating serial regression run.
+  cargo test --manifest-path crates/codinal-runtime/Cargo.toml --lib
+  # Runtime unit tests exercise process-wide CODINAL_* environment bootstrap
+  # variables; serialize that target so environment-mutating tests cannot race
+  # with unrelated route tests.
+  cargo test --manifest-path crates/codinal-runtime/Cargo.toml --lib -- --test-threads=1
+  echo "Rust cutover contracts: OK"
+else
+  echo "Rust cutover contracts: SKIP (cargo unavailable)"
 fi
 
 echo "== policy invariants =="

@@ -20,8 +20,9 @@ new 256-bit bearer token minted by the Rust host.
 - Tokens in query strings are not accepted.
 - Missing or invalid HTTP credentials return `401` with
   `WWW-Authenticate: Bearer`; WebSockets close with `4401`.
-- A supplied WebSocket Origin outside the Tauri/development allowlist closes
-  with `4403`. Missing Origin remains valid for authenticated native clients.
+- A supplied WebSocket Origin outside the native client/development allowlist
+  closes with `4403`. Missing Origin remains valid for authenticated native
+  clients.
 - CORS preflight is allowed without bearer only for configured origins.
 - FastAPI documentation and OpenAPI routes are disabled.
 

@@ -7,11 +7,14 @@ EXECUTABLE="$APP/Contents/MacOS/codinal"
 RUNTIME="$APP/Contents/Resources/codinal-runtime"
 
 test -x "$EXECUTABLE"
-test -x "$RUNTIME"
+if [ "${CODINAL_SKIP_EMBEDDED_IMPORTS:-0}" != "1" ]; then
+  test -x "$RUNTIME"
+  file "$EXECUTABLE" "$RUNTIME" | grep -q 'arm64'
+fi
+
 if [ "${CODINAL_SKIP_CODESIGN_CHECK:-0}" != "1" ]; then
   codesign --verify --deep --strict --verbose=2 "$APP"
 fi
-file "$EXECUTABLE" "$RUNTIME" | grep -q 'arm64'
 
 if [ "${CODINAL_SKIP_APP_LAUNCH:-0}" != "1" ]; then
   SMOKE_HOME="$(mktemp -d /tmp/codinal-smoke-home.XXXXXX)"
@@ -19,16 +22,16 @@ if [ "${CODINAL_SKIP_APP_LAUNCH:-0}" != "1" ]; then
   HOME="$SMOKE_HOME" "$EXECUTABLE" &
   APP_PID=$!
   REAL_APP_PID=""
-  SIDECAR_PID=""
+  RUNTIME_PID=""
   cleanup() {
-    for candidate in "$SIDECAR_PID" "$REAL_APP_PID" "$APP_PID"; do
+    for candidate in "$RUNTIME_PID" "$REAL_APP_PID" "$APP_PID"; do
       if [ -n "$candidate" ]; then
         kill "$candidate" >/dev/null 2>&1 || true
       fi
     done
     for _ in $(seq 1 10); do
       RUNNING=0
-      for candidate in "$SIDECAR_PID" "$REAL_APP_PID" "$APP_PID"; do
+      for candidate in "$RUNTIME_PID" "$REAL_APP_PID" "$APP_PID"; do
         if [ -n "$candidate" ] && kill -0 "$candidate" >/dev/null 2>&1; then
           RUNNING=1
         fi
@@ -38,7 +41,7 @@ if [ "${CODINAL_SKIP_APP_LAUNCH:-0}" != "1" ]; then
       fi
       sleep 1
     done
-    for candidate in "$SIDECAR_PID" "$REAL_APP_PID" "$APP_PID"; do
+    for candidate in "$RUNTIME_PID" "$REAL_APP_PID" "$APP_PID"; do
       if [ -n "$candidate" ]; then
         kill -KILL "$candidate" >/dev/null 2>&1 || true
       fi
@@ -53,18 +56,25 @@ if [ "${CODINAL_SKIP_APP_LAUNCH:-0}" != "1" ]; then
       case "$BASELINE_RUNTIME_PIDS" in
         *" $candidate "*) continue ;;
       esac
-      SIDECAR_PID="$candidate"
+      RUNTIME_PID="$candidate"
       REAL_APP_PID="$(ps -o ppid= -p "$candidate" | tr -d ' ')"
       break
     done < <(pgrep -f '/Contents/Resources/codinal-runtime$' || true)
-    if [ -n "$SIDECAR_PID" ]; then
+    if [ -n "$RUNTIME_PID" ]; then
       break
     fi
     sleep 1
   done
 
-  if [ -z "$SIDECAR_PID" ]; then
+  if [ -z "$RUNTIME_PID" ]; then
     echo "packaged native runtime did not start" >&2
+    exit 1
+  fi
+
+  FORBIDDEN_CHILDREN="$(ps -axo pid=,ppid=,command= | awk -v parent="$APP_PID" '$2 == parent && $0 ~ /([Pp]ython|[Tt]auri|[Ww]eb[Kk]it|[Ww]eb[Vv]iew)/')"
+  if [ -n "$FORBIDDEN_CHILDREN" ]; then
+    echo "packaged Codinal spawned a forbidden non-Rust child:" >&2
+    echo "$FORBIDDEN_CHILDREN" >&2
     exit 1
   fi
 

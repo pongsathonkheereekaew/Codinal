@@ -5,12 +5,17 @@ edition = "2021"
 publish = false
 
 [dependencies]
+codinal-harness = { path = "../codinal-harness" }
+codinal-tools = { path = "../codinal-tools" }
 codinal-storage = { path = "../codinal-storage" }
 codinal-policy = { path = "../codinal-policy" }
 codinal-providers = { path = "../codinal-providers" }
 fs2 = "=0.4.3"
+libc = "=0.2.189"
 serde = "=1.0.229"
 serde_json = "=1.0.149"
+sha2 = "=0.10.9"
+tungstenite = "=0.25.0"
 zeroize = "=1.9.0"
 
 [dev-dependencies]

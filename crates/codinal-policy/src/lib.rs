@@ -65,6 +65,25 @@ pub struct ApprovalBroker {
 
 impl ApprovalBroker {
     pub fn request(&mut self, session_id: &str, request: PermissionRequest) -> io::Result<String> {
+        self.request_with_turn_id(session_id, None, request)
+    }
+
+    pub fn request_for_turn(
+        &mut self,
+        session_id: &str,
+        turn_id: &str,
+        request: PermissionRequest,
+    ) -> io::Result<String> {
+        validate_subject(turn_id, "turn")?;
+        self.request_with_turn_id(session_id, Some(turn_id), request)
+    }
+
+    fn request_with_turn_id(
+        &mut self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        request: PermissionRequest,
+    ) -> io::Result<String> {
         validate_subject(session_id, "session")?;
         validate_subject(&request.tool_call_id, "tool call")?;
         validate_subject(&request.tool_name, "tool")?;
@@ -86,7 +105,10 @@ impl ApprovalBroker {
                 "approval request exceeds limit",
             ));
         }
-        let approval_id = approval_id(session_id, &request.tool_call_id);
+        let approval_id = turn_id.map_or_else(
+            || approval_id(session_id, &request.tool_call_id),
+            |turn_id| approval_id_for_turn(session_id, turn_id, &request.tool_call_id),
+        );
         let pending = PendingApproval {
             approval_id: approval_id.clone(),
             tool_name: request.tool_name,
@@ -137,11 +159,60 @@ impl ApprovalBroker {
         self.pending.remove(index);
         true
     }
+
+    pub fn restore_pending(
+        &mut self,
+        session_id: &str,
+        pending: PendingApproval,
+    ) -> io::Result<()> {
+        validate_subject(session_id, "session")?;
+        if !valid_id(&pending.approval_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid approval id",
+            ));
+        }
+        validate_subject(&pending.tool_name, "tool")?;
+        validate_subject(&pending.reason, "approval reason")?;
+        if !matches!(pending.risk.as_str(), "write_local" | "exec" | "external") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid approval risk",
+            ));
+        }
+        let key = (session_id.to_owned(), pending.approval_id.clone());
+        if self.pending.iter().any(|(candidate, _)| candidate == &key) {
+            return Ok(());
+        }
+        let session_count = self
+            .pending
+            .iter()
+            .filter(|((candidate, _), _)| candidate == session_id)
+            .count();
+        if self.pending.len() >= MAX_PENDING_GLOBAL || session_count >= MAX_PENDING_PER_SESSION {
+            return Err(io::Error::new(
+                io::ErrorKind::OutOfMemory,
+                "pending approval capacity reached",
+            ));
+        }
+        self.pending.push((key, pending));
+        Ok(())
+    }
 }
 
 fn approval_id(session_id: &str, tool_call_id: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(session_id.as_bytes());
+    digest.update([0]);
+    digest.update(tool_call_id.as_bytes());
+    format!("{:x}", digest.finalize())[..32].to_owned()
+}
+
+fn approval_id_for_turn(session_id: &str, turn_id: &str, tool_call_id: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(session_id.as_bytes());
+    digest.update([0]);
+    digest.update(turn_id.as_bytes());
     digest.update([0]);
     digest.update(tool_call_id.as_bytes());
     format!("{:x}", digest.finalize())[..32].to_owned()
@@ -318,5 +389,26 @@ mod tests {
                 },
             )
             .is_err());
+    }
+
+    #[test]
+    fn approval_id_is_bound_to_turn_identity() {
+        let mut broker = ApprovalBroker::default();
+        let request = |path: &str| PermissionRequest {
+            tool_call_id: "call-1".to_owned(),
+            tool_name: "apply_patch".to_owned(),
+            arguments: serde_json::json!({"path": path}),
+            reason: "write workspace file".to_owned(),
+            risk: "write_local".to_owned(),
+            command: None,
+        };
+        let first = broker
+            .request_for_turn("session-1", "turn-1", request("one.txt"))
+            .expect("first pending request");
+        let second = broker
+            .request_for_turn("session-1", "turn-2", request("two.txt"))
+            .expect("second pending request");
+        assert_ne!(first, second);
+        assert_eq!(broker.pending("session-1").len(), 2);
     }
 }

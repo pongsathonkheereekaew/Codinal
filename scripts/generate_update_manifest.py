@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Generate the signed Tauri update manifest published with a Codinal release."""
+"""Generate the signed update manifest published with a Codinal release."""
 
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
+
+RUST_READABLE_SCHEMA_MIN = 1
+RUST_READABLE_SCHEMA_MAX = 1
 
 
 def build_manifest(
@@ -20,6 +23,10 @@ def build_manifest(
         "version": version,
         "notes": notes,
         "pub_date": pub_date,
+        "schema": {
+            "min_readable": RUST_READABLE_SCHEMA_MIN,
+            "max_readable": RUST_READABLE_SCHEMA_MAX,
+        },
         "platforms": {
             "darwin-aarch64": {
                 "signature": signature.strip(),

@@ -60,27 +60,29 @@ merge gate.
 
 ## Local measurement
 
-Run the same service-composition path that the desktop sidecar uses:
+Measure the native Rust runtime bootstrap in an isolated temporary data
+directory:
 
 ```bash
 ./.venv/bin/python scripts/measure_runtime_startup.py --samples 5
 ```
 
 The JSON output preserves every sample plus min, median, p95, and max. Each
-sample starts a fresh Python process and measures interpreter startup, runtime
-imports, and service composition. Packaged app launch and first model token
+sample starts a fresh Rust runtime process and measures bootstrap through its
+loopback listener. Packaged GPUI launch, first paint, and first model token
 remain separate metrics.
 
 For the packaged macOS app, first close Codinal and then measure from its
-native executable through the newly spawned sidecar's loopback listener:
+native executable through the newly spawned Rust runtime's loopback listener:
 
 ```bash
 ./.venv/bin/python scripts/measure_desktop_startup.py --samples 5
 ```
 
-This reports `desktop_to_sidecar_listener`: native executable launch plus
-sidecar process creation until the sidecar binds its port. It intentionally
-does not claim WebView paint/readiness or first-model-token latency.
+This reports `desktop_to_native_runtime_listener`: native executable launch
+plus runtime process creation until the runtime binds its port. It
+intentionally does not claim GPUI paint/readiness or first-model-token
+latency.
 
 ## Baselines (observed)
 
@@ -90,7 +92,8 @@ guarantee.
 
 | Path | Dev (macOS) | CI (ubuntu) | Budget |
 |---|---|---|---|
-| cold start (`build_services`, empty data_dir) | ~0.3s | ~0.5s | 3.0s |
+| native runtime listener (isolated read-only process) | ~41ms p95 | not measured | 3.0s |
+| packaged desktop to native runtime listener | ~2.25s p95 | not measured | 3.0s |
 | search query (50 files) | <0.05s | <0.1s | 2.0s deadline |
 | `_outbound_messages` (1000 msgs, no attachments) | ~5ms | ~10ms | 500ms |
 | `_outbound_messages` (2000 msgs, over cap) | drops oldest + notice | same | 2000 msgs |

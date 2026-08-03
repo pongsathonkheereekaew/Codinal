@@ -1,0 +1,1157 @@
+{
+  "slice": "B",
+  "scope": "sessions/messages/plans/goals + websocket event boundary slice",
+  "owner": "session/turn owner",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/v1/goals/{goal_id}/audit",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "goal operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (goal writes unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/goals/{goal_id}/continue",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "goal operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (goal writes unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/goals/{goal_id}/evidence",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "goal operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (goal writes unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array or object"
+        }
+      },
+      "notes": "parity target from python control-plane route surface"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/search",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array"
+        }
+      },
+      "notes": "implemented as read-only fallback: scan public session summaries and filter by session_id/title/workspace"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/{session_id}",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "session delete is not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (session mutation unsupported)."
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/sessions/{session_id}",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "session patch is not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (session mutation unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/approvals",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array or object"
+        }
+      },
+      "notes": "parity target from python control-plane route surface"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/approvals/{approval_id}",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array or object"
+        }
+      },
+      "notes": "parity target from python control-plane route surface"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/artifacts",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "artifact operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (artifact IO unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/artifacts/read",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "artifact operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (artifact IO unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/artifacts/reveal",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "artifact operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (artifact IO unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/artifacts/write",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "artifact operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (artifact IO unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/checkpoints",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "checkpoint operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (checkpoint persistence unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/checkpoints/{checkpoint_id}/restore",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "checkpoint operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (checkpoint persistence unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/complete",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "session complete is not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (session completion unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/context",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "session context is not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (session context assembly unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/export.md",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "export operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (markdown export unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/fork",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "session fork is not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (session fork unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/git/apply",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/git/commit",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/git/diff",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/git/files",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/git/graph",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/git/log",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/git/push",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/git/stage",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/git/status",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "git operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (git tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/github/checks",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "github operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (github integration unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/github/cleanup",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "github operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (github integration unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/github/comment",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "github operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (github integration unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/github/merge",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "github operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (github integration unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/github/pr",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "github operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (github integration unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/github/pr",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "github operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (github integration unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/goals",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array"
+        }
+      },
+      "notes": "implemented as read-only session goals list"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/goals",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "goal operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (goal writes unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/inline-edit",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "inline-edit operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (inline editing unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/interactions",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array"
+        }
+      },
+      "notes": "Implemented as read-only empty interaction list."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/interactions/{interaction_id}",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "interaction operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (interaction decision unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/interrupt",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "session interrupt is not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (turn interrupt unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/mcp/connect",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "mcp operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (mcp transport unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/mcp/servers",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "mcp operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (mcp transport unsupported)."
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/{session_id}/mcp/servers/{server_name}",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "mcp operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (mcp transport unsupported)."
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/sessions/{session_id}/mcp/servers/{server_name}",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "mcp operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (mcp transport unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/messages",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array or object"
+        }
+      },
+      "notes": "parity target from python control-plane route surface"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/plan-builds",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array"
+        }
+      },
+      "notes": "implemented as read-only plan-build list against plan-builds.db with schema fallback guard"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/plan-builds",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "plan-build operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (plan build write unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/plans",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "200": {
+          "json": "array"
+        }
+      },
+      "notes": "implemented as read-only session plans list with schema fallback guard"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/{session_id}/preview/evidence",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "preview operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (preview evidence store unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/preview/evidence",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "preview operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (preview evidence store unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/preview/evidence",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "preview operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (preview evidence store unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/preview/verify",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "preview operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (preview verification unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/preview/verify-origin",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "preview operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (preview origin verification unsupported)."
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/{session_id}/project/index",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "project operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (project tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/project/index",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "project operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (project tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/project/index",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "project operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (project tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/project/open",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "project operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (project tooling unsupported)."
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/{session_id}/project/search",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "project operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (project tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/project/search",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "project operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (project tooling unsupported)."
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/sessions/{session_id}/roots",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "roots operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (roots tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/roots",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "roots operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (roots tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/roots",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "roots operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (roots tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/security/scan",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "security scan operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (security scanning unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/side-conversations",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "side-conversation operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (side-conversation routing unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/terminal/interrupt",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "terminal operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (terminal session unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/terminal/run",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "terminal operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (terminal session unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/tree",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "tree operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (tree tooling unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/turns",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "turn operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (turn engine unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/workers",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "worker operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (worker registry unsupported)."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session_id}/workers",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "worker operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (worker spawn unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session_id}/workspace/files",
+      "auth": "bearer",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "workspace operations are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 for now (workspace read tooling unsupported)."
+    },
+    {
+      "method": "GET",
+      "path": "/ws/events",
+      "auth": "websocket-subprotocol",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "websocket events are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 upgrade boundary for now (event relay unsupported until R3 turn engine)."
+    },
+    {
+      "method": "GET",
+      "path": "/ws/session/{session_id}",
+      "auth": "websocket-subprotocol",
+      "query": [],
+      "scope": "sessions-messages-plans-goals",
+      "status": "implemented",
+      "response": {
+        "501": {
+          "json": {
+            "detail": "websocket events are not implemented in rust runtime"
+          }
+        }
+      },
+      "notes": "Rust-owned behavior: explicit 501 upgrade boundary for now (event relay unsupported until R3 turn engine)."
+    }
+  ]
+}

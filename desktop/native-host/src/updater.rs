@@ -21,6 +21,7 @@ pub const DEFAULT_UPDATE_ENDPOINT: &str =
 pub const DEFAULT_UPDATE_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI2MjA5MzQwRDE3NjQ4QjIKUldTeVNIYlJRSk1nSmtkdUZIcHdSZForOE52QkZJMWgrVXloOWhLRzhpajZjSzZieHhpQlp6NWcK";
 
 const TARGET: &str = "darwin-aarch64";
+const RUNTIME_READABLE_SCHEMA_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -72,7 +73,14 @@ pub struct AvailableUpdate {
 struct ReleaseManifest {
     version: String,
     notes: Option<String>,
+    schema: ReleaseSchema,
     platforms: HashMap<String, ReleasePlatform>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseSchema {
+    min_readable: u32,
+    max_readable: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +148,7 @@ impl NativeUpdater {
             .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
         let version = Version::parse(manifest.version.trim_start_matches('v'))
             .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+        validate_schema_range(&manifest.schema)?;
         if version <= self.current_version {
             return Ok(None);
         }
@@ -198,6 +207,17 @@ impl NativeUpdater {
             .spawn()?;
         Ok(())
     }
+}
+
+fn validate_schema_range(schema: &ReleaseSchema) -> Result<(), UpdateError> {
+    if schema.min_readable > schema.max_readable
+        || !(schema.min_readable..=schema.max_readable).contains(&RUNTIME_READABLE_SCHEMA_VERSION)
+    {
+        return Err(UpdateError::InvalidManifest(
+            "update schema range is incompatible with this runtime".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -718,6 +738,45 @@ mod tests {
         assert!(!backup_path(&app).exists());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires CODINAL_RELEASE_ARCHIVE and CODINAL_RELEASE_VERSION"]
+    fn installs_and_rolls_back_the_actual_release_archive() {
+        let archive_path = std::env::var_os("CODINAL_RELEASE_ARCHIVE")
+            .expect("CODINAL_RELEASE_ARCHIVE is required for the release archive gate");
+        let expected_version = Version::parse(
+            &std::env::var("CODINAL_RELEASE_VERSION")
+                .expect("CODINAL_RELEASE_VERSION is required for the release archive gate"),
+        )
+        .expect("release version");
+        let archive = fs::read(archive_path).expect("release archive");
+        let temp = tempfile::tempdir().unwrap();
+        let app = temp.path().join("Codinal.app");
+        fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        fs::write(app.join("Contents/MacOS/codinal"), b"pre-upgrade").unwrap();
+        write_info_plist(&app, "0.0.1");
+
+        install_archive(&app, &expected_version, &archive).unwrap();
+        validate_bundle_version(&app, &expected_version).unwrap();
+        assert_ne!(
+            fs::read(app.join("Contents/MacOS/codinal")).unwrap(),
+            b"pre-upgrade"
+        );
+        assert!(Command::new("codesign")
+            .args(["--verify", "--deep", "--strict"])
+            .arg(&app)
+            .status()
+            .expect("codesign")
+            .success());
+
+        rollback_app(&app).unwrap();
+        assert_eq!(
+            fs::read(app.join("Contents/MacOS/codinal")).unwrap(),
+            b"pre-upgrade"
+        );
+        assert!(!backup_path(&app).exists());
+    }
+
     #[test]
     fn rejects_bundle_version_that_differs_from_manifest() {
         let temp = tempfile::tempdir().unwrap();
@@ -733,5 +792,20 @@ mod tests {
         let error =
             verify_signature(b"payload", "not-base64", DEFAULT_UPDATE_PUBLIC_KEY).unwrap_err();
         assert!(error.to_string().contains("Invalid") || !error.to_string().is_empty());
+    }
+
+    #[test]
+    fn rejects_incompatible_update_schema_range() {
+        let error = validate_schema_range(&ReleaseSchema {
+            min_readable: 2,
+            max_readable: 3,
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("incompatible"));
+        validate_schema_range(&ReleaseSchema {
+            min_readable: 1,
+            max_readable: 1,
+        })
+        .expect("current schema is readable");
     }
 }

@@ -63,7 +63,7 @@ Codinal Python sidecar (OpenWorker-derived mechanics).
 
 Bridge to host: loopback HTTP+WS + mandatory per-session bearer token (see ADR D7). Policy enforced via `PermissionEngine` collaborator (harness-controlled) — runtime must not bypass.
 
-The Tauri host starts the sidecar with `python -m runtime.control_plane`,
+The native Rust host starts the sidecar with `python -m runtime.control_plane`,
 passes `CODINAL_SESSION_TOKEN`, `CODINAL_PORT`, and `CODINAL_DATA_DIR` in the
 child environment, and never places the token in command-line arguments. The
 sidecar consumes and deletes the token environment entry during startup so
@@ -77,7 +77,7 @@ user-facing source path remains durable; non-Git folders retain direct,
 root-scoped operation. A new public session is created only when its first
 turn supplies an absolute existing workspace.
 
-Native `codinal://oauth/callback` links are strictly parsed by the Tauri host
+Native `codinal://oauth/callback` links are strictly parsed by the Rust host
 and relayed to the sidecar with both the control-plane bearer and the
 native-only sync token. The sidecar atomically consumes the matching OAuth
 state before invoking an injected provider handler.

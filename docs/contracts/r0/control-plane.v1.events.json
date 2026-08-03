@@ -1,0 +1,58 @@
+{
+  "events": [
+    {
+      "id": "reconnect-preserves-published-order",
+      "sequence": [
+        "turn_started",
+        "tool_proposed",
+        "turn_completed"
+      ],
+      "stream": "session"
+    },
+    {
+      "after_reconnect": [
+        "turn_completed"
+      ],
+      "before_reconnect": [
+        "turn_started"
+      ],
+      "id": "reconnect-receives-only-future-events",
+      "stream": "session"
+    }
+  ],
+  "source": "runtime/control_plane/app.py",
+  "websocket": [
+    {
+      "close_code": 4401,
+      "id": "missing-protocol-is-rejected",
+      "path": "/ws/events",
+      "protocols": []
+    },
+    {
+      "close_code": 4403,
+      "id": "wrong-origin-is-rejected-before-auth",
+      "origin": "https://untrusted.invalid",
+      "path": "/ws/events",
+      "protocols": [
+        "codinal.v1",
+        "codinal.auth.<session-token>"
+      ]
+    },
+    {
+      "accepted_subprotocol": "codinal.v1",
+      "forbidden_url_parts": [
+        "?",
+        "<session-token>"
+      ],
+      "id": "valid-protocol-uses-no-url-token",
+      "path": "/ws/events",
+      "ping_response": {
+        "type": "pong"
+      },
+      "protocols": [
+        "codinal.v1",
+        "codinal.auth.<session-token>"
+      ]
+    }
+  ]
+}

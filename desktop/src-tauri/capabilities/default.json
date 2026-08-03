@@ -1,7 +1,0 @@
-{
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Native window zoom is enabled for the macOS title-bar double-click gesture.",
-  "windows": ["main"],
-  "permissions": ["core:window:allow-toggle-maximize"]
-}

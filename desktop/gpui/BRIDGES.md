@@ -13,5 +13,4 @@ permitted only when every navigation is checked before it loads:
 - redirects and external origins are rejected, not opened externally.
 
 Until that renderer has packaged allow/deny tests, the GPUI shell must show
-saved loopback verification evidence only. Tauri remains the release fallback
-for interactive preview.
+saved loopback verification evidence only for interactive preview.

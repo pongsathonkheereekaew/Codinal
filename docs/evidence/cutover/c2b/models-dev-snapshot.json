@@ -1,0 +1,35 @@
+{
+  "source": "https://models.dev/api.json",
+  "retrieved_at": "2026-08-02",
+  "api_sha256": "973d58dc69d845b3959493afc16025115eab123bee879594d9d3cedb640beeea",
+  "price_unit": "USD per million tokens",
+  "profiles": [
+    {
+      "provider": "opencode-go",
+      "model": "kimi-k2.7-code",
+      "reasoning": true,
+      "tool_call": true,
+      "reasoning_options": [],
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.19
+      },
+      "last_updated": "2026-06-12"
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "reasoning": true,
+      "tool_call": true,
+      "reasoning_options": ["high", "max"],
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "reasoning": 0.87,
+        "cache_read": 0.003625
+      },
+      "last_updated": "2026-04-24"
+    }
+  ]
+}

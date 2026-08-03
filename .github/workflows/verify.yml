@@ -28,11 +28,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Rust formatting
-        run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml -- --check
+        run: cargo fmt --manifest-path desktop/gpui/Cargo.toml -- --check
       - name: Lint desktop shell
-        run: cargo clippy --manifest-path desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --manifest-path desktop/gpui/Cargo.toml --all-targets -- -D warnings
       - name: Test desktop shell
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+        run: cargo test --manifest-path desktop/gpui/Cargo.toml
 
   perf:
     runs-on: ubuntu-latest

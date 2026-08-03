@@ -16,6 +16,7 @@ from runtime.control_plane.server import (
     load_server_config,
 )
 from runtime.control_plane import create_control_plane_app
+from runtime.sessions import TurnCheckpoint
 from runtime.turns import SessionNotFoundError
 from runtime.workers import WorkerRecord
 from runtime.policy import ToolCall
@@ -30,6 +31,53 @@ from conftest import skip_on_ci
 
 TOKEN = "test-session-token-with-at-least-32-characters"
 SECRET_SYNC_TOKEN = "test-secret-sync-token-with-at-least-32-chars"
+
+
+def test_session_turn_receipts_route_returns_shared_wire_shape(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config = ServerConfig(
+        token=TOKEN,
+        port=43123,
+        data_dir=tmp_path / "data",
+        default_model="openai:gpt-test",
+    )
+    services = build_services(config)
+    session_id = "session-receipts-api"
+    assert services.sessions.get_engine(session_id, workspace=workspace) is not None
+    assert services.sessions.persist_terminal_checkpoint(
+        session_id,
+        checkpoint=TurnCheckpoint(),
+        turn_id="turn-receipt-api",
+        outcome={"type": "turn_end", "status": "completed"},
+    )
+    expected_message_count = len(services.sessions.messages(session_id))
+
+    with TestClient(create_control_plane_app(token=TOKEN, services=services)) as client:
+        response = client.get(
+            f"/v1/sessions/{session_id}/turns",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    receipt = payload[0]
+    assert set(receipt) == {
+        "turn_id",
+        "session_id",
+        "outcome",
+        "message_count",
+        "created_at",
+    }
+    assert receipt["turn_id"] == "turn-receipt-api"
+    assert receipt["session_id"] == session_id
+    assert receipt["outcome"] == {"type": "turn_end", "status": "completed"}
+    assert receipt["message_count"] == expected_message_count
+    assert isinstance(receipt["created_at"], str)
+    assert receipt["created_at"]
 
 
 def test_server_config_is_loopback_only(

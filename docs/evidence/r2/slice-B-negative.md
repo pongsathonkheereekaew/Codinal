@@ -1,0 +1,91 @@
+# R2 Slice B negative cases
+
+## Scope
+- unauthorized / malformed / scope validation for sessions cluster endpoints.
+
+## Evidence
+- unauthorized `/v1/sessions` requires bearer token
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_route_requires_bearer_token -- --nocapture`
+- unauthorized `/v1/sessions/search` malformed query guard
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_search_route_rejects_malformed_query -- --nocapture`
+- worker/public-session split for approvals is enforced
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml pending_approval_route_is_authenticated_and_public_session_scoped -- --nocapture`
+- invalid approval decision is rejected
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml confirmed_approval_decision_removes_only_the_selected_pending_item -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml pending_approval_route_is_authenticated_and_public_session_scoped -- --nocapture` (invalid outcome behavior and 409 rejection are covered in this test file)
+- session messages request path and parsing are covered by implementation guardrails in the route handler (invalid session IDs return 400 from storage lookup)
+- session mutation routes are explicitly returned as read-write boundaries in this runtime
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_fork_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_patch_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_delete_route_is_not_implemented -- --nocapture`
+- goals mutation routes are explicitly returned as read-write boundaries in this runtime
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml goals_continue_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml goals_evidence_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml goals_audit_route_is_not_implemented -- --nocapture`
+- checkpoint and project and workspace routes are explicitly returned as boundaries
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_checkpoints_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_checkpoint_restore_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_project_index_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_project_index_route_post_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_project_index_delete_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_project_search_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_project_search_delete_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_project_open_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_workspace_files_route_is_not_implemented -- --nocapture`
+- roots/tree/git routes are explicitly returned as boundaries with stubbed 501
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_roots_get_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_roots_post_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_roots_delete_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_tree_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_status_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_commit_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_stage_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_apply_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_push_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_diff_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_files_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_graph_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_git_log_route_is_not_implemented -- --nocapture`
+- terminal/worker/mcp/preview/side-conversation routes are explicitly returned as boundaries with stubbed 501
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_terminal_run_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_terminal_interrupt_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_workers_get_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_workers_post_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_mcp_connect_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_mcp_servers_get_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_mcp_servers_delete_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_mcp_servers_patch_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_preview_evidence_get_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_preview_evidence_post_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_preview_evidence_delete_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_preview_verify_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_preview_verify_origin_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_side_conversations_route_is_not_implemented -- --nocapture`
+- session mutation, turn, github, inline-edit, security-scan routes are explicitly returned as boundaries with stubbed 501
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_complete_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_context_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_export_md_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_github_checks_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_github_pr_get_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_github_pr_post_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_github_cleanup_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_github_comment_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_github_merge_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_inline_edit_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_interrupt_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_interactions_decision_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_turns_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_plan_builds_post_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_goals_post_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_security_scan_route_is_not_implemented -- --nocapture`
+- artifact I/O routes are explicitly returned as boundaries in this runtime
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_artifacts_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_artifacts_read_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_artifacts_write_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml sessions_artifacts_reveal_route_is_not_implemented -- --nocapture`
+- websocket global/session upgrade paths are explicitly returned as boundaries in this runtime
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml websocket_global_events_route_is_not_implemented -- --nocapture`
+  - `cargo test --manifest-path crates/codinal-runtime/Cargo.toml websocket_session_events_route_is_not_implemented -- --nocapture`
+
+## Result
+- Status: **IN_PROGRESS** (upgrade boundary covered; full WebSocket relay and turn lifecycle pending)

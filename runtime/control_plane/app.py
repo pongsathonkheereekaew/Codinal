@@ -71,9 +71,6 @@ from .auth import (
 )
 
 DEFAULT_ALLOWED_ORIGINS = (
-    "tauri://localhost",
-    "http://tauri.localhost",
-    "https://tauri.localhost",
     "http://localhost:1420",
     "http://127.0.0.1:1420",
 )
@@ -704,8 +701,17 @@ def create_control_plane_app(
     app.state.started_at = time.time()
 
     @app.get("/v1/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict[str, Any]:
+        return {
+            "status": "ok",
+            "capabilities": {
+                "runtime_owner": "python",
+                "turn_execution_owner": "python",
+                "receipt_write_owner": "python",
+                "start_turn": True,
+                "interrupt_turn": True,
+            },
+        }
 
     @app.get("/v1/status")
     async def status() -> dict[str, Any]:
@@ -1027,6 +1033,13 @@ def create_control_plane_app(
     ) -> list[dict[str, Any]]:
         _validate_public_session_id(session_id)
         return services.sessions.messages(session_id)
+
+    @app.get("/v1/sessions/{session_id}/turns")
+    async def session_turn_receipts(
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        _validate_public_session_id(session_id)
+        return services.sessions.turn_receipts(session_id)
 
     @app.get("/v1/sessions/{session_id}/export.md")
     async def export_session_markdown(

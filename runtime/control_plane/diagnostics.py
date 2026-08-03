@@ -2,8 +2,9 @@
 
 Assembles a redacted, on-demand diagnostic snapshot for the user to copy/share
 when reporting an issue. Built in-process and returned to the desktop host,
-which writes it to a user-chosen path (Tauri file dialog). The Copy action IS
-the explicit consent — no telemetry, no auto-upload, no background collection.
+which writes it to a user-chosen path via the platform save dialog. The Copy
+action IS the explicit consent — no telemetry, no auto-upload, no background
+collection.
 
 What goes IN (all secret-safe):
   - runtime version, uptime, component health

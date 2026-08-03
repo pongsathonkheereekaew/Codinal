@@ -20,8 +20,8 @@ const options = {
   outfile: "ui/dist/editor.js",
   target: ["safari16", "chrome120", "firefox120"],
   platform: "browser",
-  // Tauri CSP is script-src 'self' — esbuild's IIFE output is plain JS with
-  // no eval/Function(), so this is safe.
+  // Platform host CSP is script-src 'self' — esbuild's IIFE output is plain JS
+  // with no eval/Function(), so this is safe.
   legalComments: "none",
   logLevel: "info",
   sourcemap: false,

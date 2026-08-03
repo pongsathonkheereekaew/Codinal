@@ -3,14 +3,11 @@
 const HTTP = window.__CODINAL_HTTP__;
 const WS = window.__CODINAL_WS__;
 const TOKEN = window.__CODINAL_TOKEN__;
-const invoke = window.__TAURI__?.core?.invoke;
-// Tauri event listener shim: returns an unlisten function, or null if the
-// Tauri event API isn't available (web/preview context).
-const __codinalListen = window.__TAURI__?.event?.listen
-  ? async (name, handler) => {
-      const unlisten = await window.__TAURI__.event.listen(name, handler);
-      return () => { try { unlisten(); } catch { /* noop */ } };
-    }
+const invoke = window.__CODINAL_INVOKE__ || null;
+// Native event listener shim: returns an unlisten function, or null when
+// no native host bridge is available (web/preview context).
+const __codinalListen = typeof window.__CODINAL_LISTEN__ === "function"
+  ? window.__CODINAL_LISTEN__
   : null;
 window.__codinalListen = __codinalListen;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -5793,7 +5790,7 @@ function toggleTheme() {
 }
 
 async function toggleWindowZoom() {
-  const windowApi = window.__TAURI__?.window?.getCurrentWindow?.();
+  const windowApi = window.__CODINAL_WINDOW__;
   if (!windowApi?.toggleMaximize) return;
   try {
     await windowApi.toggleMaximize();
@@ -6298,7 +6295,7 @@ function wireEvents() {
     el.app.classList.toggle("sidebar-collapsed");
   });
   document.addEventListener("dblclick", (event) => {
-    if (!event.target.closest("[data-tauri-drag-region]")) return;
+    if (!event.target.closest("[data-drag-region]")) return;
     zoomFromTitlebar(event);
   });
   el["command-palette-close"].addEventListener("click", closePalette);

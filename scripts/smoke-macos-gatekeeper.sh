@@ -34,6 +34,9 @@ else
   echo "Codinal packaged smoke running without quarantine/notarization validation"
 fi
 
+CODINAL_SKIP_APP_LAUNCH="${CODINAL_SKIP_APP_LAUNCH:-0}" \
+CODINAL_SKIP_CODESIGN_CHECK="${CODINAL_SKIP_CODESIGN_CHECK:-0}" \
+CODINAL_SKIP_EMBEDDED_IMPORTS="${CODINAL_SKIP_EMBEDDED_IMPORTS:-0}" \
 bash "$ROOT/scripts/smoke-macos-release.sh" "$APP"
 
 if [ "${CODINAL_REQUIRE_NOTARIZATION:-1}" = "1" ]; then

@@ -7,6 +7,11 @@ depends_on: [ADR-0001]
 
 # Codinal MVP — Implementation Plan
 
+> Status: superseded for runtime architecture by
+> [`rust-native-runtime-cutover.md`](rust-native-runtime-cutover.md). This file
+> is retained as historical MVP/product-scope evidence; Python/Tauri sidecar or
+> hybrid release guidance here is no longer actionable.
+
 อ้างอิง decision ใน [`docs/decisions/0001-codinal-foundation.md`](../decisions/0001-codinal-foundation.md). plan นี้ยังไม่ implement จนกว่าผู้ใช้ไฟเขียว.
 
 ## 0. โครง target

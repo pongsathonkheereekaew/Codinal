@@ -61,7 +61,7 @@ mod tests {
     use minisign_verify::{PublicKey, Signature};
 
     #[test]
-    fn tauri_compatible_base64_key_and_signature_round_trip() {
+    fn base64_key_and_signature_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let key_path = temp.path().join("update.key");
         let artifact_path = temp.path().join("artifact.tar.gz");

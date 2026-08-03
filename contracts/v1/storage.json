@@ -3,7 +3,7 @@
   "contract": "codinal.sqlite.v1",
   "databases": [
     {"file": "audit.db", "user_version": 1, "tables": ["events"]},
-    {"file": "codinal.db", "user_version": 8, "tables": ["approval_decisions", "interaction_decisions", "messages", "plan_artifacts", "sessions", "turn_receipts", "workspaces"]},
+    {"file": "codinal.db", "user_version": 10, "tables": ["approval_decisions", "interaction_decisions", "messages", "plan_artifacts", "project_roots", "project_sessions", "projects", "sessions", "source_attachments", "turn_receipts", "workspaces"]},
     {"file": "extensions.db", "user_version": 1, "tables": ["extensions"]},
     {"file": "git-worktrees.db", "user_version": 5, "tables": ["checkpoint_files", "checkpoint_restore_history", "checkpoint_restores", "code_checkpoints", "git_worktrees", "plain_workspaces"]},
     {"file": "goals.db", "user_version": 1, "tables": ["goals"]},

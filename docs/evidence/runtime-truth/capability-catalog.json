@@ -1,0 +1,243 @@
+{
+  "schema_version": 1,
+  "baseline_date": "2026-08-02",
+  "source_policy": "Official ChatGPT/Codex Learn pages are the comparison catalogue; local Rust evidence determines Codinal status.",
+  "capabilities": [
+    {
+      "id": "projects-and-chats",
+      "official_name": "Projects and chats",
+      "official_sources": ["https://learn.chatgpt.com/docs/projects"],
+      "status": "partial",
+      "release_blocking": true,
+      "visible_action": true,
+      "enabled_action": true,
+      "local_fallback": false,
+      "notes": "Rust sessions, messages, approvals, receipts, and side-chat session creation are wired; the broader hosted Projects feature and fresh live evidence are not complete.",
+      "rust_evidence": [
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "request.path.strip_prefix(\"/v1/sessions\")", "behavior": "implemented"},
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "request.path == \"/v1/sessions\"", "behavior": "implemented"},
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": ".and_then(|path| path.strip_suffix(\"/messages\"))", "behavior": "implemented"},
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": ".and_then(|path| path.strip_suffix(\"/approvals\"))", "behavior": "implemented"},
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": ".and_then(|path| path.strip_suffix(\"/turns\"))", "behavior": "implemented"}
+      ],
+      "gpui_evidence": [
+        {"path": "desktop/control-plane-client/src/lib.rs", "marker": "pub fn list_sessions"},
+        {"path": "desktop/control-plane-client/src/lib.rs", "marker": "pub fn create_session"},
+        {"path": "desktop/control-plane-client/src/lib.rs", "marker": "pub fn load_session"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn create_task"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn create_side_chat"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn select_session"}
+      ],
+      "tests_or_evidence": [
+        "crates/codinal-runtime/src/lib.rs",
+        "desktop/control-plane-client/src/lib.rs",
+        "desktop/gpui/src/main.rs",
+        "docs/evidence/cutover/c0/gate.md"
+      ]
+    },
+    {
+      "id": "long-running-work",
+      "official_name": "Long-running work",
+      "official_sources": ["https://learn.chatgpt.com/docs/long-running-work"],
+      "status": "partial",
+      "release_blocking": true,
+      "visible_action": true,
+      "enabled_action": true,
+      "local_fallback": false,
+      "notes": "Provider turns are accepted in a Rust background thread and replayable events are consumed by GPUI; the reusable typed operation lifecycle is still pending.",
+      "rust_evidence": [
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "segments == [\"turns\"]", "behavior": "implemented"},
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "\"202 Accepted\"", "behavior": "implemented"},
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "request.path.strip_prefix(\"/v1/events\")", "behavior": "implemented"},
+        {"kind": "symbol", "path": "crates/codinal-runtime/src/lib.rs", "marker": "fn execute_provider_turn"}
+      ],
+      "gpui_evidence": [
+        {"path": "desktop/control-plane-client/src/lib.rs", "marker": "pub fn start_turn"},
+        {"path": "desktop/control-plane-client/src/lib.rs", "marker": "pub fn session_events"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn start_turn_with_input"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "spawn_session_stream"}
+      ],
+      "tests_or_evidence": [
+        "crates/codinal-runtime/src/lib.rs",
+        "crates/codinal-storage/src/runtime_store.rs",
+        "desktop/gpui/src/session_stream.rs",
+        "docs/evidence/cutover/c2a/gate.md"
+      ]
+    },
+    {
+      "id": "code-review",
+      "official_name": "Code review",
+      "official_sources": ["https://learn.chatgpt.com/docs/code-review"],
+      "status": "partial",
+      "release_blocking": false,
+      "visible_action": true,
+      "enabled_action": true,
+      "local_fallback": true,
+      "notes": "The visible Review tool has a bounded local Rust Git projection; the runtime review route and hosted code-review workflow are not complete.",
+      "rust_evidence": [
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "git operations are not implemented in rust runtime", "behavior": "not_implemented"},
+        {"kind": "local_rust", "path": "desktop/gpui/src/side_panel.rs", "marker": "pub fn inspect_git_review", "behavior": "implemented"}
+      ],
+      "gpui_evidence": [
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn refresh_review"},
+        {"path": "desktop/gpui/src/side_panel.rs", "marker": "SidePanelTool::Review"}
+      ],
+      "tests_or_evidence": [
+        "desktop/gpui/src/side_panel.rs",
+        "crates/codinal-runtime/src/lib.rs",
+        "docs/evidence/cutover/c3/gate.md"
+      ]
+    },
+    {
+      "id": "integrated-terminal",
+      "official_name": "Integrated terminal",
+      "official_sources": ["https://learn.chatgpt.com/docs/integrated-terminal"],
+      "status": "partial",
+      "release_blocking": true,
+      "visible_action": true,
+      "enabled_action": true,
+      "local_fallback": true,
+      "notes": "The visible macOS terminal uses the Rust native-host PTY path; the corresponding control-plane terminal routes remain 501 and are not claimed as complete.",
+      "rust_evidence": [
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "terminal operations are not implemented in rust runtime", "behavior": "not_implemented"},
+        {"kind": "native_host", "path": "desktop/native-host/src/pty.rs", "marker": "pub struct PtyRegistry", "behavior": "implemented"},
+        {"kind": "native_host", "path": "desktop/native-host/src/pty.rs", "marker": "pub fn open", "behavior": "implemented"}
+      ],
+      "gpui_evidence": [
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn open_terminal"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn send_terminal_bytes"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn kill_terminal"}
+      ],
+      "tests_or_evidence": [
+        "desktop/native-host/src/pty.rs",
+        "desktop/gpui/src/main.rs",
+        "crates/codinal-runtime/src/lib.rs",
+        "docs/evidence/cutover/c3b/gate.md"
+      ]
+    },
+    {
+      "id": "local-environments",
+      "official_name": "Local environments and files",
+      "official_sources": ["https://learn.chatgpt.com/docs/environments/local-environment"],
+      "status": "partial",
+      "release_blocking": true,
+      "visible_action": true,
+      "enabled_action": true,
+      "local_fallback": true,
+      "notes": "GPUI has bounded, symlink-safe local workspace inspection and preview; runtime workspace/roots/tree routes remain 501 and edits are not claimed.",
+      "rust_evidence": [
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "workspace operations are not implemented in rust runtime", "behavior": "not_implemented"},
+        {"kind": "local_rust", "path": "desktop/gpui/src/side_panel.rs", "marker": "pub fn inspect_workspace", "behavior": "implemented"},
+        {"kind": "local_rust", "path": "desktop/gpui/src/side_panel.rs", "marker": "pub fn read_workspace_file_preview", "behavior": "implemented"}
+      ],
+      "gpui_evidence": [
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn refresh_files"},
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn open_workspace_file"},
+        {"path": "desktop/gpui/src/side_panel.rs", "marker": "SidePanelTool::Files"}
+      ],
+      "tests_or_evidence": [
+        "desktop/gpui/src/side_panel.rs",
+        "crates/codinal-runtime/src/lib.rs",
+        "docs/evidence/cutover/c3/gate.md"
+      ]
+    },
+    {
+      "id": "git-worktrees",
+      "official_name": "Git worktrees",
+      "official_sources": ["https://learn.chatgpt.com/docs/environments/git-worktrees"],
+      "status": "missing",
+      "release_blocking": true,
+      "visible_action": false,
+      "enabled_action": false,
+      "local_fallback": false,
+      "notes": "No shipped GPUI worktree action exists; the Rust route is an explicit 501 placeholder.",
+      "rust_evidence": [
+        {"kind": "route", "path": "crates/codinal-runtime/src/lib.rs", "marker": "git operations are not implemented in rust runtime", "behavior": "not_implemented"}
+      ],
+      "gpui_evidence": [],
+      "tests_or_evidence": [
+        "crates/codinal-runtime/src/lib.rs",
+        "docs/plan/rust-native-runtime-cutover.md"
+      ]
+    },
+    {
+      "id": "browser",
+      "official_name": "Browser",
+      "official_sources": ["https://learn.chatgpt.com/docs/browser"],
+      "status": "external-gated",
+      "release_blocking": false,
+      "visible_action": true,
+      "enabled_action": true,
+      "local_fallback": true,
+      "notes": "Codinal opens a validated URL in the system browser through Rust; it does not ship the official in-app browser surface.",
+      "rust_evidence": [
+        {"kind": "native_host", "path": "desktop/native-host/src/project_open.rs", "marker": "pub fn open_browser_url", "behavior": "implemented"}
+      ],
+      "gpui_evidence": [
+        {"path": "desktop/gpui/src/main.rs", "marker": "fn show_browser_prompt"},
+        {"path": "desktop/gpui/src/side_panel.rs", "marker": "SidePanelTool::Browser"}
+      ],
+      "tests_or_evidence": [
+        "desktop/native-host/src/project_open.rs",
+        "desktop/gpui/src/main.rs",
+        "docs/plan/rust-native-runtime-cutover.md"
+      ]
+    },
+    {
+      "id": "computer-use",
+      "official_name": "Computer use",
+      "official_sources": ["https://learn.chatgpt.com/docs/computer-use"],
+      "status": "external-gated",
+      "release_blocking": false,
+      "visible_action": false,
+      "enabled_action": false,
+      "local_fallback": false,
+      "notes": "No local computer-use control or capture authority is shipped; this remains an external comparison row.",
+      "rust_evidence": [],
+      "gpui_evidence": [],
+      "tests_or_evidence": ["docs/plan/rust-native-runtime-cutover.md"]
+    },
+    {
+      "id": "appshots",
+      "official_name": "Appshots",
+      "official_sources": ["https://learn.chatgpt.com/docs/appshots"],
+      "status": "external-gated",
+      "release_blocking": false,
+      "visible_action": false,
+      "enabled_action": false,
+      "local_fallback": false,
+      "notes": "No ScreenCaptureKit picker, live PiP, or zero-retention capture receipt is shipped.",
+      "rust_evidence": [],
+      "gpui_evidence": [],
+      "tests_or_evidence": ["docs/evidence/cutover/c3/gate.md"]
+    },
+    {
+      "id": "remote-connections",
+      "official_name": "Remote connections",
+      "official_sources": ["https://learn.chatgpt.com/docs/remote-connections"],
+      "status": "external-gated",
+      "release_blocking": false,
+      "visible_action": false,
+      "enabled_action": false,
+      "local_fallback": false,
+      "notes": "Remote relay, peer identity, scoped grants, and anti-replay protocol are not shipped; local loopback auth is not remote authority.",
+      "rust_evidence": [],
+      "gpui_evidence": [],
+      "tests_or_evidence": ["docs/evidence/cutover/c5/gate.md"]
+    },
+    {
+      "id": "app-server",
+      "official_name": "Codex App Server",
+      "official_sources": ["https://learn.chatgpt.com/docs/app-server"],
+      "status": "external-gated",
+      "release_blocking": false,
+      "visible_action": false,
+      "enabled_action": false,
+      "local_fallback": false,
+      "notes": "Codinal's local control plane is not claimed as the official App Server protocol.",
+      "rust_evidence": [],
+      "gpui_evidence": [],
+      "tests_or_evidence": ["docs/plan/rust-native-runtime-cutover.md"]
+    }
+  ]
+}

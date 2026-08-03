@@ -1,0 +1,96 @@
+# R2 Slice B conformance (sessions/messages/plans/goals)
+
+## Slice B scope
+- `GET /v1/sessions*`
+- `/v1/sessions/{session_id}/messages`
+- `/v1/sessions/{session_id}/approvals*`
+- plans/goals routes per control-plane slice baseline
+- WebSocket event upgrade boundaries: `/ws/events`, `/ws/session/{session_id}`
+
+## Evidence (runtime)
+- Conformance for implemented subset in Rust runtime:
+  - `fresh_runtime_lists_zero_sessions_instead_of_rejecting_request` (GET /v1/sessions)
+  - `sessions_search_route_returns_matching_results` (GET /v1/sessions/search)
+- `sessions_goals_route_returns_goal_list` (GET /v1/sessions/{session_id}/goals)
+- `sessions_messages_route_returns_messages` (GET /v1/sessions/{session_id}/messages)
+- `sessions_plans_route_returns_plan_artifacts` (GET /v1/sessions/{session_id}/plans)
+- `sessions_plan_builds_route_returns_plan_builds` (GET /v1/sessions/{session_id}/plan-builds)
+- `sessions_interactions_route_returns_empty_list` (GET /v1/sessions/{session_id}/interactions)
+- `pending_approval_route_is_authenticated_and_public_session_scoped` (GET /v1/sessions/{session_id}/approvals)
+- `confirmed_approval_decision_removes_only_the_selected_pending_item` (POST /v1/sessions/{session_id}/approvals/{approval_id})
+- `goals_continue_route_is_not_implemented` (POST /v1/goals/{goal_id}/continue)
+- `goals_evidence_route_is_not_implemented` (POST /v1/goals/{goal_id}/evidence)
+- `goals_audit_route_is_not_implemented` (POST /v1/goals/{goal_id}/audit)
+- `sessions_artifacts_route_is_not_implemented` (GET /v1/sessions/{session_id}/artifacts)
+- `sessions_artifacts_read_route_is_not_implemented` (GET /v1/sessions/{session_id}/artifacts/read)
+- `sessions_artifacts_write_route_is_not_implemented` (POST /v1/sessions/{session_id}/artifacts/write)
+- `sessions_artifacts_reveal_route_is_not_implemented` (POST /v1/sessions/{session_id}/artifacts/reveal)
+- `sessions_checkpoints_route_is_not_implemented` (GET /v1/sessions/{session_id}/checkpoints)
+- `sessions_checkpoint_restore_route_is_not_implemented` (POST /v1/sessions/{session_id}/checkpoints/{checkpoint_id}/restore)
+- `sessions_project_index_route_is_not_implemented` (GET /v1/sessions/{session_id}/project/index)
+- `sessions_project_index_route_post_is_not_implemented` (POST /v1/sessions/{session_id}/project/index)
+- `sessions_project_index_delete_is_not_implemented` (DELETE /v1/sessions/{session_id}/project/index)
+- `sessions_project_search_route_is_not_implemented` (GET /v1/sessions/{session_id}/project/search)
+- `sessions_project_search_delete_is_not_implemented` (DELETE /v1/sessions/{session_id}/project/search)
+- `sessions_project_open_route_is_not_implemented` (POST /v1/sessions/{session_id}/project/open)
+- `sessions_workspace_files_route_is_not_implemented` (GET /v1/sessions/{session_id}/workspace/files)
+- `sessions_roots_get_route_is_not_implemented` (GET /v1/sessions/{session_id}/roots)
+- `sessions_roots_post_route_is_not_implemented` (POST /v1/sessions/{session_id}/roots)
+- `sessions_roots_delete_route_is_not_implemented` (DELETE /v1/sessions/{session_id}/roots)
+- `sessions_tree_route_is_not_implemented` (GET /v1/sessions/{session_id}/tree)
+- `sessions_git_status_route_is_not_implemented` (GET /v1/sessions/{session_id}/git/status)
+- `sessions_git_commit_route_is_not_implemented` (POST /v1/sessions/{session_id}/git/commit)
+- `sessions_git_stage_route_is_not_implemented` (POST /v1/sessions/{session_id}/git/stage)
+- `sessions_git_apply_route_is_not_implemented` (POST /v1/sessions/{session_id}/git/apply)
+- `sessions_git_push_route_is_not_implemented` (POST /v1/sessions/{session_id}/git/push)
+- `sessions_git_diff_route_is_not_implemented` (GET /v1/sessions/{session_id}/git/diff)
+- `sessions_git_files_route_is_not_implemented` (GET /v1/sessions/{session_id}/git/files)
+- `sessions_git_graph_route_is_not_implemented` (GET /v1/sessions/{session_id}/git/graph)
+- `sessions_git_log_route_is_not_implemented` (GET /v1/sessions/{session_id}/git/log)
+- `sessions_terminal_run_route_is_not_implemented` (POST /v1/sessions/{session_id}/terminal/run)
+- `sessions_terminal_interrupt_route_is_not_implemented` (POST /v1/sessions/{session_id}/terminal/interrupt)
+- `sessions_workers_get_route_is_not_implemented` (GET /v1/sessions/{session_id}/workers)
+- `sessions_workers_post_route_is_not_implemented` (POST /v1/sessions/{session_id}/workers)
+- `sessions_mcp_connect_route_is_not_implemented` (POST /v1/sessions/{session_id}/mcp/connect)
+- `sessions_mcp_servers_get_route_is_not_implemented` (GET /v1/sessions/{session_id}/mcp/servers)
+- `sessions_mcp_servers_delete_route_is_not_implemented` (DELETE /v1/sessions/{session_id}/mcp/servers/{server_name})
+- `sessions_mcp_servers_patch_route_is_not_implemented` (PATCH /v1/sessions/{session_id}/mcp/servers/{server_name})
+- `sessions_preview_evidence_get_route_is_not_implemented` (GET /v1/sessions/{session_id}/preview/evidence)
+- `sessions_preview_evidence_post_route_is_not_implemented` (POST /v1/sessions/{session_id}/preview/evidence)
+- `sessions_preview_evidence_delete_route_is_not_implemented` (DELETE /v1/sessions/{session_id}/preview/evidence)
+- `sessions_preview_verify_route_is_not_implemented` (POST /v1/sessions/{session_id}/preview/verify)
+- `sessions_preview_verify_origin_route_is_not_implemented` (POST /v1/sessions/{session_id}/preview/verify-origin)
+- `sessions_side_conversations_route_is_not_implemented` (POST /v1/sessions/{session_id}/side-conversations)
+- `sessions_fork_route_is_not_implemented` (POST /v1/sessions/{session_id}/fork)
+- `sessions_patch_route_is_not_implemented` (PATCH /v1/sessions/{session_id})
+- `sessions_delete_route_is_not_implemented` (DELETE /v1/sessions/{session_id})
+- `sessions_complete_route_is_not_implemented` (POST /v1/sessions/{session_id}/complete)
+- `sessions_context_route_is_not_implemented` (POST /v1/sessions/{session_id}/context)
+- `sessions_export_md_route_is_not_implemented` (GET /v1/sessions/{session_id}/export.md)
+- `sessions_github_checks_route_is_not_implemented` (GET /v1/sessions/{session_id}/github/checks)
+- `sessions_github_pr_get_route_is_not_implemented` (GET /v1/sessions/{session_id}/github/pr)
+- `sessions_github_pr_post_route_is_not_implemented` (POST /v1/sessions/{session_id}/github/pr)
+- `sessions_github_cleanup_route_is_not_implemented` (POST /v1/sessions/{session_id}/github/cleanup)
+- `sessions_github_comment_route_is_not_implemented` (POST /v1/sessions/{session_id}/github/comment)
+- `sessions_github_merge_route_is_not_implemented` (POST /v1/sessions/{session_id}/github/merge)
+- `sessions_inline_edit_route_is_not_implemented` (POST /v1/sessions/{session_id}/inline-edit)
+- `sessions_interrupt_route_is_not_implemented` (POST /v1/sessions/{session_id}/interrupt)
+- `sessions_interactions_decision_route_is_not_implemented` (POST /v1/sessions/{session_id}/interactions/{interaction_id})
+- `sessions_turns_route_is_not_implemented` (POST /v1/sessions/{session_id}/turns)
+- `sessions_plan_builds_post_route_is_not_implemented` (POST /v1/sessions/{session_id}/plan-builds)
+- `sessions_goals_post_route_is_not_implemented` (POST /v1/sessions/{session_id}/goals)
+- `sessions_security_scan_route_is_not_implemented` (POST /v1/sessions/{session_id}/security/scan)
+- `websocket_global_events_route_is_not_implemented` (GET /ws/events upgrade boundary)
+- `websocket_session_events_route_is_not_implemented` (GET /ws/session/{session_id} upgrade boundary)
+- Bootstrap proof for owner transition remains from Slice A:
+  - `runtime_bootstrap_exclusively_owns_its_data_directory`
+  - `runtime_bootstrap_reuses_existing_installed_data_directory`
+- Startup trace evidence for reconcile/migration capture:
+  - `runtime_bootstrap_records_migration_trace_for_reconcile`
+
+## Not yet implemented in Rust runtime
+- `POST /v1/plans/*` endpoints in R0 control-plane surface
+- WebSocket event relay, protocol close-code handling, replay, and turn lifecycle remain pending; the current 501 upgrade boundary is covered above
+
+## Result
+- Status: **IN_PROGRESS** (HTTP route surface and WebSocket upgrade boundary covered; event relay/turn lifecycle pending)

@@ -1,7 +1,7 @@
 # Provider secret storage
 
 Codinal persists provider API keys in the macOS Keychain through the signed
-Rust/Tauri host. The Python runtime never opens the Keychain and never writes a
+native Rust host. The Python runtime never opens the Keychain and never writes a
 credential file.
 
 ## Boundaries
@@ -26,7 +26,7 @@ credential file.
 
 ## Hot updates
 
-The Tauri command writes the Keychain first and then sends the new value in an
+The native host writes the Keychain first and then sends the new value in an
 authenticated HTTP request body to the loopback runtime. It never places the
 value or either token in the request URL. The request requires both the general
 control-plane bearer and the native-only secret-sync header. If runtime
@@ -39,7 +39,7 @@ transactional: if invalidation fails, the runtime restores its previous
 in-memory value and returns a value-free failure so the native host can roll
 back Keychain too.
 
-Raw secret reads are not exposed as a Tauri command or control-plane endpoint.
+Raw secret reads are not exposed as a native host command or control-plane endpoint.
 Provider adapters receive the in-memory store through runtime composition and
 resolve only the profile they need.
 

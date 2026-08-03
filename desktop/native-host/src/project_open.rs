@@ -1,7 +1,38 @@
+use std::io;
+
+fn validated_browser_url(raw: &str) -> io::Result<url::Url> {
+    let raw = raw.trim();
+    if raw.is_empty()
+        || raw.len() > 2_048
+        || raw
+            .bytes()
+            .any(|byte| byte == 0 || byte == b'\r' || byte == b'\n')
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "browser URL is invalid",
+        ));
+    }
+    let url = url::Url::parse(raw)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "browser URL is invalid"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "browser URL must be credential-free HTTP(S)",
+        ));
+    }
+    Ok(url)
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use std::env;
     use std::ffi::CStr;
+    use std::io;
     use std::mem::MaybeUninit;
     use std::os::fd::RawFd;
     use std::os::unix::fs::MetadataExt;
@@ -11,6 +42,17 @@ mod macos {
     use objc2_foundation::{NSArray, NSString, NSURL};
 
     const HELPER_ARGUMENT: &str = "--codinal-open-fd";
+
+    pub fn open_browser_url(raw: &str) -> io::Result<()> {
+        let parsed = super::validated_browser_url(raw)?;
+        let reference = NSURL::URLWithString(&NSString::from_str(parsed.as_str()))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "browser URL is invalid"))?;
+        if NSWorkspace::sharedWorkspace().openURL(&reference) {
+            Ok(())
+        } else {
+            Err(io::Error::other("system browser did not accept the URL"))
+        }
+    }
 
     pub fn run_helper_from_args() -> bool {
         let arguments: Vec<String> = env::args().collect();
@@ -115,9 +157,37 @@ mod macos {
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::run_helper_from_args;
+pub use macos::{open_browser_url, run_helper_from_args};
 
 #[cfg(not(target_os = "macos"))]
 pub fn run_helper_from_args() -> bool {
     false
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn open_browser_url(raw: &str) -> io::Result<()> {
+    let _ = validated_browser_url(raw)?;
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "system browser bridge is available only on macOS",
+    ))
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::validated_browser_url;
+
+    #[test]
+    fn browser_bridge_accepts_only_credential_free_http_urls() {
+        assert_eq!(
+            validated_browser_url("https://example.com/path?q=1")
+                .expect("valid URL")
+                .scheme(),
+            "https"
+        );
+        assert!(validated_browser_url("file:///tmp/index.html").is_err());
+        assert!(validated_browser_url("javascript:alert(1)").is_err());
+        assert!(validated_browser_url("https://user:secret@example.com").is_err());
+        assert!(validated_browser_url("https://example.com\nfile:///tmp/leak").is_err());
+    }
 }

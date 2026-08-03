@@ -9,8 +9,8 @@
     "www_authenticate": "Bearer"
   },
   "route_surface": {
-    "count": 107,
-    "sha256": "0550124973bcb267a0c338fda25127c984309004acd4a8614eabe2dfdffcb8ea"
+    "count": 108,
+    "sha256": "69d126248ff0da3f0b3feecf4ace3bb520c38c62bd29315215b945d47be7aba0"
   },
   "http": [
     {
@@ -29,7 +29,19 @@
         "path": "/v1/health",
         "headers": {"authorization": "Bearer <session-token>"}
       },
-      "response": {"status": 200, "json": {"status": "ok"}}
+      "response": {
+        "status": 200,
+        "json": {
+          "status": "ok",
+          "capabilities": {
+            "runtime_owner": "python",
+            "turn_execution_owner": "python",
+            "receipt_write_owner": "python",
+            "start_turn": true,
+            "interrupt_turn": true
+          }
+        }
+      }
     }
   ],
   "websocket": [

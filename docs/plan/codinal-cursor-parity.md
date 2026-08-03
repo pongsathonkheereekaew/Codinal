@@ -1,5 +1,9 @@
 # Codinal self-hosted Cursor-parity plan
 
+> Status: supporting later editor research only. Packaged sidecar, Python/Tauri,
+> runtime, and release guidance is superseded by
+> [`rust-native-runtime-cutover.md`](rust-native-runtime-cutover.md).
+
 ## Intent and boundary
 
 Deliver a local-first coding-agent workflow comparable to Cursor's practical

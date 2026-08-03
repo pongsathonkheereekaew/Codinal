@@ -1,9 +1,14 @@
 # Codinal production parity roadmap
 
-Status: active
+Status: historical parity inventory
 Evidence date: 2026-07-26
 Competitive baseline:
 [`docs/research/competitive-feature-matrix.md`](../research/competitive-feature-matrix.md)
+
+Runtime architecture and cutover order are superseded by
+[`rust-native-runtime-cutover.md`](rust-native-runtime-cutover.md). Python
+implementation references below are evidence sources, not allowed production
+or fallback paths.
 
 ## Destination
 
@@ -52,7 +57,9 @@ acceptance evidence is recorded from the real product surface.
 | Isolated subagents | Durable bounded workers, dependency graph, steering, cancellation, notifications, and isolated worktrees implemented | worker protocol conformance, restart recovery, ownership enforcement, and Phase 19 packaged evidence |
 | Signed app/updater | Local signed artifacts pass; notarization/channel E2E pending | release scripts, Phase 5 evidence |
 | Checkpoints | Automatic exact-path checkpoints cover Git and non-Git workspaces, including direct files, transactionally isolated shell changes, private content-minimized object storage, and crash-consistent composite restore journaling | Git ignored-file restore, non-Git restart reconciliation, same-path conflict-abort, uncaptured-secret exclusion, and active-turn manual-edit preservation E2Es — all five proven in `tests/control_plane/test_production_runtime.py` (Phase 41) |
-| Semantic index, PR/CI, browser | Missing | no product evidence |
+| Semantic index | Implemented; representative relevance/latency evidence pending | `runtime/indexing/semantic.py`, `tests/indexing/test_semantic_index.py` |
+| PR/CI | Partial; create/status/merge/cleanup routes exist; full ship-loop evidence pending | `runtime/github`, control-plane routes, GitHub route tests |
+| Browser | Partial; loopback preview/evidence and DOM annotation exist; screenshot/network capture pending | `runtime/preview`, Phase 35 evidence |
 
 ## Execution map
 
@@ -330,3 +337,169 @@ Acceptance evidence:
   invented.
 - “Zcode” means Z.ai ZCode for this roadmap; the unrelated macOS app-builder
   product remains documented as an ambiguity in the research note.
+
+## Handoff-first execution process
+
+This process is mandatory for every follow-up plan, patch, or spec review. Handoff
+intake is a prerequisite to scrutiny; do not review from conversational memory
+alone.
+
+1. **Handoff intake first**
+   - Read the newest handoff before reading secondary artifacts.
+   - Extract the goal, changed state, constraints, open questions, and next actions.
+   - Reconcile its claims against the current worktree and authoritative evidence.
+   - Preserve rollback, local-first, policy-boundary, and low-risk constraints.
+   - Treat an operator-supplied `/tmp` handoff as intake input only; durable handoffs belong under `docs/plan/handoffs/<date>-<topic>.md` and must record their source path and freshness date.
+2. **Priority gate**
+   - Classify each proposed enhancement as MVP, gated experiment, or deferred/no-go.
+   - Do not start implementation until each ticket has an owner, dependency, acceptance evidence, and rollback boundary.
+3. **Ticket gate**
+   - Use the local ticket IDs below when no external tracker is configured.
+   - Keep tickets independently verifiable and avoid bundling architecture changes with UI polish.
+   - Every ticket must declare `Owner`, `Status`, `Dependencies`, `Rollback boundary`, `Acceptance threshold`, and `Required evidence (pending)` before implementation starts.
+   - Status vocabulary is `Proposed`, `Blocked`, `In progress`, `Evidence-pending`, `Accepted`, `Deferred`, or `No-go`; historical `[x]` checkboxes do not replace current acceptance evidence.
+4. **Five-round scrutiny gate**
+   - Run all five rounds before calling a plan, spec, or patch final:
+     1. Scope and intent: does the work serve the destination and the current phase?
+     2. Traceability: can every claim follow to a real code path, artifact, or source?
+     3. Claim versus fact: are proposed, implemented, deferred, and evidenced states distinct?
+     4. Risk and cutover: are rollback, dual-writer, policy, secret, and packaging risks bounded?
+     5. Go/no-go: do acceptance thresholds prove the objective, or does the item remain open?
+   - Any finding that changes scope, dependency, or acceptance criteria requires a plan revision and a fresh five-round pass.
+5. **Verification and evidence**
+   - Run the narrow test first, then the affected package suite, then the required product/release check.
+   - Record evidence in the same change as the implementation; do not treat a green unit suite as desktop or release evidence.
+   - A required-evidence path is not evidence until the artifact exists, names its fixture/environment, and records an all-must-pass result.
+6. **Handoff out**
+   - Summarize completed work, measured verification, residual risks, exact next actions, and sensitive-data status.
+   - The next session repeats this intake process rather than relying on conversational context.
+
+## Competitive follow-up tickets
+
+The competitive review identifies patterns to adapt, not dependencies to vendor. The
+following priority split is the current recommendation.
+
+### MVP / P1
+
+#### CF-0 — Restore executable fallback and shell selector
+
+- **Owner:** desktop/release lead
+- **Status:** Proposed; the current worktree has no executable fallback shell or selector.
+- **Goal:** restore the retained Tauri/WebView shell as an actual fallback and select the GPUI or fallback shell before runtime/data initialization.
+- **Dependencies:** existing Tauri shell sources, current Web UI assets, `desktop/gpui/PARITY.md`, the authenticated control-plane contract, and one shared policy path.
+- **Rollback boundary:** no data/schema migration; a preference change plus process restart returns to the fallback, and selector/contract failure selects it before creating runtime state, tokens, or secret bootstrap material.
+- **Acceptance threshold:** the packaged test artifact contains both shell entrypoints; `desktop_shell=gpui` and `desktop_shell=tauri` are independently launchable; startup/contract failure chooses Tauri without mutating production data; both shells pass the same authentication/policy fixture; fallback selection is proven after restart.
+- **Required evidence (pending):** `docs/evidence/competitive-followup/cf0-shell-fallback.md`, containing packaged artifact identifiers, selector cases, pre-initialization failure injection, restart rollback, and data-integrity results.
+
+#### CF-1 — Shared typed transport and shell boundary
+
+- **Owner:** runtime migration lead
+- **Status:** Blocked on CF-0 and a committed fixture manifest; the shared typed transport and executable dual-shell fallback are not present yet.
+- **Goal:** make GPUI and the retained fallback shell share one versioned command/event contract for the first agreed route/event slice without duplicating tool authority. Future TUI/headless clients are later consumers, not this ticket’s acceptance target.
+- **Dependencies:** CF-0, current Rust control-plane client, Python reference route/event contracts, a committed fixture manifest naming the health/session/messages/approval-cancel/Git/evidence cases, and one `PermissionEngine` path.
+- **Rollback boundary:** no data/schema migration; revert the transport adapter and restart on the retained existing client path.
+- **Acceptance threshold:** the committed fixture manifest is complete before implementation; 100% of its health/session/messages/approval-cancel/Git/evidence cases pass in both shells; malformed and unknown commands are rejected; event names and approval outcomes match; zero alternate policy or secret paths are introduced; both shells are present in the packaged test artifact.
+- **Required evidence (pending):** `docs/evidence/competitive-followup/cf1-typed-transport.md`, containing the fixture-manifest revision, protocol revision, shell pair, all-must-pass results, and malformed-input output.
+
+#### CF-2 — Read-only `ActivityEvent` projection
+
+- **Owner:** runtime evidence lead
+- **Status:** Blocked; current stores do not retain complete historical lineage, stable cross-source watermarks, or a production tool-audit sink.
+- **Goal:** unify turn, approval, worker, checkpoint, Git, CI, plan, and audit records into a delivery-timeline read model while retaining current authoritative stores.
+- **Dependencies:** durable turn/approval/tool lineage, stable per-source IDs and watermarks, production audit-sink wiring, existing stores, audit redaction rules, one runtime owner lock, and a defined snapshot/watermark manifest.
+- **Rollback boundary:** projection storage is disposable and read-only; delete/rebuild it from authoritative stores without changing those stores or the policy ledger.
+- **Acceptance threshold:** two rebuilds from the same immutable manifest produce the same projection digest; every source has an explicit watermark and completeness result; projection writes zero authoritative records; only an allowlisted safe-field schema is emitted; all secret/raw-tool redaction cases pass; missing or partial source records fail visibly rather than silently inventing events.
+- **Required evidence (pending):** `docs/evidence/competitive-followup/cf2-activity-event.md`, with the source-completeness matrix, snapshot manifest, rebuild digests, redaction results, restart result, and source-store provenance.
+
+#### CF-3 — GPUI performance and rollback contract
+
+- **Owner:** GPUI/release lead
+- **Status:** Blocked until CF-0 and CF-1 restore the fallback, selector, typed fixture path, and packaged dual-shell artifact.
+- **Goal:** adapt Comet’s coalesced redraw/transcript caching patterns only after establishing a measured GPUI-versus-fallback baseline.
+- **Dependencies:** CF-0, CF-1, `desktop/gpui/PARITY.md`, startup/control-plane fixtures, a desktop measurement harness, and release packaging.
+- **Rollback boundary:** preserve the fallback for one stable release; a preference change plus process restart must return to it without migrating or deleting user data.
+- **Acceptance threshold:** the baseline fixture, probes, environment, and failure-injection cases are committed first; GPUI may not regress first-interactive-paint, typing P95, terminal/tree/diff throughput, or RSS by more than 10%; event count and approval outcome must match the fallback fixture; startup/contract failure must select the fallback before data mutation.
+- **Required evidence (pending):** `docs/evidence/competitive-followup/cf3-gpui-rollback-performance.md`, with signed artifact identifiers, baseline/probe environment, metric thresholds, crash/restart result, failure injection, and fallback replay.
+
+#### CF-4 — Read-only delivery room projection
+
+- **Owner:** review/evidence lead
+- **Status:** Blocked on CF-2 and the complete ship-loop evidence.
+- **Goal:** expose branch/task rationale for patch, review, CI, discussion, and merge only from records present in existing local-first stores; unavailable records must be explicit, not inferred, and the room must not create a second merge authority.
+- **Dependencies:** CF-2, existing Git/PR routes, existing review UI, a complete disposable-repository ship-loop fixture, and an offline snapshot format.
+- **Rollback boundary:** hide/remove the projection UI and discard only its read model; existing Git, PR, approval, and merge paths remain unchanged.
+- **Acceptance threshold:** the disposable-repository task → commit → PR → failing CI → approved fix → green CI → merge → cleanup E2E passes; the room renders every available link from one snapshot and marks absent discussion/CI/merge records unavailable; offline sessions remain readable; the room performs zero new mutation or relay writes.
+- **Required evidence (pending):** `docs/evidence/competitive-followup/cf4-delivery-room.md`, including the full ship-loop fixture reference, projection checksum, offline result, unavailable-source result, and mutation audit.
+
+### Gated P1 trust prerequisites
+
+#### CF-5 — Signed remote-worker and artifact receipts
+
+- **Owner:** worker protocol lead
+- **Status:** Deferred until remote dispatch is explicitly approved; remote dispatch remains fail-closed.
+- **Goal:** add externally verifiable provenance when remote/SSH workers become an approved product path.
+- **Dependencies:** CF-1, worker protocol identity reconciliation with ADR 0002, signed receipt format and key-rotation design, trust-root/enrollment design, persistent expiry/revocation/replay state, and artifact adoption flow.
+- **Rollback boundary:** revoke the trust root, discard the receipt/artifact, and disable adoption; no receipt failure may grant local authority or alter authoritative stores.
+- **Acceptance threshold:** zero invalid, expired, replayed, revoked, wrong-repository, wrong-task, or wrong-owner receipts are adopted; every valid receipt binds worker identity, owner attestation, session/task, repository/branch/base SHA, tool/version, policy digest, timestamp, and artifact digest.
+- **Required evidence (pending):** `docs/evidence/competitive-followup/cf5-worker-receipts.md`, containing enrollment, threat, replay/revocation, provenance, and adoption results.
+
+#### CF-6 — External notifications and long-job steering
+
+- **Owner:** policy/control-plane lead
+- **Status:** Deferred until CF-1/CF-2 and the trust prerequisites pass; local-first mode remains the default.
+- **Goal:** support opt-in outbound notifications first; any inbound approval or steering is a separate, explicitly scoped intent path that never grants remote input local execution authority.
+- **Dependencies:** CF-1, CF-2, CF-5, policy/approval broker, a separate channel principal from the local bearer, scoped channel credentials, persisted pending-intent storage, bounded queue/cursor retention, and an event replay cursor.
+- **Rollback boundary:** disable the integration and revoke channel credentials; queued remote intents become explicit pending records and never auto-execute after reconnect; local sessions and approvals continue offline.
+- **Acceptance threshold:** outbound notifications are read-only; inbound intents use a separate principal, explicit session/task/tool scope, expiry, nonce/idempotency key, redaction, audit attribution, and policy evaluation; zero unauthorized remote commands execute; disconnect/reconnect/revocation tests are deterministic; cold-start and mid-job offline tests preserve local safety and never auto-execute queued intents.
+- **Required evidence (pending):** `docs/evidence/competitive-followup/cf6-external-control.md`, with the channel/scope matrix, authorization negatives, replay/revocation, redaction, disconnect, restart, queue-retention, and offline fallback results.
+
+### Deferred / no-go
+
+#### CF-7 — Relay/federation architecture decision
+
+- **Owner:** architecture lead
+- **Status:** No-go; no implementation or dependency adoption is authorized.
+- **Decision:** do not adopt Comet’s Loro/DO/R2 stack or Buzz’s relay-first/Nostr control plane now.
+- **Dependencies:** concrete cross-organization collaboration requirement and explicit product approval.
+- **Rollback boundary:** no code, schema, storage-authority, or dependency change is allowed during reconsideration.
+- **Acceptance threshold before revisit:** threat model, operational cost model, retention decision, migration/rollback rehearsal, local/offline proof, and product-owner approval all exist; otherwise remain no-go.
+- **Required evidence (pending):** `docs/decisions/cf7-relay-federation.md` plus the linked threat, cost, retention, migration, and approval artifacts.
+
+## Competitive follow-up scrutiny record
+
+- **Review date:** 2026-08-01
+- **Source handoff:** `/tmp/handoff-codinal-update-plan-2026-08-01T00:00:00Z` (freshness stated in the handoff as 2026-08-01; treated as intake input only).
+- **Artifact reviewed:** this roadmap's handoff-first process and CF-0–CF-7 ticket set, reconciled against the current worktree and the GPUI comparison evidence.
+- **Method:** handoff intake first, then five outsider-review rounds. No runtime or packaging code was changed by this review.
+
+### Round 1 — Scope and intent
+
+- The competitive work serves the destination only when it protects the GPUI rollback requirement and remains local-first.
+- The simpler safe sequence is CF-0 fallback restoration, then the narrow CF-1 transport slice, then CF-2/CF-3/CF-4 projections and performance work. Remote trust/control remains gated, and relay/federation remains no-go.
+- Revision made: added CF-0 and split CF-6's outbound notification scope from inbound control intents.
+
+### Round 2 — Traceability
+
+- GPUI currently launches the native runtime directly (`desktop/gpui/src/main.rs`), the Rust runtime returns `501` for WebSocket/Git/preview surfaces (`crates/codinal-runtime/src/lib.rs`), and the release bundle packages only GPUI plus the runtime (`scripts/build-macos-release.sh`). Therefore CF-0 is a real prerequisite, not polish.
+- The current event hub has no durable event ID or watermark (`runtime/events/models.py`, `runtime/events/hub.py`); current worker/build stores and approval state cannot alone rebuild a complete timeline. CF-2 now names lineage, watermark, audit-sink, and completeness prerequisites.
+- Current GitHub reads are live and the packaged smoke launches one shell (`runtime/github`, `scripts/smoke-macos-release.sh`); CF-4 now requires a full ship-loop fixture and an offline snapshot.
+
+### Round 3 — Claim versus fact
+
+- Implemented, proposed, blocked, deferred, and no-go states are now explicit in the ticket metadata; required evidence remains pending until each named artifact exists.
+- The current evidence table no longer claims that semantic indexing, PR/CI, and browser support are uniformly missing: indexing is implemented, while representative benchmarks and broader ship-loop/browser capture remain pending.
+- GPUI's current surface is still a prototype: it has no production performance probes, a bounded string transcript, and no composer parity (`desktop/gpui/src/main.rs`). Those are treated as acceptance gaps, not shipped behavior.
+
+### Round 4 — Risk and cutover
+
+- CF-0 requires shell selection before runtime/data/token/secret initialization and preserves a no-schema rollback boundary.
+- CF-1/CF-3 require both shells in the packaged artifact and reject startup/contract failure after data mutation. CF-2 is disposable/read-only with an allowlisted safe-field schema. CF-5/CF-6 require separate trust, scope, expiry, replay, revocation, redaction, and adoption gates.
+- CF-7 explicitly forbids dependency, schema, storage-authority, and relay changes while no-go remains in force.
+
+### Round 5 — Go/no-go
+
+- **Go:** documentation/process change only; CF-0 is the next implementation candidate.
+- **Blocked:** CF-1, CF-2, CF-3, and CF-4 remain non-implementable until their stated prerequisites and evidence paths exist.
+- **Deferred:** CF-5 and CF-6 remain fail-closed until trust and local-first prerequisites pass.
+- **No-go:** CF-7 remains rejected.
+- **Verdict:** fix-then-ship. The roadmap is ready for CF-0 ticketing, but no competitive runtime feature should be called accepted before its required evidence artifact passes.

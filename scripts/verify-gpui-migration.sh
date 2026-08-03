@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# This is deliberately a test/dogfood gate. It never changes desktop_shell,
+# This is deliberately a test/dogfood gate. It never switches runtime mode,
 # publishes artifacts, or submits an app for notarization.
 CI=true ./verify.sh
 cargo test --manifest-path desktop/control-plane-client/Cargo.toml
@@ -18,4 +18,4 @@ else
   echo "notarization gate skipped; set CODINAL_REQUIRE_NOTARIZATION=1 for a release candidate"
 fi
 
-echo "GPUI migration test gate passed; Tauri remains the release shell"
+echo "GPUI migration test gate passed"

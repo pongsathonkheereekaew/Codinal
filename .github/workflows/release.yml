@@ -49,11 +49,19 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Install verification dependencies
-        run: python -m pip install -r requirements-dev.txt
-
-      - name: Verify source
-        run: bash verify.sh
+      - name: Verify Rust release surface
+        run: |
+          cargo fmt --manifest-path desktop/gpui/Cargo.toml -- --check
+          cargo clippy --manifest-path desktop/gpui/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path crates/codinal-harness/Cargo.toml --lib
+          cargo test --manifest-path crates/codinal-tools/Cargo.toml --all-targets
+          cargo test --manifest-path crates/codinal-providers/Cargo.toml
+          cargo test --manifest-path crates/codinal-storage/Cargo.toml --lib
+          cargo test --manifest-path crates/codinal-policy/Cargo.toml
+          cargo test --manifest-path crates/codinal-runtime/Cargo.toml --lib
+          cargo test --manifest-path crates/codinal-runtime/Cargo.toml --lib -- --test-threads=1
+          cargo test --manifest-path desktop/native-host/Cargo.toml --lib
+          cargo test --manifest-path desktop/gpui/Cargo.toml
 
       - name: Build native release binaries without release secrets
         run: bash scripts/build-macos-release.sh
@@ -135,4 +143,5 @@ jobs:
             "$BUNDLE/Codinal-${VERSION}-macos-arm64.app.tar.gz" \
             "$BUNDLE/Codinal-${VERSION}-macos-arm64.app.tar.gz.sig" \
             "$BUNDLE/Codinal-${VERSION}-macos-arm64.app.tar.gz.sha256" \
+            "$BUNDLE/Codinal-rust-sbom.json" \
             "$BUNDLE/latest.json"

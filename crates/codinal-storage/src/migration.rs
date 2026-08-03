@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const CONVERSATION_SCHEMA_VERSION: i64 = 8;
+pub const CONVERSATION_SCHEMA_VERSION: i64 = 10;
 pub const GIT_WORKTREE_SCHEMA_VERSION: i64 = 5;
 pub const WORKER_SCHEMA_VERSION: i64 = 2;
 
@@ -81,6 +81,19 @@ const ALL_PLANS: [MigrationPlan; 9] = [
     WORKER_PLAN,
 ];
 
+#[cfg(debug_assertions)]
+fn migration_test_pause(stage: &str, file: Option<&str>) {
+    let requested = std::env::var("CODINAL_TEST_MIGRATION_PAUSE").ok();
+    let matches = requested.as_deref() == Some(stage)
+        || file.is_some_and(|file| requested.as_deref() == Some(&format!("{stage}:{file}")));
+    if matches {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn migration_test_pause(_stage: &str, _file: Option<&str>) {}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConversationMigrationReport {
     pub database: String,
@@ -98,31 +111,69 @@ pub fn prepare_owned_data_directory(
     data_dir: &Path,
 ) -> io::Result<Vec<ConversationMigrationReport>> {
     validate_owned_directory(data_dir)?;
+    let mut journal = crate::migration_journal::begin(
+        data_dir,
+        ALL_PLANS.iter().map(|plan| (plan.file, plan.target)),
+    )?;
     let mut reports = Vec::with_capacity(ALL_PLANS.len());
     for plan in ALL_PLANS {
         let database = data_dir.join(plan.file);
-        if validate_owned_database(data_dir, &database)? {
-            reports.push(migrate_owned_database(data_dir, None, true, plan)?);
-            continue;
-        }
-        let staging = data_dir.join(format!(
-            ".{}.initialize-{}-{}",
+        let source_version = if validate_owned_database(data_dir, &database)? {
+            inspect_database(&database)?.0
+        } else {
+            0
+        };
+        crate::migration_journal::mark_database_started(
+            data_dir,
+            &mut journal,
             plan.file,
-            std::process::id(),
-            timestamp()
-        ));
-        secure_owned_directory(data_dir, &staging)?;
-        let result: io::Result<ConversationMigrationReport> = (|| {
-            let staged_database = staging.join(plan.file);
-            drop(Connection::open(&staged_database).map_err(sqlite_error)?);
-            let report = migrate_owned_database(&staging, None, false, plan)?;
-            fs::rename(&staged_database, &database)?;
-            sync_directory(data_dir)?;
-            Ok(report)
-        })();
-        let _ = fs::remove_dir_all(&staging);
-        reports.push(result?);
+            source_version,
+        )?;
+        let result: io::Result<ConversationMigrationReport> =
+            if validate_owned_database(data_dir, &database)? {
+                migrate_owned_database(data_dir, None, true, plan)
+            } else {
+                let staging = data_dir.join(format!(
+                    ".{}.initialize-{}-{}",
+                    plan.file,
+                    std::process::id(),
+                    timestamp()
+                ));
+                secure_owned_directory(data_dir, &staging)?;
+                let result = (|| {
+                    let staged_database = staging.join(plan.file);
+                    drop(Connection::open(&staged_database).map_err(sqlite_error)?);
+                    let report = migrate_owned_database(&staging, None, false, plan)?;
+                    fs::rename(&staged_database, &database)?;
+                    sync_directory(data_dir)?;
+                    Ok(report)
+                })();
+                let _ = fs::remove_dir_all(&staging);
+                result
+            };
+        match result {
+            Ok(report) => {
+                let checksum = report
+                    .backup
+                    .as_ref()
+                    .and_then(|path| crate::migration_journal::sha256_file(path).ok());
+                crate::migration_journal::mark_database_committed(
+                    data_dir,
+                    &mut journal,
+                    plan.file,
+                    checksum,
+                )?;
+                migration_test_pause("database_committed", Some(plan.file));
+                reports.push(report);
+            }
+            Err(error) => {
+                let _ = crate::migration_journal::mark_failed(data_dir, &mut journal);
+                return Err(error);
+            }
+        }
     }
+    crate::migration_journal::mark_complete(data_dir, &mut journal)?;
+    migration_test_pause("commit_marker", None);
     Ok(reports)
 }
 
@@ -171,15 +222,39 @@ pub fn migrate_data_directory_snapshot(
     fs::create_dir(&staging)?;
     fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
     let result = (|| {
+        let mut journal = crate::migration_journal::begin(
+            &staging,
+            ALL_PLANS.iter().map(|plan| (plan.file, plan.target)),
+        )?;
         let mut reports = Vec::with_capacity(ALL_PLANS.len());
         for plan in ALL_PLANS {
             let source_database = source.join(plan.file);
             validate_source(&source_database, plan.target)?;
+            let source_version = inspect_database(&source_database)?.0;
+            crate::migration_journal::mark_database_started(
+                &staging,
+                &mut journal,
+                plan.file,
+                source_version,
+            )?;
             let staged_database = staging.join(plan.file);
             copy_sqlite(&source_database, &staged_database)?;
             secure_file(&staged_database)?;
-            reports.push(migrate_owned_database(&staging, None, true, plan)?);
+            let report = migrate_owned_database(&staging, None, true, plan)?;
+            let checksum = report
+                .backup
+                .as_ref()
+                .and_then(|path| crate::migration_journal::sha256_file(path).ok());
+            crate::migration_journal::mark_database_committed(
+                &staging,
+                &mut journal,
+                plan.file,
+                checksum,
+            )?;
+            reports.push(report);
         }
+        crate::migration_journal::mark_complete(&staging, &mut journal)?;
+        migration_test_pause("before_publication", None);
         fs::rename(&staging, destination)?;
         let publication_durable = sync_directory(parent).is_ok();
         Ok(DataDirectoryMigrationReport {
@@ -486,6 +561,10 @@ fn apply_conversation_migration(transaction: &Transaction<'_>, version: i64) -> 
         6 => add_column(transaction, "sessions", "origin_session_id", "TEXT")?,
         7 => transaction.execute_batch(V7_SCHEMA).map_err(sqlite_error)?,
         8 => transaction.execute_batch(V8_SCHEMA).map_err(sqlite_error)?,
+        9 => transaction.execute_batch(V9_SCHEMA).map_err(sqlite_error)?,
+        10 => transaction
+            .execute_batch(V10_SCHEMA)
+            .map_err(sqlite_error)?,
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -716,6 +795,10 @@ fn create_backup(
     secure_file(&backup)?;
     sync_file(&backup)?;
     sync_directory(&backups)?;
+    migration_test_pause(
+        "backup_fsync",
+        database.file_name().and_then(|name| name.to_str()),
+    );
     Ok(backup)
 }
 
@@ -930,6 +1013,52 @@ CREATE INDEX IF NOT EXISTS turn_receipts_session_created
 ON turn_receipts(session_id, created_at, turn_id);
 "#;
 
+const V9_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS projects (
+  project_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE TABLE IF NOT EXISTS project_roots (
+  project_id TEXT NOT NULL,
+  root_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, root_id),
+  UNIQUE (project_id, path),
+  FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS project_sessions (
+  project_id TEXT NOT NULL,
+  session_id TEXT PRIMARY KEY,
+  FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS project_sessions_project
+ON project_sessions(project_id, session_id);
+"#;
+
+const V10_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS source_attachments (
+  attachment_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'ready',
+  error TEXT,
+  attached_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (session_id, attachment_id),
+  UNIQUE (session_id, path),
+  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS source_attachments_session
+ON source_attachments(session_id, attached_at, attachment_id);
+"#;
+
 const GIT_V1_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS git_worktrees (
   session_id TEXT PRIMARY KEY, source_root TEXT NOT NULL, git_common_dir TEXT NOT NULL,
@@ -1072,8 +1201,9 @@ mod tests {
     use super::{
         apply_conversation_migration, apply_git_worktree_migration, apply_worker_migration,
         migrate_conversation_snapshot, migrate_data_directory_snapshot,
-        migrate_git_worktree_snapshot, migrate_worker_snapshot, prepare_owned_data_directory,
-        recover_conversation_snapshot, ALL_PLANS, CONVERSATION_SCHEMA_VERSION,
+        migrate_git_worktree_snapshot, migrate_owned_database, migrate_worker_snapshot,
+        prepare_owned_data_directory, recover_conversation_snapshot, ALL_PLANS, CONVERSATION_PLAN,
+        CONVERSATION_SCHEMA_VERSION,
     };
     use rusqlite::Connection;
     use std::fs;
@@ -1177,7 +1307,7 @@ mod tests {
             migrated
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .expect("version"),
-            8
+            CONVERSATION_SCHEMA_VERSION
         );
         assert_eq!(
             migrated
@@ -1216,7 +1346,7 @@ mod tests {
             recovered
                 .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                 .expect("version"),
-            8
+            CONVERSATION_SCHEMA_VERSION
         );
         assert_eq!(
             recovered
@@ -1278,7 +1408,7 @@ mod tests {
                 migrated
                     .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                     .expect("version"),
-                8
+                CONVERSATION_SCHEMA_VERSION
             );
             assert_eq!(
                 migrated
@@ -1307,7 +1437,7 @@ mod tests {
                     |row| { row.get::<_, i64>(0) }
                 )
                 .expect("tables"),
-            7
+            11
         );
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -1532,6 +1662,57 @@ mod tests {
             )
             .expect("preserved session");
         assert_eq!(title, "Preserved");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn owned_migration_restarts_after_journal_boundaries_without_duplicate_history() {
+        let root = directory();
+        create_v1(&root.join("codinal.db"));
+        let mut journal = crate::migration_journal::begin(
+            &root,
+            ALL_PLANS.iter().map(|plan| (plan.file, plan.target)),
+        )
+        .expect("journal");
+        crate::migration_journal::mark_database_started(&root, &mut journal, "codinal.db", 1)
+            .expect("started boundary");
+        drop(journal);
+
+        let mut resumed = crate::migration_journal::read(&root)
+            .expect("journal read")
+            .expect("running journal");
+        let report =
+            migrate_owned_database(&root, None, true, CONVERSATION_PLAN).expect("database commit");
+        crate::migration_journal::mark_database_committed(
+            &root,
+            &mut resumed,
+            "codinal.db",
+            report
+                .backup
+                .as_ref()
+                .map(|path| crate::migration_journal::sha256_file(path).expect("backup hash")),
+        )
+        .expect("committed boundary");
+        drop(resumed);
+
+        let reports = prepare_owned_data_directory(&root).expect("restart reconciliation");
+        assert_eq!(reports.len(), ALL_PLANS.len());
+        let journal = crate::migration_journal::read(&root)
+            .expect("journal read")
+            .expect("complete journal");
+        assert_eq!(journal.status, "complete");
+        assert!(journal.commit_marker);
+        let database = Connection::open(root.join("codinal.db")).expect("database");
+        assert_eq!(
+            database
+                .query_row(
+                    "SELECT COUNT(*) FROM sessions WHERE session_id = 'retained-v1'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("retained history"),
+            1
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 

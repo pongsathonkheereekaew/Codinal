@@ -8,7 +8,6 @@ import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 UI = ROOT / "desktop" / "ui"
-TAURI_CONFIG = ROOT / "desktop" / "src-tauri" / "tauri.conf.json"
 
 
 def _png_top_left_alpha(path: Path) -> int:
@@ -104,7 +103,7 @@ def test_desktop_ui_has_native_three_pane_product_structure():
     assert 'id="terminal-clear"' in html
     assert 'id="terminal-status"' in html
     assert 'accept="image/png,image/jpeg,image/gif,image/webp,application/pdf"' in html
-    assert 'data-tauri-drag-region' in html
+    assert 'data-drag-region' in html
     assert "<style" not in html
     assert 'href="./app.css"' in html
 
@@ -404,7 +403,7 @@ def test_every_visible_titlebar_zone_supports_native_window_zoom():
     script = (UI / "startup.js").read_text(encoding="utf-8")
     assert "function zoomFromTitlebar(event)" in script
     assert 'document.addEventListener("dblclick", (event) => {' in script
-    assert 'event.target.closest("[data-tauri-drag-region]")' in script
+    assert 'event.target.closest("[data-drag-region]")' in script
     assert 'event.target.closest("button, input, select, textarea, a")' in script
 
 
@@ -1164,10 +1163,9 @@ def test_desktop_client_wires_runtime_approval_diff_and_shortcuts():
 
 
 def test_desktop_csp_does_not_allow_inline_script_or_styles():
-    config = TAURI_CONFIG.read_text(encoding="utf-8")
-
-    assert '"withGlobalTauri": true' in config
-    assert "'unsafe-inline'" not in config
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    assert "<script>" not in html
+    assert "'unsafe-inline'" not in html
 
 
 def test_security_scan_is_explicit_and_shows_only_bounded_summary():

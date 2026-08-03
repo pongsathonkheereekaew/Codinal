@@ -5,12 +5,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GPUI_ROOT="$ROOT/desktop/gpui"
 RUNTIME_ROOT="$ROOT/crates/codinal-runtime"
 BUNDLE_ROOT="$GPUI_ROOT/target/release/bundle"
+PYTHON_BIN="${CODINAL_PYTHON_BIN:-python3}"
+if [ -x "$ROOT/.venv/bin/python" ]; then
+  PYTHON_BIN="$ROOT/.venv/bin/python"
+fi
 APP="$BUNDLE_ROOT/macos/Codinal.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 SIGNER_MANIFEST="$ROOT/tools/update-signer/Cargo.toml"
 SIGNER_BINARY="$ROOT/tools/update-signer/target/release/codinal-update-signer"
+RUST_SBOM_SCRIPT="$ROOT/scripts/generate_rust_sbom.py"
+RUST_SBOM="$BUNDLE_ROOT/Codinal-rust-sbom.json"
 
 # Capture release credentials as non-exported shell variables, then remove the
 # exported originals before any dependency build script can execute.
@@ -19,9 +25,21 @@ NOTARY_PROFILE_VALUE="${CODINAL_NOTARY_PROFILE:-}"
 NOTARY_APPLE_ID_VALUE="${APPLE_ID:-}"
 NOTARY_PASSWORD_VALUE="${APPLE_PASSWORD:-}"
 NOTARY_TEAM_ID_VALUE="${APPLE_TEAM_ID:-}"
+MANIFEST_URL_VALUE="${CODINAL_UPDATE_MANIFEST_URL:-}"
+MANIFEST_PATH_VALUE="${CODINAL_UPDATE_MANIFEST_PATH:-}"
+MANIFEST_NOTES_VALUE="${CODINAL_UPDATE_MANIFEST_NOTES:-}"
+MANIFEST_PUB_DATE_VALUE="${CODINAL_UPDATE_MANIFEST_PUB_DATE:-}"
+APPLE_ID="$NOTARY_APPLE_ID_VALUE"
+APPLE_PASSWORD="$NOTARY_PASSWORD_VALUE"
+APPLE_TEAM_ID="$NOTARY_TEAM_ID_VALUE"
 UPDATE_KEY_PATH_VALUE="${CODINAL_UPDATE_SIGNING_PRIVATE_KEY_PATH:-}"
 UPDATE_PASSWORD_VALUE="${CODINAL_UPDATE_SIGNING_PASSWORD:-}"
+UPDATE_MANIFEST_URL="$MANIFEST_URL_VALUE"
+UPDATE_MANIFEST_PATH="$MANIFEST_PATH_VALUE"
+UPDATE_MANIFEST_NOTES="$MANIFEST_NOTES_VALUE"
+UPDATE_MANIFEST_PUB_DATE="$MANIFEST_PUB_DATE_VALUE"
 unset APPLE_SIGNING_IDENTITY CODINAL_NOTARY_PROFILE APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+unset CODINAL_UPDATE_MANIFEST_URL CODINAL_UPDATE_MANIFEST_PATH CODINAL_UPDATE_MANIFEST_NOTES CODINAL_UPDATE_MANIFEST_PUB_DATE
 unset CODINAL_UPDATE_SIGNING_PRIVATE_KEY_PATH CODINAL_UPDATE_SIGNING_PASSWORD
 
 if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
@@ -52,12 +70,18 @@ fi
 test -x "$GPUI_ROOT/target/release/codinal-gpui"
 test -x "$RUNTIME_ROOT/target/release/codinal-runtime"
 test -x "$SIGNER_BINARY"
+"$PYTHON_BIN" "$RUST_SBOM_SCRIPT" \
+  --manifest "$GPUI_ROOT/Cargo.toml" \
+  --manifest "$RUNTIME_ROOT/Cargo.toml" \
+  --version "$APP_VERSION" \
+  --output "$RUST_SBOM"
 
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 install -m 755 "$GPUI_ROOT/target/release/codinal-gpui" "$MACOS/codinal"
 install -m 755 "$RUNTIME_ROOT/target/release/codinal-runtime" "$RESOURCES/codinal-runtime"
 install -m 644 "$ROOT/desktop/assets/Codinal.icns" "$RESOURCES/Codinal.icns"
+install -m 644 "$RUST_SBOM" "$RESOURCES/Codinal-rust-sbom.json"
 
 INFO_PLIST="$CONTENTS/Info.plist"
 plutil -create xml1 "$INFO_PLIST"
@@ -81,11 +105,13 @@ plutil -lint "$INFO_PLIST"
 
 test -x "$MACOS/codinal"
 test -x "$RESOURCES/codinal-runtime"
-if otool -L "$MACOS/codinal" "$RESOURCES/codinal-runtime" \
-  | grep -E '^[[:space:]]+(/target/|/usr/local/|/opt/homebrew/)'; then
-  echo "release binaries contain non-system local dynamic-library paths" >&2
-  exit 1
-fi
+for binary in "$MACOS/codinal" "$RESOURCES/codinal-runtime"; do
+  if otool -L "$binary" | tail -n +2 \
+    | grep -E '^[[:space:]]+(/target/|/usr/local/|/opt/homebrew/)'; then
+    echo "release binaries contain non-system local dynamic-library paths: $binary" >&2
+    exit 1
+  fi
+done
 
 SIGNING_IDENTITY="$SIGNING_IDENTITY_VALUE"
 if [ "${CODINAL_REQUIRE_SIGNING:-0}" = "1" ] && [ -z "$SIGNING_IDENTITY" ]; then
@@ -114,8 +140,8 @@ if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
       --keychain-profile "$NOTARY_PROFILE_VALUE" --wait
   elif [ -n "$NOTARY_APPLE_ID_VALUE" ] && [ -n "$NOTARY_PASSWORD_VALUE" ] && [ -n "$NOTARY_TEAM_ID_VALUE" ]; then
     xcrun notarytool submit "$NOTARY_ARCHIVE" \
-      --apple-id "$NOTARY_APPLE_ID_VALUE" --password "$NOTARY_PASSWORD_VALUE" \
-      --team-id "$NOTARY_TEAM_ID_VALUE" --wait
+      --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+      --team-id "$APPLE_TEAM_ID" --wait
   else
     echo "notarization credentials are required" >&2
     exit 1
@@ -124,6 +150,8 @@ if [ "${CODINAL_REQUIRE_NOTARIZATION:-0}" = "1" ]; then
   xcrun stapler validate "$APP"
   spctl --assess --type execute --verbose=2 "$APP"
 fi
+
+bash "$ROOT/scripts/audit-rust-release.sh" "$APP" "$RESOURCES/Codinal-rust-sbom.json"
 
 ARTIFACT="$BUNDLE_ROOT/Codinal-${APP_VERSION}-macos-arm64.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARTIFACT"
@@ -144,6 +172,27 @@ if [ -n "$UPDATE_KEY_PATH" ]; then
     "$SIGNER_BINARY" "$UPDATE_KEY_PATH" "$UPDATER_ARTIFACT" \
     > "$UPDATER_ARTIFACT.sig"
   test -s "$UPDATER_ARTIFACT.sig"
+fi
+
+if [ -n "$UPDATE_MANIFEST_URL" ] || [ -n "$UPDATE_MANIFEST_PATH" ] || \
+   [ -n "$UPDATE_MANIFEST_NOTES" ] || [ -n "$UPDATE_MANIFEST_PUB_DATE" ]; then
+  if [ -z "$UPDATE_MANIFEST_URL" ] || [ -z "$UPDATE_MANIFEST_PATH" ] || \
+     [ -z "$UPDATE_MANIFEST_NOTES" ] || [ -z "$UPDATE_MANIFEST_PUB_DATE" ]; then
+    echo "all CODINAL_UPDATE_MANIFEST_* values are required together" >&2
+    exit 1
+  fi
+  if [ ! -f "$UPDATER_ARTIFACT.sig" ]; then
+    echo "UPDATER_ARTIFACT.sig is required to generate a signed manifest" >&2
+    exit 1
+  fi
+  mkdir -p "$(dirname "$UPDATE_MANIFEST_PATH")"
+  "$PYTHON_BIN" "$ROOT/scripts/generate_update_manifest.py" \
+    --version "$APP_VERSION" \
+    --url "$UPDATE_MANIFEST_URL" \
+    --signature-file "$UPDATER_ARTIFACT.sig" \
+    --notes "$UPDATE_MANIFEST_NOTES" \
+    --pub-date "$UPDATE_MANIFEST_PUB_DATE" \
+    --output "$UPDATE_MANIFEST_PATH"
 fi
 
 echo "release app: $APP"

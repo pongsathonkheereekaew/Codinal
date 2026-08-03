@@ -32,10 +32,27 @@ fn native_host_runs_the_real_runtime_only_on_a_shadow_snapshot() {
     assert!(codinal_storage::inspect_v1_data_dir(&snapshot)
         .expect("snapshot inspection")
         .is_empty());
-    assert!(snapshot.join(".codinal-runtime.lock").is_file());
+    assert!(snapshot.join(".codinal-runtime.lock").exists());
+    let health = authenticated_get(port, "/v1/health");
+    let health: serde_json::Value = health
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .and_then(|body| serde_json::from_str(body).ok())
+        .expect("health JSON");
+    assert_eq!(health["mode"], "ready");
+    assert_eq!(health["migration"]["state"], "verified");
+    assert_eq!(health["writer_lock"]["state"], "held");
+    assert_eq!(health["event_store"]["ready"], true);
+    assert_eq!(
+        health["capabilities"]["run_disabled_reason"],
+        "provider_not_configured"
+    );
     let sessions = authenticated_get(port, "/v1/sessions");
-    assert!(sessions.starts_with("HTTP/1.1 200 OK\r\n"));
-    assert!(sessions.ends_with("[{\"session_id\":\"session-1\",\"title\":\"Migration\",\"workspace\":\"/source project\",\"agent\":\"code\",\"model\":\"gpt\",\"mode\":\"code\",\"updated_at\":\"2026-01-02T00:00:00Z\",\"messages\":2,\"pinned\":true,\"archived\":false,\"origin\":null,\"origin_label\":null,\"origin_session_id\":null}]"));
+    assert!(
+        sessions.starts_with("HTTP/1.1 200 OK\r\n"),
+        "sessions response: {sessions}"
+    );
+    assert!(sessions.ends_with("[{\"session_id\":\"session-1\",\"title\":\"Migration\",\"workspace\":\"/source project\",\"agent\":\"code\",\"model\":\"gpt\",\"mode\":\"code\",\"updated_at\":\"2026-01-02T00:00:00Z\",\"messages\":2,\"pinned\":true,\"archived\":false,\"origin\":null,\"origin_label\":null,\"origin_session_id\":null,\"project_id\":null,\"project_name\":null}]"));
     let filtered = authenticated_get(port, "/v1/sessions?workspace=%2Fsource+project");
     assert!(filtered.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(filtered.contains("\"session_id\":\"session-1\""));
@@ -100,6 +117,8 @@ fn create_fixture_databases(path: &Path) {
                 .execute_batch(
                     "DROP TABLE sessions;
                      DROP TABLE messages;
+                     DROP TABLE project_sessions;
+                     DROP TABLE projects;
                      CREATE TABLE sessions (
                        session_id TEXT PRIMARY KEY, workspace TEXT NOT NULL,
                        source_workspace TEXT, model TEXT NOT NULL, mode TEXT NOT NULL,
@@ -110,6 +129,14 @@ fn create_fixture_databases(path: &Path) {
                      CREATE TABLE messages (
                        session_id TEXT NOT NULL, sequence INTEGER NOT NULL, payload TEXT NOT NULL,
                        PRIMARY KEY (session_id, sequence)
+                     );
+                     CREATE TABLE projects (
+                       project_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                       pinned INTEGER NOT NULL DEFAULT 0,
+                       updated_at TEXT NOT NULL
+                     );
+                     CREATE TABLE project_sessions (
+                       project_id TEXT NOT NULL, session_id TEXT PRIMARY KEY
                      );
                      INSERT INTO sessions VALUES
                        ('session-1','/work','/source project','gpt','code','Migration','code',1,0,NULL,NULL,NULL,'2026-01-02T00:00:00Z'),

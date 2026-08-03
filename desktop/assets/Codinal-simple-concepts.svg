@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1800" viewBox="0 0 1800 1800" role="img" aria-labelledby="title desc">
+  <title id="title">Codinal simple icon concept variations</title>
+  <desc id="desc">Four simple black and white Codinal icon concepts, each using a C around a centered chevron.</desc>
+
+  <!-- Preview board only. The light gray board is not part of any icon asset. -->
+  <rect width="1800" height="1800" fill="#F1F1F1"/>
+
+  <defs>
+    <g id="frame">
+      <rect x="144" y="144" width="736" height="736" rx="147" fill="#FFFFFF"/>
+    </g>
+
+    <!-- A: smooth C, centered open chevron. -->
+    <g id="variant-a">
+      <use href="#frame"/>
+      <path d="M 694 374 C 642 328 576 304 502 304 C 342 304 240 392 240 512 C 240 632 342 720 502 720 C 576 720 642 696 694 650"
+        fill="none" stroke="#111111" stroke-width="72" stroke-linecap="round"/>
+      <path d="M 570 452 L 630 512 L 570 572"
+        fill="none" stroke="#111111" stroke-width="68" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- B: squared C, compact centered chevron. -->
+    <g id="variant-b">
+      <use href="#frame"/>
+      <path d="M 696 354 H 460 C 360 354 300 420 300 512 C 300 604 360 670 460 670 H 696"
+        fill="none" stroke="#111111" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 568 454 L 630 512 L 568 570"
+        fill="none" stroke="#111111" stroke-width="68" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- C: circular C with a shorter, heavier centered chevron. -->
+    <g id="variant-c">
+      <use href="#frame"/>
+      <path d="M 680 384 A 190 190 0 1 0 680 640"
+        fill="none" stroke="#111111" stroke-width="72" stroke-linecap="round"/>
+      <path d="M 579 458 L 635 512 L 579 566"
+        fill="none" stroke="#111111" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <!-- D: bold geometric C with a centered chevron built from two bars. -->
+    <g id="variant-d">
+      <use href="#frame"/>
+      <path d="M 686 360 H 468 C 362 360 292 425 292 512 C 292 599 362 664 468 664 H 686"
+        fill="none" stroke="#111111" stroke-width="86" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 540 438 L 614 512 L 540 586 L 504 550 L 542 512 L 504 474 Z" fill="#111111"/>
+    </g>
+  </defs>
+
+  <g>
+    <rect x="40" y="40" width="820" height="820" rx="36" fill="#FAFAFA"/>
+    <svg x="140" y="70" width="620" height="620" viewBox="0 0 1024 1024" aria-label="Variation A">
+      <use href="#variant-a"/>
+    </svg>
+    <text x="82" y="810" fill="#111111" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="700" letter-spacing="2">A  ROUND C</text>
+  </g>
+
+  <g>
+    <rect x="940" y="40" width="820" height="820" rx="36" fill="#FAFAFA"/>
+    <svg x="1040" y="70" width="620" height="620" viewBox="0 0 1024 1024" aria-label="Variation B">
+      <use href="#variant-b"/>
+    </svg>
+    <text x="982" y="810" fill="#111111" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="700" letter-spacing="2">B  SQUARE C</text>
+  </g>
+
+  <g>
+    <rect x="40" y="940" width="820" height="820" rx="36" fill="#FAFAFA"/>
+    <svg x="140" y="970" width="620" height="620" viewBox="0 0 1024 1024" aria-label="Variation C">
+      <use href="#variant-c"/>
+    </svg>
+    <text x="82" y="1710" fill="#111111" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="700" letter-spacing="2">C  CIRCLE C</text>
+  </g>
+
+  <g>
+    <rect x="940" y="940" width="820" height="820" rx="36" fill="#FAFAFA"/>
+    <svg x="1040" y="970" width="620" height="620" viewBox="0 0 1024 1024" aria-label="Variation D">
+      <use href="#variant-d"/>
+    </svg>
+    <text x="982" y="1710" fill="#111111" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif" font-size="28" font-weight="700" letter-spacing="2">D  BOLD C</text>
+  </g>
+</svg>

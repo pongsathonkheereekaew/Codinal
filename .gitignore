@@ -4,9 +4,6 @@
 node_modules/
 .venv/
 target/
-/desktop/src-tauri/gen/
-/desktop/src-tauri/resources/python/
-/desktop/src-tauri/resources/runtime/
 .obsidian/workspace*.json
 
 # local e2e checkpoints

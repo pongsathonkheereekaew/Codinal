@@ -21,7 +21,8 @@ Vendored / extracted (per `docs/plan/openworker-boundary-map.md`):
 - `coworker/permissions.py` and `coworker/risk.py` — adapted behind the
   harness-owned policy manifest and approval port
 - `coworker/mcp/*` transport — vendored
-- `surfaces/gui/src/components/*` (React + Tauri v2 UI) — vendored (rewired at the seam: `api.ts`, `App.tsx` WS switch, `itemsFromMessages.ts`, `src-tauri/src/lib.rs`)
+- `surfaces/gui/src/components/*` (React UI) — vendored and rewired at the seam
+  (`api.ts`, `App.tsx` WS switch, `itemsFromMessages.ts`)
 - `sessions`, `events`, and non-secret `settings` slices extracted from
   `coworker/server/manager.py:SessionManager`;
   automations are deferred post-MVP; scoped connectors-gateway remains planned
@@ -30,11 +31,6 @@ Rejected / rewritten from scratch (do not derive from OpenWorker):
 - `coworker/server/app.py` control plane (P0 security: unauthenticated routes, spoofable-Origin WS, `/oauth/callback` CSRF)
 
 Each vendored file carries a provenance header citing the OpenWorker commit and copyright.
-
-## python-build-standalone — https://github.com/astral-sh/python-build-standalone
-Embedded CPython runtime shipped inside the macOS `.app` bundle
-(MPL-2.0 / Python Software Foundation License — see upstream). Used for the
-Phase 0a.3 spike at cpython-3.12.13+20260718 (aarch64-apple-darwin).
 
 ## Harness content
 The `harness/` subpath (policy, skills, memory, standards, commands) is

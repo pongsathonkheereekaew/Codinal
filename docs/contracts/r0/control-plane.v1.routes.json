@@ -1,0 +1,753 @@
+{
+  "http": [
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/audit"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/audit/export"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/data/export"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/extensions"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/extensions"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/extensions/{package_id}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/v1/extensions/{package_id}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/extensions/{package_id}/verify"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/goals/{goal_id}/audit"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/goals/{goal_id}/continue"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/goals/{goal_id}/evidence"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/health"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/integrations"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/oauth/callback"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/plan-builds/{build_id}/adopt"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/plan-builds/{build_id}/candidates/{worker_id}/diff"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/plan-builds/{build_id}/select"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/policy"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/providers/custom"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/providers/custom"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/providers/custom/{slug}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/secrets/providers"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/secrets/providers/{provider}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PUT"
+      ],
+      "path": "/v1/secrets/providers/{provider}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/security/status"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/search"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/sessions/{session_id}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/v1/sessions/{session_id}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/approvals"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/approvals/{approval_id}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/artifacts"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/artifacts/read"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/artifacts/reveal"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/artifacts/write"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/checkpoints"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/checkpoints/{checkpoint_id}/restore"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/complete"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/context"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/export.md"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/fork"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/git/apply"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/git/commit"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/git/diff"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/git/files"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/git/graph"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/git/log"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/git/push"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/git/stage"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/git/status"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/github/checks"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/github/cleanup"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/github/comment"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/github/merge"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/github/pr"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/github/pr"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/goals"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/goals"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/inline-edit"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/interactions"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/interactions/{interaction_id}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/interrupt"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/mcp/connect"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/mcp/servers"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/sessions/{session_id}/mcp/servers/{server_name}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/v1/sessions/{session_id}/mcp/servers/{server_name}"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/messages"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/plan-builds"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/plan-builds"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/plans"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/sessions/{session_id}/preview/evidence"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/preview/evidence"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/preview/evidence"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/preview/verify"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/preview/verify-origin"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/sessions/{session_id}/project/index"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/project/index"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/project/index"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/project/open"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/sessions/{session_id}/project/search"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/project/search"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "DELETE"
+      ],
+      "path": "/v1/sessions/{session_id}/roots"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/roots"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/roots"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/security/scan"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/side-conversations"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/terminal/interrupt"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/terminal/run"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/tree"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/turns"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/workers"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/sessions/{session_id}/workers"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/sessions/{session_id}/workspace/files"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/settings"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/v1/settings/codex-security"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/v1/settings/failover"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/settings/ollama/refresh"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/v1/settings/routing"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "PATCH"
+      ],
+      "path": "/v1/settings/stirling"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/settings/stirling/health"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "GET"
+      ],
+      "path": "/v1/status"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/workers/negotiate"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/workers/{worker_id}/adopt"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/workers/{worker_id}/cancel"
+    },
+    {
+      "kind": "http",
+      "methods": [
+        "POST"
+      ],
+      "path": "/v1/workers/{worker_id}/steer"
+    }
+  ],
+  "route_count": 107,
+  "source": "runtime/control_plane/app.py",
+  "websocket": [
+    {
+      "kind": "websocket",
+      "methods": [],
+      "path": "/ws/events"
+    },
+    {
+      "kind": "websocket",
+      "methods": [],
+      "path": "/ws/session/{session_id}"
+    }
+  ]
+}

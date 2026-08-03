@@ -38,5 +38,4 @@ Provider handlers are injected through runtime composition. They exchange the
 code server-to-server and resolve persistent credentials through the native
 Keychain boundary described in `docs/security/secret-storage.md`.
 
-Tauri requires desktop custom schemes to be configured statically:
-<https://v2.tauri.app/plugin/deep-linking/>.
+Desktop custom schemes are configured statically in the host runtime manifest.

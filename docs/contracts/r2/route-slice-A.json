@@ -1,0 +1,70 @@
+{
+  "slice": "A",
+  "scope": "status + security primitive routes",
+  "owner": "control-plane route owner",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/v1/version",
+      "auth": "bearer",
+      "query": [],
+      "response": {
+        "200": { "json": { "version": "string" } }
+      },
+      "notes": "Falls back to CARGO_PKG_VERSION when CODINAL_VERSION is unset."
+    },
+    {
+      "method": "GET",
+      "path": "/v1/config",
+      "auth": "bearer",
+      "query": [],
+      "response": {
+        "200": {
+          "json": {
+            "runtime": "rust-native",
+            "version": "string"
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/security/status",
+      "auth": "bearer",
+      "query": [],
+      "response": {
+        "200": {
+          "json": {
+            "available": false,
+            "reason": "Security scanning is unavailable."
+          }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/secrets/providers",
+      "auth": "bearer",
+      "query": [],
+      "response": {
+        "200": {
+          "json": [
+            {
+              "provider": "string",
+              "configured": "bool"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/health",
+      "auth": "bearer",
+      "query": [],
+      "response": {
+        "200": { "json": { "status": "ok" } }
+      }
+    }
+  ]
+}

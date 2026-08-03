@@ -18,6 +18,7 @@ def test_update_manifest_targets_signed_apple_silicon_bundle():
         "version": "1.2.3",
         "notes": "Security and reliability fixes.",
         "pub_date": "2026-07-26T12:00:00Z",
+        "schema": {"min_readable": 1, "max_readable": 1},
         "platforms": {
             "darwin-aarch64": {
                 "signature": "signature",
@@ -60,6 +61,7 @@ def test_update_manifest_cli_generates_json_file(tmp_path: Path):
     assert manifest["version"] == "2.0.0"
     assert manifest["notes"] == "CLI manifest generation smoke"
     assert manifest["pub_date"] == "2026-07-27T10:00:00Z"
+    assert manifest["schema"] == {"min_readable": 1, "max_readable": 1}
     assert "darwin-aarch64" in manifest["platforms"]
     assert manifest["platforms"]["darwin-aarch64"]["url"].endswith(
         "Codinal-2.0.0-macos-arm64.app.tar.gz"

@@ -131,6 +131,13 @@ class SessionStore(Protocol):
 
     def touch_workspace(self, path: str) -> None: ...
 
+    def list_turn_receipts(
+        self,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
     def delete_approval_decision(
         self,
         session_id: str,
@@ -399,6 +406,12 @@ class SessionService:
         session_id: str,
     ) -> dict[str, Any] | None:
         return self._store.latest_turn_receipt(session_id)
+
+    def turn_receipts(
+        self,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        return self._store.list_turn_receipts(session_id)
 
     def recoverable_sessions(self) -> list[SessionRecord]:
         return [

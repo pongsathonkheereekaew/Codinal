@@ -1,7 +1,7 @@
-//! Shared native lifecycle and secret bootstrap for desktop shells.
+//! Shared native lifecycle and secret bootstrap for native desktop hosts.
 //!
 //! This crate owns the token, launch, and Keychain contracts so every native
-//! shell depends on the same implementation without importing Tauri sources.
+//! host can depend on the same implementation without duplicating platform code.
 pub mod control_client;
 pub mod host;
 #[cfg(target_os = "macos")]
