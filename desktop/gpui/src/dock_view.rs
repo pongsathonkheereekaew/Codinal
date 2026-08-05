@@ -50,6 +50,7 @@ fn workspace_tool_menu(cx: &mut Context<WorkspacePrototype>) -> impl IntoElement
                 .tab_index(0)
                 .text_size(px(layout::TYPE_CONTROL))
                 .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
                 .child(
                     div()
                         .flex()
@@ -57,6 +58,10 @@ fn workspace_tool_menu(cx: &mut Context<WorkspacePrototype>) -> impl IntoElement
                         .child(
                             div()
                                 .w(px(28.0))
+                                .h(px(20.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
                                 .text_color(rgb(color::TEXT_SECONDARY))
                                 .child(icon(item.icon, color::TEXT_SECONDARY)),
                         )
@@ -178,7 +183,23 @@ pub(crate) fn tools_panel(
                 .aria_selected(selected)
                 .tab_index(0)
                 .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-                .child(icon(item.icon, color::TEXT_SECONDARY))
+                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .child(
+                    div()
+                        .w(px(20.0))
+                        .h(px(20.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(
+                            item.icon,
+                            if selected {
+                                color::TEXT_PRIMARY
+                            } else {
+                                color::TEXT_SECONDARY
+                            },
+                        )),
+                )
                 .child(div().ml_2().child(item.label))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.select_side_panel_tab(tool, window, cx);
@@ -464,7 +485,7 @@ pub(crate) fn tools_panel(
                             .bg(rgb(color::SIDEBAR))
                             .p_3()
                             .font_family("SF Mono")
-                            .text_size(px(layout::TYPE_CODE))
+                            .text_size(px(crate::light_theme::typography::CODE))
                             .text_color(rgb(color::TEXT_PRIMARY))
                             .child(review.diff.clone()),
                     );
@@ -774,7 +795,7 @@ pub(crate) fn tools_panel(
                             .min_h(px(0.0))
                             .overflow_y_scroll()
                             .font_family("SF Mono")
-                            .text_size(px(layout::TYPE_CODE))
+                            .text_size(px(crate::light_theme::typography::CODE))
                             .child(preview.text.clone()),
                     )
                     .into_any_element()
@@ -1010,11 +1031,12 @@ pub(crate) fn tools_panel(
                         .aria_label("Add workspace tool")
                         .tab_index(0)
                         .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-                        .child(icon(Icon::Plus, color::TEXT_PRIMARY))
+                        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                        .child(icon(Icon::Plus, color::TEXT_SECONDARY))
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_tool_picker(cx))),
                 )
-                .child(
-                    div()
+                .child({
+                    let mut close = div()
                         .id("workspace-tool-close-tab")
                         .ml_1()
                         .w(px(28.0))
@@ -1027,11 +1049,27 @@ pub(crate) fn tools_panel(
                         .aria_label("Close active workspace tool")
                         .tab_index(0)
                         .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
-                        .child(icon(Icon::Close, color::TEXT_SECONDARY))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.close_active_side_panel_tab(window, cx)
-                        })),
-                ),
+                        .child(icon(
+                            Icon::Close,
+                            if selected_tool.is_some() {
+                                color::TEXT_SECONDARY
+                            } else {
+                                color::TEXT_TERTIARY
+                            },
+                        ));
+                    if selected_tool.is_some() {
+                        close = close
+                            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_active_side_panel_tab(window, cx)
+                            }));
+                    } else {
+                        close = close
+                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .aria_description("No workspace tool is open");
+                    }
+                    close
+                }),
         )
         .child(div().flex_1().min_h(px(0.0)).child(detail))
         .child(floating_menu)

@@ -44,7 +44,7 @@ persisted preferences.
 | Region | Target | Source / verification |
 |---|---:|---|
 | Native header/title row | 48 px | `light_theme::layout::TOP_BAR_HEIGHT` |
-| Navigation width | 314 px; clamp 220–420 px | `shell_layout::{NAVIGATION_*}` |
+| Navigation width | 308 px (golden edge); clamp 220–420 px | `shell_layout::{NAVIGATION_*}` |
 | Conversation max width | 840 px | `light_theme::layout::CONTENT_MAX_WIDTH` |
 | Message max width | 620 px | `light_theme::layout::MESSAGE_MAX_WIDTH` |
 | Environment card | 336 px; 16 px inset | `light_theme::layout::CONTEXT_WIDTH`, `shell_layout::CONTEXT_PANEL_INSET` |
@@ -68,7 +68,7 @@ antialiasing across macOS builds.
 | Token | RGB | Use |
 |---|---|---|
 | Canvas / elevated | `#FFFFFF` | Main conversation and floating surfaces |
-| Sidebar | `#F5F5F5` | Navigation background |
+| Sidebar | `#FAFAFA` (golden) | Navigation background |
 | Surface | `#F2F2F2` | Cards and quiet controls |
 | Hover / selected | `#EDEDED` / `#E7E7E7` | Local interaction states |
 | Border / strong border | `#E6E6E6` / `#D8D8D8` | Dividers and composer edge |
@@ -173,6 +173,24 @@ diff failed (`MAE 0.016755`, `11.7348%` of pixels over the 16/255 threshold).
 The capture is evidence that launch/focus/dimension orchestration works, not a
 parity pass; the fixture content and app/menu chrome still differ, and the
 primary 3420×2224 profile cannot be accepted on this display.
+
+Native fixture capture on 2026-08-04: the isolated ready-chat fixture from
+`scripts/seed-gpui-capture-fixture.py` now launches through the wrapper and
+captures at the exact profile dimensions. The QHD capture
+(`/tmp/codinal-parity/session2/qhd-ready-chat2.png`) measured the shell
+geometry directly against the golden logical values: sidebar edge 308 logical
+with `#FAFAFA` (golden 308), header divider landing exactly on the sidebar
+edge (x=307–308, golden 308), traffic lights x 19–70 (golden 17–68.5), toggle
+icon center 101.5 (golden 101.75), back 134 (golden 133.75), forward 165.5
+(golden 165.75), title folder icon 331.5 (golden 330.25), and no border line
+at the sidebar edge. Remaining structural delta: the native window titlebar
+offsets the header by ~26 logical px on this display (golden window has no
+such offset), and the app keeps the header New-chat button that the golden
+places first in the title group. The primary 3420×2224 profile still cannot be
+captured on the current QHD display, and the QHD ready-chat diff against the
+wrong-state golden remains informational only (MAE 0.017721, 11.49% over the
+16/255 threshold — the fixture state and app/menu chrome differ, so this is
+not a parity pass).
 
 ## Change policy
 

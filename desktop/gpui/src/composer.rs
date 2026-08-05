@@ -92,7 +92,7 @@ pub(crate) fn composer_pane(
         }))
         .child(
             div()
-                .text_size(px(layout::TYPE_BODY))
+                .text_size(px(crate::light_theme::typography::COMPOSER))
                 .text_color(input_color)
                 .child(input_text),
         )
@@ -452,6 +452,9 @@ pub(crate) fn composer_pane(
     let model_button = div()
         .id("model-profile-selector")
         .mr_2()
+        .h(px(28.0))
+        .flex()
+        .items_center()
         .text_size(px(layout::TYPE_METADATA))
         .text_color(rgb(if selected_model_profile.ready {
             color::TEXT_SECONDARY
@@ -477,6 +480,10 @@ pub(crate) fn composer_pane(
     let voice_button = div()
         .id("composer-voice")
         .mr_2()
+        .h(px(28.0))
+        .flex()
+        .items_center()
+        .justify_center()
         .text_size(px(layout::TYPE_METADATA))
         .text_color(rgb(color::TEXT_TERTIARY))
         .role(gpui::Role::Button)
@@ -554,6 +561,9 @@ pub(crate) fn composer_pane(
                                 .child(
                                     div()
                                         .mr_3()
+                                        .h(px(28.0))
+                                        .flex()
+                                        .items_center()
                                         .text_size(px(layout::TYPE_METADATA))
                                         .text_color(rgb(access_color))
                                         .id("permission-profile")
@@ -582,6 +592,9 @@ pub(crate) fn composer_pane(
                                 .child(
                                     div()
                                         .mr_2()
+                                        .h(px(28.0))
+                                        .flex()
+                                        .items_center()
                                         .text_size(px(layout::TYPE_METADATA))
                                         .text_color(rgb(color::TEXT_SECONDARY))
                                         .child(selected_model_profile.provider.clone()),
@@ -590,6 +603,9 @@ pub(crate) fn composer_pane(
                                 .child(
                                     div()
                                         .mr_3()
+                                        .h(px(28.0))
+                                        .flex()
+                                        .items_center()
                                         .text_size(px(layout::TYPE_METADATA))
                                         .text_color(rgb(color::TEXT_TERTIARY))
                                         .child(format!(

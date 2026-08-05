@@ -5,7 +5,7 @@
 
 pub mod color {
     pub const CANVAS: u32 = 0xffffff;
-    pub const SIDEBAR: u32 = 0xf5f5f5;
+    pub const SIDEBAR: u32 = 0xfafafa;
     pub const SURFACE: u32 = 0xf2f2f2;
     pub const SURFACE_HOVER: u32 = 0xededed;
     pub const SURFACE_SELECTED: u32 = 0xe7e7e7;
@@ -27,8 +27,8 @@ pub mod color {
 }
 
 pub mod layout {
-    pub const WINDOW_WIDTH: f32 = 1_440.0;
-    pub const WINDOW_HEIGHT: f32 = 900.0;
+    pub const WINDOW_WIDTH: f32 = 1_710.0;
+    pub const WINDOW_HEIGHT: f32 = 1_112.0;
     #[cfg(test)]
     pub const GOLDEN_VIEWPORT_WIDTH: f32 = 1_710.0;
     #[cfg(test)]
@@ -46,6 +46,37 @@ pub mod layout {
     pub const TYPE_CONTROL: f32 = 12.0;
     pub const TYPE_METADATA: f32 = 11.0;
     pub const TYPE_CODE: f32 = 12.0;
+}
+
+/// Named semantic type roles. Sizes are taken from the golden fixture: the
+/// header title, brand, and sidebar section captions measure ~13 logical px,
+/// chat/project rows sit at 11 logical px, and technical content uses SF Mono
+/// via `TYPE_CODE`. Keep one role per surface so a token change cannot
+/// silently move unrelated text.
+pub mod typography {
+    /// Header/folder title and brand/mode labels.
+    pub const HEADER_TITLE: f32 = 13.0;
+    /// Sidebar brand/mode trigger (semibold).
+    pub const BRAND_MODE: f32 = 13.0;
+    /// Sidebar row labels (chats and projects).
+    pub const NAV_LABEL: f32 = 11.0;
+    /// Sidebar primary action labels (New chat).
+    pub const NAV_ACTION: f32 = 13.0;
+    /// Sidebar group captions (Pinned/Projects/Chats).
+    pub const NAV_SECTION: f32 = 13.0;
+    /// Conversation body and card content.
+    pub const BODY: f32 = 13.0;
+    /// Card and panel titles (current header size; golden measurement pending
+    /// at the capture gate).
+    pub const PANEL_TITLE: f32 = 15.0;
+    /// Metadata, status, and captions.
+    pub const METADATA: f32 = 11.0;
+    /// Keyboard shortcut hints.
+    pub const SHORTCUT: f32 = 11.0;
+    /// Composer input and footer labels.
+    pub const COMPOSER: f32 = 13.0;
+    /// Code and terminal content (SF Mono).
+    pub const CODE: f32 = super::layout::TYPE_CODE;
 }
 
 #[cfg(test)]
@@ -81,7 +112,7 @@ mod tests {
     #[test]
     fn approved_shell_metrics_are_stable() {
         assert_eq!(layout::TOP_BAR_HEIGHT, 48.0);
-        assert_eq!(NAVIGATION_DEFAULT_WIDTH, 314.0);
+        assert_eq!(NAVIGATION_DEFAULT_WIDTH, 308.0);
         assert_eq!(layout::CONTENT_MAX_WIDTH, 840.0);
         assert_eq!(layout::CONTEXT_WIDTH, 336.0);
         assert_eq!(
@@ -105,7 +136,7 @@ mod tests {
     #[test]
     fn approved_light_palette_is_stable() {
         assert_eq!(color::CANVAS, 0xffffff);
-        assert_eq!(color::SIDEBAR, 0xf5f5f5);
+        assert_eq!(color::SIDEBAR, 0xfafafa);
         assert_eq!(color::SURFACE, 0xf2f2f2);
         assert_eq!(color::BORDER, 0xe6e6e6);
         assert_eq!(color::ACCENT, 0x1677ff);

@@ -21,3 +21,7 @@ __pycache__/
 /desktop/ui/dist/editor.js
 /desktop/ui/dist/editor.js.map
 /desktop/ui/dist/editor.css
+
+# scratch files
+.scratch/
+

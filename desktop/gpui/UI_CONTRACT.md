@@ -8,7 +8,7 @@ behavior while retaining Codinal branding and original/native iconography.
 
 - Header: a 48 px native light title row with a persistent Navigation toggle,
   task title, runtime status, Environment toggle, and Workbench toggle.
-- Navigation sidebar: preferred width 314 px, resizable from 220–420 px. Hide
+- Navigation sidebar: preferred width 308 px (the golden primary fixture edge), resizable from 220–420 px. Hide
   collapses it to 0 px without overwriting the preferred width. On constrained
   viewports the active Workbench moves to overlay mode while Navigation keeps
   the user's explicit open/closed state.

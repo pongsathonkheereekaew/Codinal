@@ -136,7 +136,7 @@ pub(crate) fn conversation_pane(
                         .bg(rgb(color::SURFACE))
                         .px_4()
                         .py_3()
-                        .text_size(px(layout::TYPE_BODY))
+                        .text_size(px(crate::light_theme::typography::BODY))
                         .child(block.content.clone()),
                 )
                 .into_any_element()
@@ -158,7 +158,7 @@ pub(crate) fn conversation_pane(
                 )
                 .child(
                     div()
-                        .text_size(px(layout::TYPE_BODY))
+                        .text_size(px(crate::light_theme::typography::BODY))
                         .text_color(rgb(color::TEXT_PRIMARY))
                         .child(block.content.clone()),
                 )
@@ -182,7 +182,7 @@ pub(crate) fn conversation_pane(
                 .child(
                     div()
                         .mt_2()
-                        .text_size(px(layout::TYPE_BODY))
+                        .text_size(px(crate::light_theme::typography::BODY))
                         .text_color(rgb(color::TEXT_PRIMARY))
                         .child(block.content.clone()),
                 )
@@ -206,7 +206,7 @@ pub(crate) fn conversation_pane(
                 .child(
                     div()
                         .mt_2()
-                        .text_size(px(layout::TYPE_BODY))
+                        .text_size(px(crate::light_theme::typography::BODY))
                         .child(block.content.clone()),
                 )
                 .into_any_element()
@@ -241,7 +241,7 @@ pub(crate) fn conversation_pane(
                     .child(
                         div()
                             .mt_2()
-                            .text_size(px(layout::TYPE_BODY))
+                            .text_size(px(crate::light_theme::typography::BODY))
                             .text_color(rgb(color::TEXT_SECONDARY))
                             .child("Choose a chat from the sidebar to continue a conversation."),
                     )
@@ -307,7 +307,7 @@ pub(crate) fn conversation_pane(
                         .py_2()
                         .flex()
                         .items_center()
-                        .text_size(px(layout::TYPE_BODY))
+                        .text_size(px(crate::light_theme::typography::BODY))
                         .text_color(rgb(color::TEXT_SECONDARY))
                         .role(gpui::Role::Button)
                         .aria_label(format!("Use suggestion {suggestion}"))
@@ -323,7 +323,7 @@ pub(crate) fn conversation_pane(
                 .child(
                     div()
                         .mt_2()
-                        .text_size(px(layout::TYPE_BODY))
+                        .text_size(px(crate::light_theme::typography::BODY))
                         .text_color(rgb(color::TEXT_SECONDARY))
                         .child(format!(
                             "{} ideas to get started",

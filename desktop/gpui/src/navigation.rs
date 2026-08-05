@@ -10,12 +10,24 @@ use crate::stable_element_id;
 use crate::WorkspacePrototype;
 use codinal_control_plane_client::{ActivityItem, ProjectSummary, SessionSummary};
 use gpui::{
-    div, px, rgb, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
+    deferred, div, px, rgb, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, StatefulInteractiveElement, Styled,
 };
 use std::collections::BTreeSet;
 
 const INITIAL_SESSION_ROWS: usize = 5;
+const PROJECT_PREVIEW_OFFSET: f32 = 8.0;
+
+fn icon_slot(kind: Icon, tint: u32) -> impl gpui::IntoElement {
+    div()
+        .w(px(20.0))
+        .h(px(20.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(tint))
+        .child(icon(kind, tint))
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NavigationLists {
@@ -60,7 +72,7 @@ fn section_heading(label: &'static str) -> impl gpui::IntoElement {
         .px_3()
         .flex()
         .items_center()
-        .text_size(px(layout::TYPE_METADATA))
+        .text_size(px(crate::light_theme::typography::NAV_SECTION))
         .text_color(rgb(color::TEXT_TERTIARY))
         .child(label)
 }
@@ -119,7 +131,7 @@ fn session_row(
                 .justify_between()
                 .child(
                     div()
-                        .text_size(px(layout::TYPE_CONTROL))
+                        .text_size(px(crate::light_theme::typography::NAV_LABEL))
                         .overflow_hidden()
                         .text_ellipsis()
                         .child(session.title.clone()),
@@ -148,6 +160,7 @@ fn project_row(
     project_menu_id: Option<&str>,
     mutations_enabled: bool,
     project_expanded: bool,
+    navigation_width: f32,
     cx: &mut Context<WorkspacePrototype>,
 ) -> impl gpui::IntoElement {
     let project_id = project.project_id.clone();
@@ -159,11 +172,11 @@ fn project_row(
     let project_pinned = project.pinned;
     let project_hovered = project_hover_id == Some(project.project_id.as_str());
     let menu_open = project_menu_id == Some(project.project_id.as_str());
-    let mut row = div()
-        .id(stable_element_id("project-row", &project.project_id))
-        .relative()
-        .mt_1()
-        .px_3()
+    let mut project_card = div()
+        .id(stable_element_id("project-card", &project.project_id))
+        .w_full()
+        .pl_3()
+        .pr_2()
         .py_2()
         .rounded_lg()
         .bg(rgb(
@@ -196,17 +209,16 @@ fn project_row(
                 .child(
                     div()
                         .flex()
+                        .flex_1()
                         .items_center()
                         .min_w(px(0.0))
+                        .child(icon_slot(Icon::Folder, color::TEXT_SECONDARY))
                         .child(
                             div()
-                                .mr_2()
-                                .text_color(rgb(color::TEXT_SECONDARY))
-                                .child(icon(Icon::Folder, color::TEXT_SECONDARY)),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(layout::TYPE_CONTROL))
+                                .ml_2()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .text_size(px(crate::light_theme::typography::NAV_LABEL))
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .child(project.name.clone()),
@@ -214,6 +226,7 @@ fn project_row(
                 )
                 .child(
                     div()
+                        .flex_shrink_0()
                         .flex()
                         .items_center()
                         .child(
@@ -241,6 +254,7 @@ fn project_row(
                                 } else {
                                     div().into_any_element()
                                 })
+                                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.toggle_project_menu(menu_project_id.clone(), cx)
@@ -252,8 +266,11 @@ fn project_row(
             div()
                 .mt_1()
                 .ml_6()
+                .min_w(px(0.0))
                 .text_size(px(layout::TYPE_METADATA))
                 .text_color(rgb(color::TEXT_TERTIARY))
+                .overflow_hidden()
+                .text_ellipsis()
                 .child(if project.roots.is_empty() {
                     "No source folders".to_owned()
                 } else {
@@ -272,11 +289,11 @@ fn project_row(
         INITIAL_SESSION_ROWS
     });
     for session in visible_project_sessions {
-        row = row.child(session_row(session, selected_session_id, cx));
+        project_card = project_card.child(session_row(session, selected_session_id, cx));
     }
     if !project_expanded && project_sessions.len() > INITIAL_SESSION_ROWS {
         let expand_id = project.project_id.clone();
-        row = row.child(
+        project_card = project_card.child(
             div()
                 .id(stable_element_id("project-show-more", &project.project_id))
                 .mt_1()
@@ -299,6 +316,13 @@ fn project_row(
                 })),
         );
     }
+    let mut row = div()
+        .id(stable_element_id("project-row", &project.project_id))
+        .relative()
+        .mt_1()
+        .flex()
+        .flex_col()
+        .child(project_card);
     if menu_open {
         let archived_chat_count = sessions
             .iter()
@@ -314,8 +338,9 @@ fn project_row(
         };
         let mut menu = div()
             .id(stable_element_id("project-overflow", &project.project_id))
-            .mt_1()
-            .ml_6()
+            .absolute()
+            .top(px(38.0))
+            .right(px(12.0))
             .w(px(196.0))
             .rounded_lg()
             .border_1()
@@ -328,6 +353,11 @@ fn project_row(
         let edit = edit_project.clone();
         let remove_id = remove_project_id.clone();
         let archive_id = project.project_id.clone();
+        let enabled_icon_color = if mutations_enabled {
+            color::TEXT_SECONDARY
+        } else {
+            color::TEXT_TERTIARY
+        };
         let mut pin = div()
             .id("project-menu-pin")
             .h(px(30.0))
@@ -338,10 +368,12 @@ fn project_row(
             .role(gpui::Role::MenuItem)
             .aria_label(edit_label)
             .tab_index(0)
-            .child(icon(Icon::Pin, color::TEXT_SECONDARY))
+            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+            .child(icon_slot(Icon::Pin, enabled_icon_color))
             .child(div().ml_2().child(edit_label));
         if mutations_enabled {
             pin = pin.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
                 this.pin_project(pin_id.clone(), !project_pinned, cx)
             }));
         } else {
@@ -359,10 +391,12 @@ fn project_row(
             .role(gpui::Role::MenuItem)
             .aria_label("Archive chats")
             .tab_index(0)
-            .child(icon(Icon::Archive, color::TEXT_SECONDARY))
+            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+            .child(icon_slot(Icon::Archive, enabled_icon_color))
             .child(div().ml_2().child("Archive chats"));
         if mutations_enabled {
             archive = archive.on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
                 this.request_archive_project(archive_id.clone(), cx);
             }));
         } else {
@@ -383,9 +417,11 @@ fn project_row(
                     .role(gpui::Role::MenuItem)
                     .aria_label("Reveal project in Finder")
                     .tab_index(0)
-                    .child(icon(Icon::Folder, color::TEXT_SECONDARY))
+                    .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                    .child(icon_slot(Icon::Folder, color::TEXT_SECONDARY))
                     .child(div().ml_2().child("Reveal in Finder"))
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
                         this.reveal_project(reveal_id.clone(), cx)
                     })),
             )
@@ -402,7 +438,7 @@ fn project_row(
                     .aria_label("Create permanent worktree")
                     .aria_description("Permanent worktrees are not available in this runtime")
                     .tab_index(0)
-                    .child(icon(Icon::Worktree, color::TEXT_TERTIARY))
+                    .child(icon_slot(Icon::Worktree, color::TEXT_TERTIARY))
                     .child(div().ml_2().child("Create permanent worktree")),
             )
             .child(
@@ -416,9 +452,11 @@ fn project_row(
                     .role(gpui::Role::MenuItem)
                     .aria_label("Edit project")
                     .tab_index(0)
-                    .child(icon(Icon::Gear, color::TEXT_SECONDARY))
+                    .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                    .child(icon_slot(Icon::Gear, color::TEXT_SECONDARY))
                     .child(div().ml_2().child("Edit project"))
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
                         this.open_project_dialog(Some(edit.clone()), window, cx)
                     })),
             )
@@ -435,7 +473,8 @@ fn project_row(
                 .role(gpui::Role::MenuItem)
                 .aria_label("Restore archived chats")
                 .tab_index(0)
-                .child(icon(Icon::Archive, color::TEXT_SECONDARY))
+                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .child(icon_slot(Icon::Archive, enabled_icon_color))
                 .child(
                     div()
                         .ml_2()
@@ -443,6 +482,7 @@ fn project_row(
                 );
             if mutations_enabled {
                 restore = restore.on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
                     this.restore_project_chats(restore_id.clone(), cx);
                 }));
             } else {
@@ -465,129 +505,164 @@ fn project_row(
                     .role(gpui::Role::MenuItem)
                     .aria_label("Remove project")
                     .tab_index(0)
-                    .child(icon(Icon::Close, color::DANGER))
+                    .hover(|style| style.bg(rgb(color::DANGER_MUTED)))
+                    .child(icon_slot(Icon::Close, color::DANGER))
                     .child(div().ml_2().child("Remove project"))
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
                         this.request_remove_project(remove_id.clone(), cx)
                     })),
             );
         }
-        row = row.child(menu);
+        row = row.child(deferred(menu).with_priority(10));
     }
     if project_hovered && !menu_open {
         let preview_edit = project.clone();
-        row = row.child(
-            div()
-                .id(stable_element_id(
-                    "project-hover-preview",
-                    &project.project_id,
-                ))
-                .absolute()
-                .left(px(248.0))
-                .top(px(0.0))
-                .w(px(256.0))
-                .rounded_xl()
-                .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
-                .shadow_lg()
-                .p_3()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .text_size(px(layout::TYPE_CONTROL))
-                                .child(icon(Icon::Folder, color::TEXT_SECONDARY))
-                                .child(div().ml_2().child(project.name.clone())),
-                        )
-                        .child(icon(
-                            Icon::Pin,
-                            if project.pinned {
-                                color::ACCENT
-                            } else {
-                                color::TEXT_TERTIARY
-                            },
-                        )),
-                )
-                .child(
-                    div()
-                        .mt_2()
-                        .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
-                        .flex()
-                        .items_center()
-                        .child(icon(Icon::MessageCircle, color::TEXT_SECONDARY))
-                        .child(div().ml_2().child(format!("{} tasks", project.task_count))),
-                )
-                .child(
-                    div()
-                        .mt_2()
-                        .pt_2()
-                        .border_t_1()
-                        .border_color(rgb(color::BORDER))
-                        .children(project.roots.iter().take(3).map(|root| {
-                            div()
-                                .mt_1()
-                                .flex()
-                                .items_center()
-                                .text_size(px(layout::TYPE_METADATA))
-                                .text_color(rgb(color::TEXT_SECONDARY))
-                                .child(icon(
-                                    if root.primary {
-                                        Icon::FolderOpen
-                                    } else {
-                                        Icon::Folder
-                                    },
-                                    color::TEXT_TERTIARY,
-                                ))
-                                .child(
-                                    div()
-                                        .ml_2()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .child(root.path.clone()),
-                                )
-                        }))
-                        .child(if project.roots.is_empty() {
-                            div()
-                                .mt_1()
-                                .text_size(px(layout::TYPE_METADATA))
-                                .text_color(rgb(color::TEXT_TERTIARY))
-                                .child("No source folders")
-                                .into_any_element()
+        let preview_project_id = project.project_id.clone();
+        let preview = div()
+            .id(stable_element_id(
+                "project-hover-preview",
+                &project.project_id,
+            ))
+            .absolute()
+            .left(px(navigation_width + PROJECT_PREVIEW_OFFSET))
+            .top(px(0.0))
+            .w(px(256.0))
+            .rounded_xl()
+            .border_1()
+            .border_color(rgb(color::BORDER))
+            .bg(rgb(color::ELEVATED))
+            .shadow_lg()
+            .p_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .items_center()
+                            .overflow_hidden()
+                            .child(icon_slot(Icon::Folder, color::TEXT_SECONDARY))
+                            .child(
+                                div()
+                                    .ml_2()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .text_size(px(crate::light_theme::typography::NAV_LABEL))
+                                    .child(project.name.clone()),
+                            ),
+                    )
+                    .child(icon_slot(
+                        Icon::Pin,
+                        if project.pinned {
+                            color::ACCENT
                         } else {
-                            div().into_any_element()
-                        }),
-                )
-                .child(
-                    div()
-                        .mt_2()
-                        .pt_2()
-                        .border_t_1()
-                        .border_color(rgb(color::BORDER))
-                        .child(
-                            div()
-                                .id("project-hover-edit")
-                                .px_2()
-                                .py_1()
-                                .rounded_md()
-                                .role(gpui::Role::Button)
-                                .aria_label("Edit project")
-                                .tab_index(0)
-                                .child(icon(Icon::Gear, color::TEXT_SECONDARY))
-                                .child(div().ml_2().child("Edit project"))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    cx.stop_propagation();
-                                    this.open_project_dialog(Some(preview_edit.clone()), window, cx)
-                                })),
-                        ),
-                ),
-        );
+                            color::TEXT_TERTIARY
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .text_size(px(layout::TYPE_METADATA))
+                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .w(px(20.0))
+                            .h(px(20.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon(Icon::MessageCircle, color::TEXT_SECONDARY)),
+                    )
+                    .child(div().ml_2().child(format!("{} tasks", project.task_count))),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(rgb(color::BORDER))
+                    .children(project.roots.iter().take(3).map(|root| {
+                        div()
+                            .mt_1()
+                            .flex()
+                            .items_center()
+                            .text_size(px(layout::TYPE_METADATA))
+                            .text_color(rgb(color::TEXT_SECONDARY))
+                            .child(
+                                div()
+                                    .w(px(20.0))
+                                    .h(px(20.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(icon(
+                                        if root.primary {
+                                            Icon::FolderOpen
+                                        } else {
+                                            Icon::Folder
+                                        },
+                                        color::TEXT_TERTIARY,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .ml_2()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(root.path.clone()),
+                            )
+                    }))
+                    .child(if project.roots.is_empty() {
+                        div()
+                            .mt_1()
+                            .text_size(px(layout::TYPE_METADATA))
+                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .child("No source folders")
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(rgb(color::BORDER))
+                    .child(
+                        div()
+                            .id("project-hover-edit")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .role(gpui::Role::Button)
+                            .aria_label("Edit project")
+                            .tab_index(0)
+                            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                            .child(icon_slot(Icon::Gear, color::TEXT_SECONDARY))
+                            .child(div().ml_2().child("Edit project"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.open_project_dialog(Some(preview_edit.clone()), window, cx)
+                            })),
+                    ),
+            )
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                this.set_project_hover(preview_project_id.clone(), *hovered, cx);
+            }));
+        row = row.child(deferred(preview).with_priority(10));
     }
     row
 }
@@ -682,6 +757,7 @@ pub(crate) fn session_pane(
     mutation_disabled_reason: &str,
     expanded_project_ids: &BTreeSet<String>,
     chats_expanded: bool,
+    navigation_width: f32,
     mode_menu_open: bool,
     activity_open: bool,
     activity_items: &[ActivityItem],
@@ -732,6 +808,7 @@ pub(crate) fn session_pane(
                 project_menu_id,
                 mutations_enabled,
                 expanded_project_ids.contains(&project.project_id),
+                navigation_width,
                 cx,
             ));
         }
@@ -825,7 +902,7 @@ pub(crate) fn session_pane(
             div()
                 .flex()
                 .items_center()
-                .text_size(px(layout::TYPE_CONTROL))
+                .text_size(px(crate::light_theme::typography::NAV_ACTION))
                 .child(
                     div()
                         .w(px(20.0))
@@ -837,7 +914,7 @@ pub(crate) fn session_pane(
         )
         .child(
             div()
-                .text_size(px(layout::TYPE_METADATA))
+                .text_size(px(crate::light_theme::typography::SHORTCUT))
                 .text_color(rgb(color::TEXT_TERTIARY))
                 .child("⌘N"),
         );
@@ -1059,7 +1136,7 @@ pub(crate) fn session_pane(
                         .flex()
                         .items_center()
                         .rounded_md()
-                        .text_size(px(layout::TYPE_SECTION))
+                        .text_size(px(crate::light_theme::typography::BRAND_MODE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .role(gpui::Role::Button)
                         .aria_label("Switch workspace mode")

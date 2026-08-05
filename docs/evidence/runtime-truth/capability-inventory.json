@@ -6,7 +6,7 @@
   "source_fingerprints": {
     "crates/codinal-runtime/src/lib.rs": "a81ed6aa5727fba089740e6a332004252e45be97e09bdbe865289c54c35a6cc2",
     "desktop/control-plane-client/src/lib.rs": "07bbf32c3ec4815c626018793c0c3e8302f94d9716a11e242d81df74dae55965",
-    "desktop/gpui/src/main.rs": "7f977725c797b8e558f98b3258e15ad40e0dea27e1dcf249a0ef91a1bb2173a0",
+    "desktop/gpui/src/main.rs": "5c7544aaaa575e925aecc82001c4649a19adf7eced13b11921781e5ac9b143de",
     "desktop/gpui/src/side_panel.rs": "3dc33c03c94d846308201a133ca8125b350fbb8474e5195c9de11e62810a47ff",
     "desktop/native-host/src/project_open.rs": "1f9aa008b479e4bab3359ecf94833260d3494db04d23903153c9050b9b90c5a9",
     "desktop/native-host/src/pty.rs": "69b5d6615abdac01dba498ac179c144cd02d8e89da78a7d82345eb0770647954"
@@ -79,17 +79,17 @@
         },
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 2968,
+          "line": 3054,
           "marker": "fn create_task"
         },
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 2844,
+          "line": 2930,
           "marker": "fn create_side_chat"
         },
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 3093,
+          "line": 3179,
           "marker": "fn select_session"
         }
       ],
@@ -154,7 +154,7 @@
         },
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 4199,
+          "line": 4285,
           "marker": "fn start_turn_with_input"
         },
         {
@@ -201,7 +201,7 @@
       "gpui_entry_points": [
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 2763,
+          "line": 2849,
           "marker": "fn refresh_review"
         },
         {
@@ -254,17 +254,17 @@
       "gpui_entry_points": [
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 3674,
+          "line": 3760,
           "marker": "fn open_terminal"
         },
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 3937,
+          "line": 4023,
           "marker": "fn send_terminal_bytes"
         },
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 4000,
+          "line": 4086,
           "marker": "fn kill_terminal"
         }
       ],
@@ -313,12 +313,12 @@
       "gpui_entry_points": [
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 2771,
+          "line": 2857,
           "marker": "fn refresh_files"
         },
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 2783,
+          "line": 2869,
           "marker": "fn open_workspace_file"
         },
         {
@@ -384,7 +384,7 @@
       "gpui_entry_points": [
         {
           "path": "desktop/gpui/src/main.rs",
-          "line": 2799,
+          "line": 2885,
           "marker": "fn show_browser_prompt"
         },
         {

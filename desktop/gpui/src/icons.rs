@@ -40,6 +40,7 @@ pub(crate) enum Icon {
     More,
     NewChat,
     Navigation,
+    Workbench,
     Permission,
     Pin,
     Plugins,
@@ -49,6 +50,7 @@ pub(crate) enum Icon {
     Review,
     Search,
     Send,
+    Sliders,
     SideChat,
     Sites,
     Stop,
@@ -94,6 +96,7 @@ impl Icon {
             Self::More => "codinal/icons/more.svg",
             Self::NewChat => "codinal/icons/new-chat.svg",
             Self::Navigation => "codinal/icons/navigation.svg",
+            Self::Workbench => "codinal/icons/workbench.svg",
             Self::Permission => "codinal/icons/permission.svg",
             Self::Pin => "codinal/icons/pin.svg",
             Self::Plugins => "codinal/icons/plugins.svg",
@@ -103,6 +106,7 @@ impl Icon {
             Self::Review => "codinal/icons/review.svg",
             Self::Search => "codinal/icons/search.svg",
             Self::Send => "codinal/icons/send.svg",
+            Self::Sliders => "codinal/icons/sliders.svg",
             Self::SideChat => "codinal/icons/side-chat.svg",
             Self::Sites => "codinal/icons/sites.svg",
             Self::Stop => "codinal/icons/stop.svg",
@@ -119,10 +123,48 @@ impl Icon {
     }
 }
 
+/// Per-icon render contract. The golden's row glyphs share one optical family:
+/// lucide 24-unit line icons and Codinal 16/20/21-unit fill icons all render
+/// their ink between roughly 11.5 and 13 logical px when placed in a 16 px box,
+/// except `Changes`, whose ~87%-ink 20-unit canvas needs a smaller box to land
+/// in the same optical band. Keep layout boxes (28-32 px hit targets) separate
+/// from this rendered size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct IconSpec {
+    /// Rendered logical px box for the vector asset.
+    pub rendered_size: f32,
+    /// Fill vs line geometry, so callers can reason about optical weight.
+    pub fill: bool,
+}
+
+impl Icon {
+    pub(crate) fn spec(self) -> IconSpec {
+        let fill = matches!(
+            self,
+            Self::Changes
+                | Self::Folder
+                | Self::NewChat
+                | Self::Plugins
+                | Self::Plus
+                | Self::PullRequest
+                | Self::Sites
+                | Self::Time
+        );
+        let rendered_size = match self {
+            Self::Changes => 15.0,
+            _ => 16.0,
+        };
+        IconSpec {
+            rendered_size,
+            fill,
+        }
+    }
+}
+
 pub(crate) fn icon(kind: Icon, color: u32) -> impl IntoElement {
     svg()
         .path(kind.path())
-        .size(gpui::px(16.0))
+        .size(gpui::px(kind.spec().rendered_size))
         .text_color(gpui::rgb(color))
 }
 
@@ -160,6 +202,7 @@ impl AssetSource for CodinalAssets {
             "codinal/icons/more.svg" => MORE,
             "codinal/icons/new-chat.svg" => NEW_CHAT,
             "codinal/icons/navigation.svg" => NAVIGATION,
+            "codinal/icons/workbench.svg" => WORKBENCH,
             "codinal/icons/permission.svg" => PERMISSION,
             "codinal/icons/pin.svg" => PIN,
             "codinal/icons/plugins.svg" => PLUGINS,
@@ -169,6 +212,7 @@ impl AssetSource for CodinalAssets {
             "codinal/icons/review.svg" => REVIEW,
             "codinal/icons/search.svg" => SEARCH,
             "codinal/icons/send.svg" => SEND,
+            "codinal/icons/sliders.svg" => SLIDERS,
             "codinal/icons/side-chat.svg" => SIDE_CHAT,
             "codinal/icons/sites.svg" => SITES,
             "codinal/icons/stop.svg" => STOP,
@@ -219,6 +263,7 @@ const MODEL: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" heig
 const MORE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>"#;
 const NEW_CHAT: &[u8] = br#"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9.33496 16.5V10.665H3.5C3.13273 10.665 2.83496 10.3673 2.83496 10C2.83496 9.63273 3.13273 9.33496 3.5 9.33496H9.33496V3.5C9.33496 3.13273 9.63273 2.83496 10 2.83496C10.3673 2.83496 10.665 3.13273 10.665 3.5V9.33496H16.5L16.6338 9.34863C16.9369 9.41057 17.165 9.67857 17.165 10C17.165 10.3214 16.9369 10.5894 16.6338 10.6514L16.5 10.665H10.665V16.5C10.665 16.8673 10.3673 17.165 10 17.165C9.63273 17.165 9.33496 16.8673 9.33496 16.5Z" fill="currentColor"/></svg>"#;
 const NAVIGATION: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>"#;
+const WORKBENCH: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></svg>"#;
 const PERMISSION: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>"#;
 const PIN: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>"#;
 const PLUGINS: &[u8] = br#"<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M8.25031 1.46094C12.2175 1.46116 14.7053 4.56317 14.4573 8.11328C14.3646 9.44154 13.6395 10.4315 12.6556 10.834C11.7842 11.1903 10.7744 11.0568 9.95637 10.3848C9.43406 10.8255 8.8274 11.1141 8.19465 11.167C7.46206 11.2281 6.74478 10.9691 6.16535 10.3672L6.16145 10.3623C6.16145 10.3623 6.15859 10.3586 6.15656 10.3564C6.15204 10.3517 6.14556 10.344 6.13703 10.335C6.11976 10.3167 6.09427 10.29 6.06281 10.2568C5.9996 10.1901 5.90986 10.0966 5.80793 9.98926C5.60368 9.77412 5.34664 9.50307 5.1341 9.28125C4.86457 8.99958 4.87183 8.55158 5.15363 8.28027L5.31672 8.12207L4.72004 7.50195C4.5193 7.29309 4.52604 6.96077 4.73469 6.75977C4.94359 6.55869 5.27678 6.56454 5.47785 6.77344L6.07453 7.39355L7.51789 6.00391L6.92121 5.38379C6.72021 5.17497 6.72621 4.8427 6.93488 4.6416C7.14378 4.44052 7.47697 4.44638 7.67805 4.65527L8.27473 5.27539L8.44465 5.1123C8.72754 4.84001 9.17872 4.85048 9.44953 5.13477L10.4808 6.21777C11.074 6.8285 11.3084 7.55474 11.2132 8.28613C11.1518 8.75707 10.9544 9.20384 10.6683 9.60938C11.1897 10.0141 11.7752 10.0597 12.2581 9.8623C12.8307 9.6281 13.3423 9.01591 13.4105 8.04004C13.6191 5.05211 11.5645 2.51194 8.25031 2.51172C5.3194 2.51172 2.78634 4.7507 2.58918 7.57031C2.36888 10.7251 4.6005 13.3876 7.99836 13.3877C9.02878 13.3877 10.0514 13.1687 10.8314 12.7041C11.0805 12.5558 11.4027 12.6377 11.5511 12.8867C11.6992 13.1357 11.6174 13.4581 11.3685 13.6064C10.3813 14.1943 9.15795 14.4375 7.99836 14.4375C3.956 14.4374 1.28142 11.2234 1.54133 7.49805C1.77976 4.08387 4.81315 1.46094 8.25031 1.46094ZM6.12727 8.80176C6.27942 8.9613 6.43614 9.12597 6.56965 9.2666C6.67197 9.37438 6.76112 9.46823 6.82453 9.53516C6.856 9.56836 6.88138 9.59493 6.89875 9.61328L6.9261 9.6416C7.2937 10.0219 7.7023 10.154 8.10774 10.1201C8.52986 10.0848 8.998 9.86387 9.43293 9.44531C9.87269 9.02201 10.1181 8.56488 10.1722 8.14941C10.2235 7.75361 10.1099 7.34127 9.72492 6.94629L9.72102 6.94238L8.9261 6.10742L6.12727 8.80176Z" fill="currentColor"/></svg>"#;
@@ -228,6 +273,7 @@ const REFRESH_CODE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="2
 const REVIEW: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>"#;
 const SEARCH: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>"#;
 const SEND: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>"#;
+const SLIDERS: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/><line x1="4" x2="20" y1="12" y2="12"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></svg>"#;
 const SIDE_CHAT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>"#;
 const SITES: &[u8] = br#"<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M4.33301 10.1416C5.17524 10.1416 5.8584 10.8248 5.8584 11.667V13C5.8584 13.8422 5.17524 14.5254 4.33301 14.5254H3C2.15792 14.5252 1.47461 13.8421 1.47461 13V11.667C1.47461 10.8249 2.15792 10.1418 3 10.1416H4.33301ZM3 11.1914C2.73782 11.1916 2.52441 11.4048 2.52441 11.667V13C2.52441 13.2622 2.73782 13.4744 3 13.4746H4.33301C4.59534 13.4746 4.80762 13.2623 4.80762 13V11.667C4.80762 11.4047 4.59534 11.1914 4.33301 11.1914H3Z" fill="currentColor"/><path fill-rule="evenodd" clip-rule="evenodd" d="M6.75 1.47461C7.73031 1.47461 8.52539 2.26969 8.52539 3.25V7.47461H12.75C13.7303 7.47461 14.5254 8.26969 14.5254 9.25V12.75C14.5254 13.7303 13.7303 14.5254 12.75 14.5254H9.25C8.26969 14.5254 7.47461 13.7303 7.47461 12.75V8.52539H3.25C2.26969 8.52539 1.47461 7.73031 1.47461 6.75V3.25C1.47461 2.26969 2.26969 1.47461 3.25 1.47461H6.75ZM8.52539 12.75C8.52539 13.1504 8.84959 13.4746 9.25 13.4746H12.75C13.1504 13.4746 13.4746 13.1504 13.4746 12.75V9.25C13.4746 8.84959 13.1504 8.52539 12.75 8.52539H8.52539V12.75ZM3.25 2.52539C2.84959 2.52539 2.52539 2.84959 2.52539 3.25V6.75C2.52539 7.15041 2.84959 7.47461 3.25 7.47461H7.47461V3.25C7.47461 2.84959 7.15041 2.52539 6.75 2.52539H3.25Z" fill="currentColor"/><path fill-rule="evenodd" clip-rule="evenodd" d="M13 1.47461C13.8421 1.47479 14.5254 2.15788 14.5254 3V4.33301C14.5254 5.17513 13.8421 5.85822 13 5.8584H11.667C10.8248 5.8584 10.1416 5.17524 10.1416 4.33301V3C10.1416 2.15777 10.8248 1.47461 11.667 1.47461H13ZM11.667 2.52539C11.4047 2.52539 11.1924 2.73767 11.1924 3V4.33301C11.1924 4.59534 11.4047 4.80859 11.667 4.80859H13C13.2622 4.80841 13.4756 4.59523 13.4756 4.33301V3C13.4756 2.73778 13.2622 2.52557 13 2.52539H11.667Z" fill="currentColor"/></svg>"#;
 const STOP: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>"#;
@@ -246,7 +292,7 @@ const EDIT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" heigh
 
 #[cfg(test)]
 mod tests {
-    use super::{CodinalAssets, Icon};
+    use super::{CodinalAssets, Icon, IconSpec};
     use gpui::AssetSource;
 
     #[test]
@@ -282,6 +328,7 @@ mod tests {
             Icon::More,
             Icon::NewChat,
             Icon::Navigation,
+            Icon::Workbench,
             Icon::Permission,
             Icon::Pin,
             Icon::Plugins,
@@ -291,6 +338,7 @@ mod tests {
             Icon::Review,
             Icon::Search,
             Icon::Send,
+            Icon::Sliders,
             Icon::SideChat,
             Icon::Sites,
             Icon::Stop,
@@ -326,5 +374,83 @@ mod tests {
                 "hard-coded black asset: {path}"
             );
         }
+    }
+
+    #[test]
+    fn icon_specs_match_the_asset_geometry_and_optical_band() {
+        let assets = CodinalAssets;
+        for icon in [
+            Icon::AddFolder,
+            Icon::ArrowLeft,
+            Icon::ArrowRight,
+            Icon::Bell,
+            Icon::Browser,
+            Icon::Bug,
+            Icon::Check,
+            Icon::Changes,
+            Icon::Circle,
+            Icon::ChevronDown,
+            Icon::Close,
+            Icon::Files,
+            Icon::Folder,
+            Icon::FolderOpen,
+            Icon::GitBranch,
+            Icon::GitCommit,
+            Icon::Github,
+            Icon::Globe,
+            Icon::Hammer,
+            Icon::Image,
+            Icon::Laptop,
+            Icon::Link,
+            Icon::Menu,
+            Icon::Mic,
+            Icon::MessageCircle,
+            Icon::Model,
+            Icon::More,
+            Icon::NewChat,
+            Icon::Navigation,
+            Icon::Workbench,
+            Icon::Permission,
+            Icon::Pin,
+            Icon::Plugins,
+            Icon::Plus,
+            Icon::PullRequest,
+            Icon::RefreshCode,
+            Icon::Review,
+            Icon::Search,
+            Icon::Send,
+            Icon::Sliders,
+            Icon::SideChat,
+            Icon::Sites,
+            Icon::Stop,
+            Icon::Telescope,
+            Icon::Terminal,
+            Icon::Time,
+            Icon::File,
+            Icon::Archive,
+            Icon::ArrowSquareOut,
+            Icon::Gear,
+            Icon::Worktree,
+            Icon::Edit,
+        ] {
+            let spec: IconSpec = icon.spec();
+            let bytes = assets
+                .load(icon.path())
+                .expect("asset load")
+                .expect("missing vector asset");
+            let svg = std::str::from_utf8(&bytes).expect("vector asset is UTF-8");
+            let is_fill = svg.contains("fill=\"currentColor\"");
+            assert_eq!(
+                spec.fill, is_fill,
+                "spec fill flag disagrees with asset: {:?}",
+                icon
+            );
+            assert!(
+                (11.0..=16.0).contains(&spec.rendered_size),
+                "rendered size out of the 16 px optical family: {:?}",
+                icon
+            );
+        }
+        assert_eq!(Icon::Changes.spec().rendered_size, 15.0);
     }
 }

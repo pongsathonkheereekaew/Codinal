@@ -4,8 +4,9 @@ use crate::light_theme::layout::CONTEXT_WIDTH;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::{Duration, Instant};
 
-pub const NAVIGATION_DEFAULT_WIDTH: f32 = 314.0;
+pub const NAVIGATION_DEFAULT_WIDTH: f32 = 308.0;
 pub const NAVIGATION_MIN_WIDTH: f32 = 220.0;
 pub const NAVIGATION_MAX_WIDTH: f32 = 420.0;
 pub const WORKBENCH_DEFAULT_WIDTH: f32 = 424.0;
@@ -19,6 +20,57 @@ pub const CONVERSATION_MIN_WIDTH: f32 = 560.0;
 pub const CONTEXT_CARD_RESERVED_WIDTH: f32 = 368.0;
 pub const CONTEXT_PANEL_INSET: f32 = 16.0;
 pub const OVERLAY_HORIZONTAL_MARGIN: f32 = 16.0;
+
+#[allow(dead_code)]
+pub const SEAM_SLIDE: Duration = Duration::from_millis(260);
+
+/// Evaluates whether a panel toggle shortcut should be honored.
+/// Drops key-repeat toggles arriving mid-slide (<260ms) to prevent stutter.
+#[allow(dead_code)]
+pub fn toggle_has_settled(since_last: Option<Duration>) -> bool {
+    since_last.is_none_or(|since| since >= SEAM_SLIDE)
+}
+
+/// A critically damped spring step response (0.0..=1.0).
+/// Front-loads travel (>80% distance at t=0.5) and lands softly with zero overshoot,
+/// preventing flex-sibling layout oscillation stutter.
+#[allow(dead_code)]
+pub fn spring_settle(delta: f32) -> f32 {
+    const STIFFNESS: f32 = 7.0;
+    let remaining = |t: f32| (1.0 + STIFFNESS * t) * (-STIFFNESS * t).exp();
+    ((1.0 - remaining(delta.clamp(0.0, 1.0))) / (1.0 - remaining(1.0))).clamp(0.0, 1.0)
+}
+
+/// Motion tracker for panel open/close seam slide.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+pub struct SeamSlide {
+    from: f32,
+    started_at: Instant,
+}
+
+#[allow(dead_code)]
+impl SeamSlide {
+    pub fn begin(from: f32, to: f32) -> Option<Self> {
+        (from != to).then(|| Self {
+            from,
+            started_at: Instant::now(),
+        })
+    }
+
+    pub fn progress(&self, now: Instant) -> f32 {
+        (now.duration_since(self.started_at).as_secs_f32() / SEAM_SLIDE.as_secs_f32())
+            .clamp(0.0, 1.0)
+    }
+
+    pub fn is_done(&self, now: Instant) -> bool {
+        self.progress(now) >= 1.0
+    }
+
+    pub fn seam_at(&self, to: f32, now: Instant) -> f32 {
+        self.from + (to - self.from) * spring_settle(self.progress(now))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkbenchPlacement {
@@ -312,9 +364,9 @@ mod tests {
             },
         );
 
-        assert_eq!(shell.navigation_width, 314.0);
+        assert_eq!(shell.navigation_width, 308.0);
         assert_eq!(shell.workbench_width, 424.0);
-        assert_eq!(shell.conversation_width, 972.0);
+        assert_eq!(shell.conversation_width, 978.0);
         assert_eq!(shell.file_tree_width, 140.0);
     }
 
@@ -335,7 +387,7 @@ mod tests {
             shell.workbench_placement,
             super::WorkbenchPlacement::Overlay
         );
-        assert_eq!(shell.conversation_width, 1_126.0);
+        assert_eq!(shell.conversation_width, 1_132.0);
         assert_eq!(
             shell.context_width,
             super::CONTEXT_CARD_RESERVED_WIDTH - 32.0
@@ -398,7 +450,7 @@ mod tests {
             overlaid.workbench_placement,
             super::WorkbenchPlacement::Overlay
         );
-        assert_eq!(overlaid.conversation_width, 786.0);
+        assert_eq!(overlaid.conversation_width, 792.0);
 
         let very_narrow = resolve_shell(
             preferences,
@@ -417,7 +469,7 @@ mod tests {
             very_narrow.workbench_placement,
             super::WorkbenchPlacement::Overlay
         );
-        assert_eq!(very_narrow.conversation_width, 486.0);
+        assert_eq!(very_narrow.conversation_width, 492.0);
         assert_eq!(very_narrow.workbench_width, super::WORKBENCH_DEFAULT_WIDTH);
 
         let restored = resolve_shell(
@@ -442,7 +494,7 @@ mod tests {
         let docked = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_298.0,
+                viewport_width: 1_292.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: false,
@@ -457,7 +509,7 @@ mod tests {
         let overlaid = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_297.0,
+                viewport_width: 1_291.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: false,
@@ -472,7 +524,7 @@ mod tests {
         let context_docked = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_666.0,
+                viewport_width: 1_660.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: true,
@@ -490,7 +542,7 @@ mod tests {
         let context_overlaid = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_665.0,
+                viewport_width: 1_659.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: true,
@@ -613,5 +665,40 @@ mod tests {
 
         assert_eq!(loaded, PanelPreferences::default());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn spring_settle_spans_zero_to_one_without_overshoot() {
+        assert_eq!(super::spring_settle(0.0), 0.0);
+        assert_eq!(super::spring_settle(1.0), 1.0);
+
+        let mut prev = 0.0;
+        for i in 0..=100 {
+            let t = i as f32 / 100.0;
+            let val = super::spring_settle(t);
+            assert!((0.0..=1.0).contains(&val));
+            assert!(val >= prev);
+            prev = val;
+        }
+        // Check front-loaded curve (>80% distance covered by midpoint t=0.5)
+        assert!(super::spring_settle(0.5) > 0.8);
+    }
+
+    #[test]
+    fn toggle_debounce_drops_autorepeat_key_events() {
+        use std::time::Duration;
+        assert!(super::toggle_has_settled(None));
+        assert!(!super::toggle_has_settled(Some(Duration::from_millis(30))));
+        assert!(super::toggle_has_settled(Some(super::SEAM_SLIDE)));
+    }
+
+    #[test]
+    fn seam_slide_retargets_dynamically() {
+        use std::time::Instant;
+        let slide = super::SeamSlide::begin(0.0, 308.0).unwrap();
+        let now = Instant::now();
+        assert!((slide.seam_at(308.0, now) - 0.0).abs() < 1e-4);
+        let future = now + super::SEAM_SLIDE;
+        assert_eq!(slide.seam_at(400.0, future), 400.0);
     }
 }

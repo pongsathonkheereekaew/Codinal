@@ -372,6 +372,7 @@ pub(crate) struct WorkspacePrototype {
     selected_session_id: Option<String>,
     selected_project_id: Option<String>,
     mode_menu_open: bool,
+    open_in_menu_open: bool,
     session_menu_open: bool,
     session_rename_open: bool,
     session_delete_confirm: bool,
@@ -968,6 +969,27 @@ impl WorkspacePrototype {
         cx.notify();
     }
 
+    pub(crate) fn toggle_open_in_menu(&mut self, cx: &mut Context<Self>) {
+        self.open_in_menu_open = !self.open_in_menu_open;
+        if self.open_in_menu_open {
+            self.session_menu_open = false;
+            self.project_menu_id = None;
+            self.mode_menu_open = false;
+            self.activity_open = false;
+            self.permission_menu_open = false;
+            self.model_menu_open = false;
+            self.clear_project_hover();
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn close_open_in_menu(&mut self, cx: &mut Context<Self>) {
+        if self.open_in_menu_open {
+            self.open_in_menu_open = false;
+            cx.notify();
+        }
+    }
+
     pub(crate) fn open_project_dialog(
         &mut self,
         project: Option<ProjectSummary>,
@@ -1040,6 +1062,7 @@ impl WorkspacePrototype {
             return;
         }
         self.session_menu_open = !self.session_menu_open;
+        self.open_in_menu_open = false;
         self.mode_menu_open = false;
         self.project_menu_id = None;
         self.clear_project_hover();
@@ -1487,6 +1510,7 @@ impl WorkspacePrototype {
 
     pub(crate) fn toggle_project_menu(&mut self, project_id: String, cx: &mut Context<Self>) {
         self.clear_project_hover();
+        self.open_in_menu_open = false;
         self.mode_menu_open = false;
         self.project_menu_id = if self.project_menu_id.as_deref() == Some(project_id.as_str()) {
             None
@@ -1534,10 +1558,19 @@ impl WorkspacePrototype {
         hovered: bool,
         cx: &mut Context<Self>,
     ) {
+        self.project_hover_generation = self.project_hover_generation.wrapping_add(1);
+        let generation = self.project_hover_generation;
+        let _ = self.project_hover_task.take();
+
+        if self.project_menu_id.is_some() {
+            self.project_hover_id = None;
+            cx.notify();
+            return;
+        }
+
         if hovered {
-            if self.project_menu_id.is_none() {
-                self.clear_project_hover();
-                let generation = self.project_hover_generation;
+            if self.project_hover_id.as_deref() != Some(project_id.as_str()) {
+                self.project_hover_id = None;
                 self.project_hover_task = Some(cx.spawn(async move |this, cx| {
                     cx.background_executor()
                         .timer(Duration::from_millis(180))
@@ -1553,7 +1586,20 @@ impl WorkspacePrototype {
                 }));
             }
         } else {
-            self.clear_project_hover();
+            // Keep the preview alive while the pointer crosses from the row
+            // into its deferred card.
+            self.project_hover_task = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(180))
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.project_hover_generation == generation && this.project_menu_id.is_none()
+                    {
+                        this.project_hover_id = None;
+                        cx.notify();
+                    }
+                });
+            }));
         }
         cx.notify();
     }
@@ -2293,11 +2339,19 @@ impl WorkspacePrototype {
     }
 
     pub(crate) fn reveal_project(&mut self, project_id: String, cx: &mut Context<Self>) {
+        self.project_menu_id = None;
+        self.clear_project_hover();
         let Some(root) = self
             .projects
             .iter()
             .find(|project| project.project_id == project_id)
-            .and_then(|project| project.roots.first())
+            .and_then(|project| {
+                project
+                    .roots
+                    .iter()
+                    .find(|root| root.primary)
+                    .or_else(|| project.roots.first())
+            })
             .map(|root| root.path.clone())
         else {
             self.project_status = "Project has no source folder to reveal".to_owned();
@@ -2322,6 +2376,38 @@ impl WorkspacePrototype {
             Ok(()) => format!("Revealed {root} in Finder"),
             Err(error) => format!("Reveal in Finder failed: {error}"),
         };
+        cx.notify();
+    }
+
+    pub(crate) fn reveal_selected_workspace_in_finder(&mut self, cx: &mut Context<Self>) {
+        self.open_in_menu_open = false;
+        let root = self
+            .selected_workspace()
+            .map(|workspace| workspace.to_string_lossy().into_owned());
+        let Some(root) = root.filter(|root| !root.is_empty()) else {
+            self.session_status = "Finder unavailable · no workspace selected".to_owned();
+            cx.notify();
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        let result = Command::new("/usr/bin/open")
+            .args(["-R", root.as_str()])
+            .status()
+            .map_err(|error| error.to_string())
+            .and_then(|status| {
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("Finder exited with {status}"))
+                }
+            });
+        #[cfg(not(target_os = "macos"))]
+        let result: Result<(), String> = Err("Finder is only available on macOS".to_owned());
+        self.session_status = match result {
+            Ok(()) => format!("Revealed {root} in Finder"),
+            Err(error) => format!("Reveal in Finder failed: {error}"),
+        };
+        self.open_in_menu_open = false;
         cx.notify();
     }
 
@@ -6160,8 +6246,6 @@ impl Render for WorkspacePrototype {
                 .flex()
                 .flex_col()
                 .bg(rgb(color::SIDEBAR))
-                .border_r_1()
-                .border_color(rgb(color::BORDER))
                 .child(session_pane(
                     &self.sessions,
                     &self.projects,
@@ -6176,6 +6260,7 @@ impl Render for WorkspacePrototype {
                         .unwrap_or("runtime_read_only"),
                     &self.expanded_project_ids,
                     self.chats_expanded,
+                    resolved_shell.navigation_width,
                     self.mode_menu_open,
                     self.activity_open,
                     &self.activity_items,
@@ -6191,7 +6276,7 @@ impl Render for WorkspacePrototype {
                         .justify_between()
                         .border_t_1()
                         .border_color(rgb(color::BORDER))
-                        .text_size(px(layout::TYPE_METADATA))
+                        .text_size(px(crate::light_theme::typography::METADATA))
                         .text_color(rgb(color::TEXT_SECONDARY))
                         .child(
                             div()
@@ -6318,7 +6403,7 @@ impl Render for WorkspacePrototype {
                         .flex()
                         .items_center()
                         .justify_between()
-                        .text_size(px(layout::TYPE_SECTION))
+                        .text_size(px(crate::light_theme::typography::PANEL_TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(if has_pending_approval {
                             "Review"
@@ -6327,7 +6412,7 @@ impl Render for WorkspacePrototype {
                         })
                         .child(
                             div()
-                                .text_size(px(layout::TYPE_METADATA))
+                                .text_size(px(crate::light_theme::typography::SHORTCUT))
                                 .text_color(rgb(color::TEXT_TERTIARY))
                                 .child("⌘K"),
                         ),
@@ -6597,6 +6682,8 @@ impl Render for WorkspacePrototype {
             resolved_shell.navigation_width,
             show_context,
             show_side_tools,
+            self.open_in_menu_open,
+            !selected_workspace.is_empty(),
             self.session_menu_open,
             self.session_action_in_flight,
             self.runtime_capabilities
@@ -6678,6 +6765,8 @@ impl Render for WorkspacePrototype {
                         this.close_model_menu(cx);
                     } else if this.mode_menu_open {
                         this.close_mode_menu(cx);
+                    } else if this.open_in_menu_open {
+                        this.close_open_in_menu(cx);
                     } else if this.project_menu_id.is_some() {
                         this.project_menu_id = None;
                         this.clear_project_hover();
@@ -7060,6 +7149,11 @@ fn main() -> io::Result<()> {
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(18.0), px(18.0))),
                 }),
+                // Keep AppKit responsible for titlebar dragging so native
+                // double-click, tiling, and traffic-light behavior remain
+                // intact; GPUI controls handle only their own clicks.
+                is_movable: true,
+                app_owns_titlebar_drag: false,
                 ..Default::default()
             },
             |window, cx| {
@@ -7081,6 +7175,7 @@ fn main() -> io::Result<()> {
                             .first()
                             .and_then(|session| session.project_id.clone()),
                         mode_menu_open: false,
+                        open_in_menu_open: false,
                         session_menu_open: false,
                         session_rename_open: false,
                         session_delete_confirm: false,

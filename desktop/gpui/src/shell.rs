@@ -5,9 +5,33 @@ use crate::light_theme::{color, layout};
 use crate::{disabled_reason_label, WorkspacePrototype};
 use codinal_control_plane_client::{ProjectSummary, RuntimeCapabilities, SessionSummary};
 use gpui::{
-    div, px, rgb, Context, FocusHandle, InteractiveElement, IntoElement, ParentElement,
+    deferred, div, px, rgb, Context, FocusHandle, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled,
 };
+
+// Traffic-light clearance measured from the golden primary fixture: the native
+// controls end near x=68.5 logical and the first header control starts near
+// x=88 logical, so the header inset must be applied at exactly one layer.
+const NATIVE_TITLEBAR_LEADING_INSET: f32 = 88.0;
+const NAVIGATION_TRAILING_INSET: f32 = 8.0;
+const COLLAPSED_NAVIGATION_WIDTH: f32 = 228.0;
+const HEADER_CONTROL_SIZE: f32 = 28.0;
+const OPEN_IN_PRIMARY_WIDTH: f32 = 44.0;
+const OPEN_IN_ARROW_WIDTH: f32 = 24.0;
+const OPEN_IN_CONTROL_WIDTH: f32 = OPEN_IN_PRIMARY_WIDTH + OPEN_IN_ARROW_WIDTH;
+const HEADER_RIGHT_INSET: f32 = 16.0;
+
+// The header navigation strip is the same width as the sidebar below it, so
+// the header divider lands exactly on the sidebar's right edge. The leading
+// inset is applied inside the strip (clear of the traffic lights), never on
+// the outer header as well.
+fn navigation_controls_width(navigation_visible: bool, navigation_width: f32) -> f32 {
+    if navigation_visible {
+        navigation_width
+    } else {
+        COLLAPSED_NAVIGATION_WIDTH
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn header(
@@ -19,6 +43,8 @@ pub(crate) fn header(
     navigation_width: f32,
     context_open: bool,
     tools_open: bool,
+    open_in_menu_open: bool,
+    open_in_enabled: bool,
     session_menu_open: bool,
     session_action_in_flight: bool,
     mutation_disabled_reason: &str,
@@ -34,17 +60,12 @@ pub(crate) fn header(
     } else {
         "Read-only"
     };
-    let runtime_color = if capabilities.start_turn {
-        color::SUCCESS
-    } else {
-        color::WARNING
-    };
     let mutations_enabled = capabilities.mutations && !session_action_in_flight;
     let mut session_menu = div()
         .id("session-overflow-menu")
         .absolute()
         .top(px(36.0))
-        .left(px(34.0))
+        .right(px(0.0))
         .w(px(236.0))
         .rounded_xl()
         .border_1()
@@ -244,53 +265,201 @@ pub(crate) fn header(
     } else {
         div().into_any_element()
     };
+    let open_in_icon_color = if open_in_enabled {
+        color::TEXT_SECONDARY
+    } else {
+        color::TEXT_TERTIARY
+    };
+    let mut open_in_finder = div()
+        .id("open-in-finder")
+        .h(px(30.0))
+        .px_2()
+        .flex()
+        .items_center()
+        .justify_between()
+        .rounded_md()
+        .role(gpui::Role::MenuItem)
+        .aria_label("Open workspace in Finder")
+        .tab_index(0)
+        .text_color(rgb(if open_in_enabled {
+            color::TEXT_PRIMARY
+        } else {
+            color::TEXT_TERTIARY
+        }))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .child(
+                    div()
+                        .w(px(20.0))
+                        .h(px(20.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon(Icon::FolderOpen, open_in_icon_color)),
+                )
+                .child(div().ml_2().child("Finder")),
+        )
+        .child(icon(
+            Icon::Check,
+            if open_in_enabled {
+                color::ACCENT
+            } else {
+                color::TEXT_TERTIARY
+            },
+        ));
+    if open_in_enabled {
+        open_in_finder = open_in_finder
+            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+            .on_click(cx.listener(|this, _, _, cx| {
+                cx.stop_propagation();
+                this.reveal_selected_workspace_in_finder(cx);
+            }));
+    } else {
+        open_in_finder =
+            open_in_finder.aria_description("Select a project or chat workspace first");
+    }
+    let open_in_menu: gpui::AnyElement = if open_in_menu_open {
+        deferred(
+            div()
+                .id("open-in-menu")
+                .absolute()
+                .top(px(34.0))
+                .right(px(0.0))
+                .w(px(220.0))
+                .rounded_xl()
+                .border_1()
+                .border_color(rgb(color::BORDER))
+                .bg(rgb(color::ELEVATED))
+                .shadow_lg()
+                .p_1()
+                .child(open_in_finder)
+                .child(
+                    div()
+                        .id("open-in-terminal")
+                        .h(px(30.0))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .rounded_md()
+                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .role(gpui::Role::MenuItem)
+                        .aria_label("Open workspace in Terminal")
+                        .aria_description("External Terminal launching is not available")
+                        .tab_index(0)
+                        .child(
+                            div()
+                                .w(px(20.0))
+                                .h(px(20.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon(Icon::Terminal, color::TEXT_TERTIARY)),
+                        )
+                        .child(div().ml_2().child("Terminal")),
+                )
+                .child(
+                    div()
+                        .id("open-in-ghostty")
+                        .h(px(30.0))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .rounded_md()
+                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .role(gpui::Role::MenuItem)
+                        .aria_label("Open workspace in Ghostty")
+                        .aria_description("External Ghostty launching is not available")
+                        .tab_index(0)
+                        .child(
+                            div()
+                                .w(px(20.0))
+                                .h(px(20.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon(Icon::Terminal, color::TEXT_TERTIARY)),
+                        )
+                        .child(div().ml_2().child("Ghostty")),
+                )
+                .child(
+                    div()
+                        .id("open-in-xcode")
+                        .h(px(30.0))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .rounded_md()
+                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .role(gpui::Role::MenuItem)
+                        .aria_label("Open workspace in Xcode")
+                        .aria_description("External Xcode launching is not available")
+                        .tab_index(0)
+                        .child(
+                            div()
+                                .w(px(20.0))
+                                .h(px(20.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon(Icon::Hammer, color::TEXT_TERTIARY)),
+                        )
+                        .child(div().ml_2().child("Xcode")),
+                )
+                .into_any_element(),
+        )
+        .into_any_element()
+    } else {
+        div().into_any_element()
+    };
+    let mut navigation_toggle = div()
+        .id("navigation-toggle")
+        .mr_1()
+        .w(px(HEADER_CONTROL_SIZE))
+        .h(px(HEADER_CONTROL_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .text_size(px(layout::TYPE_CONTROL))
+        .text_color(rgb(color::TEXT_SECONDARY))
+        .role(gpui::Role::Button)
+        .aria_label(if navigation_visible {
+            "Hide navigation sidebar"
+        } else {
+            "Show navigation sidebar"
+        })
+        .tab_index(0)
+        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+        .child(icon(Icon::Navigation, color::TEXT_SECONDARY))
+        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_navigation(window, cx)));
+    if navigation_visible {
+        navigation_toggle = navigation_toggle.bg(rgb(color::SURFACE_SELECTED));
+    }
     let navigation_controls = div()
         .flex_shrink_0()
-        .w(px(if navigation_visible {
-            navigation_width
-        } else {
-            228.0
-        }))
+        .w(px(navigation_controls_width(
+            navigation_visible,
+            navigation_width,
+        )))
         .h_full()
         .flex()
         .items_center()
-        .pl(px(84.0))
-        .pr_2()
+        .pl(px(NATIVE_TITLEBAR_LEADING_INSET))
+        .pr(px(NAVIGATION_TRAILING_INSET))
         .border_r_1()
         .border_color(rgb(color::BORDER))
-        .child(
-            div()
-                .id("navigation-toggle")
-                .mr_2()
-                .w(px(30.0))
-                .h(px(30.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_md()
-                .bg(rgb(if navigation_visible {
-                    color::SURFACE_SELECTED
-                } else {
-                    color::SURFACE_HOVER
-                }))
-                .text_size(px(layout::TYPE_CONTROL))
-                .text_color(rgb(color::TEXT_SECONDARY))
-                .role(gpui::Role::Button)
-                .aria_label(if navigation_visible {
-                    "Hide navigation sidebar"
-                } else {
-                    "Show navigation sidebar"
-                })
-                .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-                .child(icon(Icon::Navigation, color::TEXT_SECONDARY))
-                .on_click(cx.listener(|this, _, window, cx| this.toggle_navigation(window, cx))),
-        )
+        // The header strip sits over the sidebar, so it uses the sidebar
+        // background instead of the conversation canvas.
+        .bg(rgb(color::SIDEBAR))
+        .child(navigation_toggle)
         .child(
             div()
                 .id("navigation-back")
-                .w(px(26.0))
-                .h(px(26.0))
+                .w(px(HEADER_CONTROL_SIZE))
+                .h(px(HEADER_CONTROL_SIZE))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -305,8 +474,9 @@ pub(crate) fn header(
         .child(
             div()
                 .id("navigation-forward")
-                .w(px(26.0))
-                .h(px(26.0))
+                .ml_1()
+                .w(px(HEADER_CONTROL_SIZE))
+                .h(px(HEADER_CONTROL_SIZE))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -317,25 +487,72 @@ pub(crate) fn header(
                 .aria_description("Navigation history is not available in the native runtime")
                 .tab_index(0)
                 .child(icon(Icon::ArrowRight, color::TEXT_TERTIARY)),
-        )
+        );
+    let mut open_in_primary = div()
+        .id("open-in-primary")
+        .w(px(OPEN_IN_PRIMARY_WIDTH))
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_lg()
+        .role(gpui::Role::Button)
+        .aria_label(if open_in_enabled {
+            "Open selected workspace in Finder"
+        } else {
+            "Open selected workspace in Finder unavailable"
+        })
+        .aria_description(if open_in_enabled {
+            "Open in Finder"
+        } else {
+            "Select a project or chat workspace first"
+        })
+        .tab_index(0)
+        .text_color(rgb(open_in_icon_color))
+        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+        .child(icon(Icon::ArrowSquareOut, open_in_icon_color));
+    if open_in_enabled {
+        open_in_primary = open_in_primary.on_click(cx.listener(|this, _, _, cx| {
+            this.reveal_selected_workspace_in_finder(cx);
+        }));
+    }
+    let open_in_control = div()
+        .relative()
+        .w(px(OPEN_IN_CONTROL_WIDTH))
+        .h(px(HEADER_CONTROL_SIZE))
+        .flex()
+        .items_center()
+        .rounded_md()
+        .bg(rgb(color::SURFACE))
+        .border_1()
+        .border_color(rgb(color::BORDER))
+        .child(open_in_menu)
+        .child(open_in_primary)
         .child(
             div()
-                .id("navigation-edit")
-                .ml_1()
-                .w(px(30.0))
-                .h(px(30.0))
+                .id("open-in-menu-toggle")
+                .w(px(OPEN_IN_ARROW_WIDTH))
+                .h_full()
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_md()
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .rounded_r_lg()
+                .border_l_1()
+                .border_color(rgb(color::BORDER))
                 .role(gpui::Role::Button)
-                .aria_label("Create new chat")
-                .aria_keyshortcuts("⌘N")
+                .aria_label(if open_in_menu_open {
+                    "Close open in menu"
+                } else {
+                    "Choose where to open the workspace"
+                })
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-                .child(icon(Icon::Edit, color::TEXT_SECONDARY))
-                .on_click(cx.listener(|this, _, _, cx| this.create_task(cx))),
+                .text_color(rgb(color::TEXT_SECONDARY))
+                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .child(icon(Icon::ChevronDown, color::TEXT_SECONDARY))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_open_in_menu(cx);
+                })),
         );
     let title_group = div()
         .relative()
@@ -344,6 +561,9 @@ pub(crate) fn header(
         .h_full()
         .flex()
         .items_center()
+        // The golden places the title group's leading glyph about 15 logical
+        // px past the sidebar edge.
+        .pl(px(15.0))
         .child(
             div()
                 .mr_3()
@@ -352,17 +572,22 @@ pub(crate) fn header(
         )
         .child(
             div()
+                .flex_1()
                 .min_w(px(0.0))
-                .text_size(px(layout::TYPE_CONTROL))
+                .overflow_hidden()
+                .text_size(px(crate::light_theme::typography::HEADER_TITLE))
                 .text_color(rgb(color::TEXT_PRIMARY))
+                .text_ellipsis()
                 .child(title.to_owned()),
         )
         .child(
             div()
                 .id("session-overflow-toggle")
+                .relative()
                 .ml_2()
                 .w(px(24.0))
                 .h(px(24.0))
+                .flex_shrink_0()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -376,21 +601,77 @@ pub(crate) fn header(
                 })
                 .tab_index(0)
                 .child(icon(Icon::More, color::TEXT_TERTIARY))
+                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .child(deferred(session_menu).with_priority(10))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.toggle_session_menu(cx);
                 })),
-        )
-        .child(session_menu);
+        );
+    let mut context_toggle = div()
+        .id("context-toggle")
+        .ml_2()
+        .w(px(HEADER_CONTROL_SIZE))
+        .h(px(HEADER_CONTROL_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .text_size(px(layout::TYPE_CONTROL))
+        .text_color(rgb(color::TEXT_SECONDARY))
+        .role(gpui::Role::Button)
+        .aria_label(if context_open {
+            "Hide pinned environment summary"
+        } else {
+            "Show pinned environment summary"
+        })
+        .aria_keyshortcuts("⌘K")
+        .aria_description(format!(
+            "Pinned summary · Runtime {runtime_label} · {oauth_status}"
+        ))
+        .track_focus(context_focus)
+        .tab_index(0)
+        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+        .child(icon(Icon::Sliders, color::TEXT_SECONDARY))
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_context_panel(window, cx)));
+    if context_open {
+        context_toggle = context_toggle.bg(rgb(color::SURFACE_SELECTED));
+    }
+    let mut tools_toggle = div()
+        .id("tools-toggle")
+        .ml_2()
+        .w(px(HEADER_CONTROL_SIZE))
+        .h(px(HEADER_CONTROL_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .text_color(rgb(color::TEXT_SECONDARY))
+        .role(gpui::Role::Button)
+        .aria_label(if tools_open {
+            "Hide workspace tools"
+        } else {
+            "Show workspace tools"
+        })
+        .track_focus(tools_focus)
+        .tab_index(0)
+        .focus_visible(|style| style.bg(rgb(color::SURFACE_HOVER)))
+        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+        .child(icon(Icon::Workbench, color::TEXT_SECONDARY))
+        .on_click(cx.listener(|this, _, window, cx| this.toggle_side_panel(window, cx)));
+    if tools_open {
+        tools_toggle = tools_toggle.bg(rgb(color::SURFACE_SELECTED));
+    }
     div()
         .h(px(layout::TOP_BAR_HEIGHT))
         .flex_shrink_0()
         .flex()
         .items_center()
         .justify_between()
-        // GPUI renders this custom chrome inside the transparent native titlebar.
-        // Keep the traffic-light hit targets clear before placing app controls.
-        .pl(px(84.0))
-        .pr_4()
+        // The traffic-light clearance is applied once, inside the navigation
+        // control strip above; the conversation and title areas start at the
+        // sidebar edge.
+        .pr(px(HEADER_RIGHT_INSET))
         .border_b_1()
         .border_color(rgb(color::BORDER))
         .bg(rgb(color::CANVAS))
@@ -398,94 +679,73 @@ pub(crate) fn header(
         .child(title_group)
         .child(
             div()
+                .relative()
                 .flex()
                 .items_center()
-                .child(
-                    div()
-                        .mr_3()
-                        .flex()
-                        .items_center()
-                        .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(runtime_color))
-                        .child(
-                            div()
-                                .mr_1()
-                                .w(px(6.0))
-                                .h(px(6.0))
-                                .rounded_full()
-                                .bg(rgb(runtime_color)),
-                        )
-                        .child(format!("{runtime_label} · {oauth_status}")),
-                )
-                .child(
-                    div()
-                        .id("context-toggle")
-                        .h(px(30.0))
-                        .px_3()
-                        .flex()
-                        .items_center()
-                        .rounded_md()
-                        .bg(rgb(if context_open {
-                            color::SURFACE_SELECTED
-                        } else {
-                            color::SURFACE
-                        }))
-                        .text_size(px(layout::TYPE_CONTROL))
-                        .text_color(rgb(color::TEXT_SECONDARY))
-                        .role(gpui::Role::Button)
-                        .aria_label(if context_open {
-                            "Hide context"
-                        } else {
-                            "Show context"
-                        })
-                        .track_focus(context_focus)
-                        .tab_index(0)
-                        .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
-                        .child(if context_open {
-                            "Hide context  ⌘K"
-                        } else {
-                            "Context  ⌘K"
-                        })
-                        .on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.toggle_context_panel(window, cx)
-                            }),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("tools-toggle")
-                        .ml_2()
-                        .w(px(34.0))
-                        .h(px(30.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded_md()
-                        .bg(rgb(if tools_open {
-                            color::SURFACE_SELECTED
-                        } else {
-                            color::SURFACE
-                        }))
-                        .text_size(px(layout::TYPE_CONTROL))
-                        .text_color(rgb(color::TEXT_SECONDARY))
-                        .role(gpui::Role::Button)
-                        .aria_label(if tools_open {
-                            "Hide workspace tools"
-                        } else {
-                            "Show workspace tools"
-                        })
-                        .track_focus(tools_focus)
-                        .tab_index(0)
-                        .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
-                        .child(icon(Icon::Menu, color::TEXT_SECONDARY))
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_side_panel(window, cx)),
-                        ),
-                ),
+                .child(open_in_control)
+                .child(context_toggle)
+                .child(tools_toggle),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        navigation_controls_width, COLLAPSED_NAVIGATION_WIDTH, HEADER_CONTROL_SIZE,
+        HEADER_RIGHT_INSET, NATIVE_TITLEBAR_LEADING_INSET, OPEN_IN_CONTROL_WIDTH,
+    };
+    use crate::shell_layout::NAVIGATION_DEFAULT_WIDTH;
+
+    #[test]
+    fn header_navigation_strip_spans_the_sidebar_edge() {
+        assert_eq!(
+            navigation_controls_width(true, NAVIGATION_DEFAULT_WIDTH),
+            NAVIGATION_DEFAULT_WIDTH
+        );
+        assert_eq!(
+            navigation_controls_width(false, NAVIGATION_DEFAULT_WIDTH),
+            COLLAPSED_NAVIGATION_WIDTH
+        );
+    }
+
+    #[test]
+    fn traffic_light_clearance_is_applied_once() {
+        assert_eq!(NATIVE_TITLEBAR_LEADING_INSET, 88.0);
+        let inset = NATIVE_TITLEBAR_LEADING_INSET;
+        assert!(inset > 68.5, "must clear the native traffic lights");
+        assert!(
+            inset + 28.0 <= NAVIGATION_DEFAULT_WIDTH - 8.0,
+            "leading control must fit inside the sidebar strip"
+        );
+    }
+
+    #[test]
+    fn header_divider_lands_on_the_sidebar_edge_at_the_golden_viewport() {
+        let shell = crate::shell_layout::resolve_shell(
+            crate::shell_layout::PanelPreferences::default(),
+            crate::shell_layout::ShellRequest {
+                viewport_width: 1_710.0,
+                navigation_open: true,
+                workbench_open: true,
+                context_open: true,
+            },
+        );
+        assert_eq!(shell.navigation_width, NAVIGATION_DEFAULT_WIDTH);
+        assert_eq!(
+            navigation_controls_width(true, shell.navigation_width),
+            shell.navigation_width,
+            "the header divider must sit exactly on the sidebar edge"
+        );
+    }
+    #[test]
+    fn golden_right_header_controls_keep_their_edges() {
+        let right_edge = 1_710.0 - HEADER_RIGHT_INSET;
+        let side_panel_start = right_edge - HEADER_CONTROL_SIZE;
+        let context_start = side_panel_start - HEADER_CONTROL_SIZE;
+        let open_in_start = context_start - OPEN_IN_CONTROL_WIDTH;
+
+        assert_eq!(side_panel_start, 1_666.0);
+        assert_eq!(context_start, 1_638.0);
+        assert_eq!(open_in_start, 1_570.0);
+    }
 }

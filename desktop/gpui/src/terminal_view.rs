@@ -187,7 +187,7 @@ pub(crate) fn terminal_pane(
                 .min_h(px(0.0))
                 .overflow_y_scroll()
                 .font_family("SF Mono")
-                .text_size(px(layout::TYPE_CODE))
+                .text_size(px(crate::light_theme::typography::CODE))
                 .text_color(rgb(color::TEXT_PRIMARY))
                 .child(output.to_owned()),
         )

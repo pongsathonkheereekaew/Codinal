@@ -40,10 +40,15 @@ fn environment_row(
             div()
                 .flex()
                 .items_center()
+                .flex_shrink_0()
                 .min_w(px(0.0))
                 .child(
                     div()
                         .w(px(24.0))
+                        .h(px(20.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
                         .mr_2()
                         .text_color(rgb(color::TEXT_SECONDARY))
                         .child(icon(
@@ -60,10 +65,13 @@ fn environment_row(
         .child(
             div()
                 .ml_2()
+                .flex_1()
+                .min_w(px(0.0))
                 .text_size(px(layout::TYPE_METADATA))
                 .text_color(rgb(color::TEXT_TERTIARY))
                 .overflow_hidden()
                 .text_ellipsis()
+                .text_right()
                 .child(detail),
         )
 }
@@ -159,7 +167,15 @@ pub(crate) fn environment_pane(
                         .text_color(rgb(color::TEXT_PRIMARY))
                         .overflow_hidden()
                         .text_ellipsis()
-                        .child(source_visual(source))
+                        .child(
+                            div()
+                                .w(px(20.0))
+                                .h(px(20.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(source_visual(source)),
+                        )
                         .child(div().ml_2().child(source.name.clone())),
                 )
                 .child(
