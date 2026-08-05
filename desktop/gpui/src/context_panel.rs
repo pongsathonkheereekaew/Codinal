@@ -32,9 +32,9 @@ fn environment_row(
         .rounded_lg()
         .text_size(px(layout::TYPE_CONTROL))
         .text_color(rgb(if enabled {
-            color::TEXT_PRIMARY
+            color::text_primary()
         } else {
-            color::TEXT_TERTIARY
+            color::text_tertiary()
         }))
         .child(
             div()
@@ -50,13 +50,13 @@ fn environment_row(
                         .items_center()
                         .justify_center()
                         .mr_2()
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(icon(
                             icon_kind,
                             if enabled {
-                                color::TEXT_SECONDARY
+                                color::text_secondary()
                             } else {
-                                color::TEXT_TERTIARY
+                                color::text_tertiary()
                             },
                         )),
                 )
@@ -68,7 +68,7 @@ fn environment_row(
                 .flex_1()
                 .min_w(px(0.0))
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .overflow_hidden()
                 .text_ellipsis()
                 .text_right()
@@ -101,7 +101,7 @@ fn source_visual(source: &SourceAttachment) -> gpui::AnyElement {
             .object_fit(ObjectFit::Cover)
             .into_any_element()
     } else {
-        icon(source_icon(&source.kind), color::TEXT_TERTIARY).into_any_element()
+        icon(source_icon(&source.kind), color::text_tertiary()).into_any_element()
     }
 }
 
@@ -138,9 +138,9 @@ pub(crate) fn environment_pane(
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(color::SURFACE))
+                .bg(rgb(color::surface()))
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(source_detail),
         );
     } else {
@@ -158,13 +158,13 @@ pub(crate) fn environment_pane(
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(color::SURFACE))
+                .bg(rgb(color::surface()))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .text_size(px(layout::TYPE_CONTROL))
-                        .text_color(rgb(color::TEXT_PRIMARY))
+                        .text_color(rgb(color::text_primary()))
                         .overflow_hidden()
                         .text_ellipsis()
                         .child(
@@ -183,9 +183,9 @@ pub(crate) fn environment_pane(
                         .mt_1()
                         .text_size(px(layout::TYPE_METADATA))
                         .text_color(rgb(if status == "ready" {
-                            color::TEXT_TERTIARY
+                            color::text_tertiary()
                         } else {
-                            color::DANGER
+                            color::danger()
                         }))
                         .overflow_hidden()
                         .text_ellipsis()
@@ -197,7 +197,7 @@ pub(crate) fn environment_pane(
                         .id(crate::stable_element_id("source-retry", &retry_id))
                         .mt_1()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::ACCENT))
+                        .text_color(rgb(color::accent()))
                         .role(gpui::Role::Button)
                         .aria_label(format!("Retry source {}", source.name))
                         .tab_index(0)
@@ -213,7 +213,7 @@ pub(crate) fn environment_pane(
                         .id(crate::stable_element_id("source-remove", &remove_id))
                         .mt_1()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::DANGER))
+                        .text_color(rgb(color::danger()))
                         .role(gpui::Role::Button)
                         .aria_label(format!("Remove source {}", source.name))
                         .tab_index(0)
@@ -233,15 +233,15 @@ pub(crate) fn environment_pane(
         .py_2()
         .rounded_lg()
         .bg(rgb(if mutations_enabled {
-            color::SURFACE
+            color::surface()
         } else {
-            color::CANVAS
+            color::canvas()
         }))
         .text_size(px(layout::TYPE_METADATA))
         .text_color(rgb(if mutations_enabled {
-            color::ACCENT
+            color::accent()
         } else {
-            color::TEXT_TERTIARY
+            color::text_tertiary()
         }))
         .role(gpui::Role::Button)
         .aria_label("Add a source file or folder")
@@ -268,9 +268,9 @@ pub(crate) fn environment_pane(
             .px_2()
             .py_1()
             .rounded_lg()
-            .bg(rgb(color::ELEVATED))
+            .bg(rgb(color::elevated()))
             .border_1()
-            .border_color(rgb(color::BORDER))
+            .border_color(rgb(color::border()))
             .child(
                 div()
                     .id("source-add-file")
@@ -304,7 +304,7 @@ pub(crate) fn environment_pane(
     div()
         .id("environment-pane")
         .border_b_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         .p_3()
         .child(
             div()
@@ -312,9 +312,9 @@ pub(crate) fn environment_pane(
                 .items_center()
                 .justify_between()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .child("Environment")
-                .child(icon(Icon::Plus, color::TEXT_TERTIARY)),
+                .child(icon(Icon::Plus, color::text_tertiary())),
         )
         .child(environment_row(
             "environment-changes",
@@ -363,25 +363,25 @@ pub(crate) fn environment_pane(
                 .mt_3()
                 .pt_3()
                 .border_t_1()
-                .border_color(rgb(color::BORDER))
+                .border_color(rgb(color::border()))
                 .flex()
                 .items_center()
                 .justify_between()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .child("Sources")
-                .child(icon(Icon::Plus, color::TEXT_TERTIARY)),
+                .child(icon(Icon::Plus, color::text_tertiary())),
         )
         .child(
             div()
                 .id("environment-sources-view-all")
                 .mt_2()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::ACCENT))
+                .text_color(rgb(color::accent()))
                 .role(gpui::Role::Button)
                 .aria_label("View all sources")
                 .tab_index(0)
-                .child(icon(Icon::Link, color::ACCENT))
+                .child(icon(Icon::Link, color::accent()))
                 .child(div().ml_1().child("View all"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.open_sources_drawer(cx);
@@ -408,7 +408,7 @@ pub(crate) fn sources_drawer(
         list = list.child(
             div()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(status.to_owned()),
         );
     } else {
@@ -422,7 +422,7 @@ pub(crate) fn sources_drawer(
                     ))
                     .py_3()
                     .border_b_1()
-                    .border_color(rgb(color::BORDER))
+                    .border_color(rgb(color::border()))
                     .role(gpui::Role::Button)
                     .aria_label(format!("Preview source {}", source.name))
                     .tab_index(0)
@@ -434,7 +434,7 @@ pub(crate) fn sources_drawer(
                             .flex()
                             .items_center()
                             .text_size(px(layout::TYPE_CONTROL))
-                            .text_color(rgb(color::TEXT_PRIMARY))
+                            .text_color(rgb(color::text_primary()))
                             .child(source_visual(source))
                             .child(div().ml_2().child(source.name.clone())),
                     )
@@ -442,7 +442,7 @@ pub(crate) fn sources_drawer(
                         div()
                             .mt_1()
                             .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .text_color(rgb(color::text_tertiary()))
                             .overflow_hidden()
                             .text_ellipsis()
                             .child(source.path.clone()),
@@ -452,9 +452,9 @@ pub(crate) fn sources_drawer(
                             .mt_2()
                             .text_size(px(layout::TYPE_METADATA))
                             .text_color(rgb(if source.status == "ready" {
-                                color::TEXT_SECONDARY
+                                color::text_secondary()
                             } else {
-                                color::DANGER
+                                color::danger()
                             }))
                             .child(if source.status == "ready" {
                                 "Attached to conversation"
@@ -478,18 +478,18 @@ pub(crate) fn sources_drawer(
             .mt_4()
             .pt_4()
             .border_t_1()
-            .border_color(rgb(color::BORDER))
+            .border_color(rgb(color::border()))
             .child(
                 div()
                     .text_size(px(layout::TYPE_CONTROL))
-                    .text_color(rgb(color::TEXT_PRIMARY))
+                    .text_color(rgb(color::text_primary()))
                     .child(preview.attachment.name.clone()),
             )
             .child(
                 div()
                     .mt_1()
                     .text_size(px(layout::TYPE_METADATA))
-                    .text_color(rgb(color::TEXT_TERTIARY))
+                    .text_color(rgb(color::text_tertiary()))
                     .child(preview_status.to_owned()),
             )
             .child(
@@ -499,9 +499,9 @@ pub(crate) fn sources_drawer(
                     .max_h(px(320.0))
                     .p_2()
                     .rounded_lg()
-                    .bg(rgb(color::SURFACE))
+                    .bg(rgb(color::surface()))
                     .text_size(px(layout::TYPE_METADATA))
-                    .text_color(rgb(color::TEXT_PRIMARY))
+                    .text_color(rgb(color::text_primary()))
                     .overflow_y_scroll()
                     .child(content),
             )
@@ -512,9 +512,9 @@ pub(crate) fn sources_drawer(
             .mt_4()
             .pt_4()
             .border_t_1()
-            .border_color(rgb(color::BORDER))
+            .border_color(rgb(color::border()))
             .text_size(px(layout::TYPE_METADATA))
-            .text_color(rgb(color::TEXT_TERTIARY))
+            .text_color(rgb(color::text_tertiary()))
             .child(preview_status.to_owned())
             .into_any_element()
     };
@@ -526,9 +526,9 @@ pub(crate) fn sources_drawer(
         .bottom_0()
         .w(px(360.0))
         .p_4()
-        .bg(rgb(color::ELEVATED))
+        .bg(rgb(color::elevated()))
         .border_l_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         .shadow_lg()
         .child(
             div()
@@ -540,11 +540,11 @@ pub(crate) fn sources_drawer(
                 .child(
                     div()
                         .id("sources-drawer-close")
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .role(gpui::Role::Button)
                         .aria_label("Close sources")
                         .tab_index(0)
-                        .child(icon(Icon::Close, color::TEXT_SECONDARY))
+                        .child(icon(Icon::Close, color::text_secondary()))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.close_sources_drawer(cx);
                         })),
@@ -581,21 +581,21 @@ pub(crate) fn approval_pane(
     let pane = div()
         .id("approval-pane")
         .border_b_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         .p_4()
         .child(div().text_size(px(layout::TYPE_CONTROL)).child("Approvals"))
         .child(
             div()
                 .mt_2()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(approval_summary),
         )
         .child(
             div()
                 .mt_2()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(review_status.to_owned()),
         );
     if has_pending_approval {
@@ -607,13 +607,13 @@ pub(crate) fn approval_pane(
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(color::ACCENT))
-                    .text_color(rgb(color::CANVAS))
+                    .bg(rgb(color::accent()))
+                    .text_color(rgb(color::canvas()))
                     .role(gpui::Role::Button)
                     .aria_label("Review pending approval")
                     .aria_keyshortcuts("Enter")
                     .tab_index(0)
-                    .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                    .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                     .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                         if is_activation_key(event) {
                             this.show_approval_prompt(window, cx);
@@ -632,13 +632,13 @@ pub(crate) fn approval_pane(
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(color::SURFACE))
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .bg(rgb(color::surface()))
+                    .text_color(rgb(color::text_secondary()))
                     .role(gpui::Role::Button)
                     .aria_label("Approval action unavailable")
                     .aria_description(disabled_reason_label(disabled_reason))
                     .tab_index(0)
-                    .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                    .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                     .child(format!(
                         "Approval action unavailable · {}",
                         disabled_reason_label(disabled_reason)

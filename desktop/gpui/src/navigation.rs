@@ -73,7 +73,7 @@ fn section_heading(label: &'static str) -> impl gpui::IntoElement {
         .flex()
         .items_center()
         .text_size(px(crate::light_theme::typography::NAV_SECTION))
-        .text_color(rgb(color::TEXT_TERTIARY))
+        .text_color(rgb(color::text_tertiary()))
         .child(label)
 }
 
@@ -86,7 +86,7 @@ fn chats_heading(cx: &mut Context<WorkspacePrototype>) -> impl gpui::IntoElement
         .flex()
         .items_center()
         .text_size(px(layout::TYPE_METADATA))
-        .text_color(rgb(color::TEXT_TERTIARY))
+        .text_color(rgb(color::text_tertiary()))
         .role(gpui::Role::Button)
         .aria_label("Show chats")
         .tab_index(0)
@@ -110,15 +110,27 @@ fn session_row(
         .px_3()
         .py_2()
         .rounded_lg()
-        .bg(rgb(if selected {
-            color::SURFACE_SELECTED
+        .border_l_2()
+        .border_color(rgb(if selected {
+            color::accent()
         } else {
-            color::SIDEBAR
+            color::sidebar()
+        }))
+        .bg(rgb(if selected {
+            color::surface_selected()
+        } else {
+            color::sidebar()
         }))
         .role(gpui::Role::Button)
         .aria_label(format!("Open chat {}", session.title))
         .tab_index(0)
-        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+        .hover(|style| style.bg(rgb(if selected {
+            color::surface_selected()
+        } else {
+            color::surface_hover()
+        })))
+        .active(|style| style.opacity(0.8))
         .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
             if is_activation_key(event) {
                 this.select_session(keyboard_session_id.clone(), cx);
@@ -140,7 +152,7 @@ fn session_row(
                     div()
                         .ml_2()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(session.messages.to_string()),
                 ),
         )
@@ -181,17 +193,17 @@ fn project_row(
         .rounded_lg()
         .bg(rgb(
             if selected_project_id == Some(project.project_id.as_str()) {
-                color::SURFACE_SELECTED
+                color::surface_selected()
             } else if project_hovered || menu_open {
-                color::SURFACE_HOVER
+                color::surface_hover()
             } else {
-                color::SIDEBAR
+                color::sidebar()
             },
         ))
         .role(gpui::Role::Button)
         .aria_label(format!("Open project {}", project.name))
         .tab_index(0)
-        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
         .on_hover({
             let project_id = project_id.clone();
             cx.listener(move |this, hovered: &bool, _, cx| {
@@ -212,7 +224,7 @@ fn project_row(
                         .flex_1()
                         .items_center()
                         .min_w(px(0.0))
-                        .child(icon_slot(Icon::Folder, color::TEXT_SECONDARY))
+                        .child(icon_slot(Icon::Folder, color::text_secondary()))
                         .child(
                             div()
                                 .ml_2()
@@ -233,7 +245,7 @@ fn project_row(
                             div()
                                 .mr_1()
                                 .text_size(px(layout::TYPE_METADATA))
-                                .text_color(rgb(color::TEXT_TERTIARY))
+                                .text_color(rgb(color::text_tertiary()))
                                 .child(project.task_count.to_string()),
                         )
                         .child(
@@ -245,16 +257,16 @@ fn project_row(
                                 .items_center()
                                 .justify_center()
                                 .rounded_md()
-                                .text_color(rgb(color::TEXT_SECONDARY))
+                                .text_color(rgb(color::text_secondary()))
                                 .role(gpui::Role::Button)
                                 .aria_label(format!("More actions for project {}", project.name))
                                 .tab_index(0)
                                 .child(if project_hovered || menu_open {
-                                    icon(Icon::More, color::TEXT_SECONDARY).into_any_element()
+                                    icon(Icon::More, color::text_secondary()).into_any_element()
                                 } else {
                                     div().into_any_element()
                                 })
-                                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                                .hover(|style| style.bg(rgb(color::surface_hover())))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.toggle_project_menu(menu_project_id.clone(), cx)
@@ -268,7 +280,7 @@ fn project_row(
                 .ml_6()
                 .min_w(px(0.0))
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .overflow_hidden()
                 .text_ellipsis()
                 .child(if project.roots.is_empty() {
@@ -302,7 +314,7 @@ fn project_row(
                 .py_1()
                 .rounded_md()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .role(gpui::Role::Button)
                 .aria_label(format!("Show more chats in {}", project.name))
                 .tab_index(0)
@@ -344,8 +356,8 @@ fn project_row(
             .w(px(196.0))
             .rounded_lg()
             .border_1()
-            .border_color(rgb(color::BORDER))
-            .bg(rgb(color::ELEVATED))
+            .border_color(rgb(color::border()))
+            .bg(rgb(color::elevated()))
             .shadow_lg()
             .p_1();
         let pin_id = pin_project_id.clone();
@@ -354,9 +366,9 @@ fn project_row(
         let remove_id = remove_project_id.clone();
         let archive_id = project.project_id.clone();
         let enabled_icon_color = if mutations_enabled {
-            color::TEXT_SECONDARY
+            color::text_secondary()
         } else {
-            color::TEXT_TERTIARY
+            color::text_tertiary()
         };
         let mut pin = div()
             .id("project-menu-pin")
@@ -368,7 +380,7 @@ fn project_row(
             .role(gpui::Role::MenuItem)
             .aria_label(edit_label)
             .tab_index(0)
-            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+            .hover(|style| style.bg(rgb(color::surface_hover())))
             .child(icon_slot(Icon::Pin, enabled_icon_color))
             .child(div().ml_2().child(edit_label));
         if mutations_enabled {
@@ -378,7 +390,7 @@ fn project_row(
             }));
         } else {
             pin = pin
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .aria_description("Project pinning requires the Rust writer");
         }
         let mut archive = div()
@@ -391,7 +403,7 @@ fn project_row(
             .role(gpui::Role::MenuItem)
             .aria_label("Archive chats")
             .tab_index(0)
-            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+            .hover(|style| style.bg(rgb(color::surface_hover())))
             .child(icon_slot(Icon::Archive, enabled_icon_color))
             .child(div().ml_2().child("Archive chats"));
         if mutations_enabled {
@@ -401,7 +413,7 @@ fn project_row(
             }));
         } else {
             archive = archive
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .aria_description("Chat archive requires the Rust writer");
         }
         menu = menu
@@ -417,8 +429,8 @@ fn project_row(
                     .role(gpui::Role::MenuItem)
                     .aria_label("Reveal project in Finder")
                     .tab_index(0)
-                    .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
-                    .child(icon_slot(Icon::Folder, color::TEXT_SECONDARY))
+                    .hover(|style| style.bg(rgb(color::surface_hover())))
+                    .child(icon_slot(Icon::Folder, color::text_secondary()))
                     .child(div().ml_2().child("Reveal in Finder"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -433,12 +445,12 @@ fn project_row(
                     .flex()
                     .items_center()
                     .rounded_md()
-                    .text_color(rgb(color::TEXT_TERTIARY))
+                    .text_color(rgb(color::text_tertiary()))
                     .role(gpui::Role::MenuItem)
                     .aria_label("Create permanent worktree")
                     .aria_description("Permanent worktrees are not available in this runtime")
                     .tab_index(0)
-                    .child(icon_slot(Icon::Worktree, color::TEXT_TERTIARY))
+                    .child(icon_slot(Icon::Worktree, color::text_tertiary()))
                     .child(div().ml_2().child("Create permanent worktree")),
             )
             .child(
@@ -452,8 +464,8 @@ fn project_row(
                     .role(gpui::Role::MenuItem)
                     .aria_label("Edit project")
                     .tab_index(0)
-                    .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
-                    .child(icon_slot(Icon::Gear, color::TEXT_SECONDARY))
+                    .hover(|style| style.bg(rgb(color::surface_hover())))
+                    .child(icon_slot(Icon::Gear, color::text_secondary()))
                     .child(div().ml_2().child("Edit project"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
@@ -473,7 +485,7 @@ fn project_row(
                 .role(gpui::Role::MenuItem)
                 .aria_label("Restore archived chats")
                 .tab_index(0)
-                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .hover(|style| style.bg(rgb(color::surface_hover())))
                 .child(icon_slot(Icon::Archive, enabled_icon_color))
                 .child(
                     div()
@@ -487,7 +499,7 @@ fn project_row(
                 }));
             } else {
                 restore = restore
-                    .text_color(rgb(color::TEXT_TERTIARY))
+                    .text_color(rgb(color::text_tertiary()))
                     .aria_description("Chat restore requires the Rust writer");
             }
             menu = menu.child(restore);
@@ -501,12 +513,12 @@ fn project_row(
                     .flex()
                     .items_center()
                     .rounded_md()
-                    .text_color(rgb(color::DANGER))
+                    .text_color(rgb(color::danger()))
                     .role(gpui::Role::MenuItem)
                     .aria_label("Remove project")
                     .tab_index(0)
-                    .hover(|style| style.bg(rgb(color::DANGER_MUTED)))
-                    .child(icon_slot(Icon::Close, color::DANGER))
+                    .hover(|style| style.bg(rgb(color::danger_muted())))
+                    .child(icon_slot(Icon::Close, color::danger()))
                     .child(div().ml_2().child("Remove project"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
@@ -530,8 +542,8 @@ fn project_row(
             .w(px(256.0))
             .rounded_xl()
             .border_1()
-            .border_color(rgb(color::BORDER))
-            .bg(rgb(color::ELEVATED))
+            .border_color(rgb(color::border()))
+            .bg(rgb(color::elevated()))
             .shadow_lg()
             .p_3()
             .child(
@@ -546,7 +558,7 @@ fn project_row(
                             .min_w(px(0.0))
                             .items_center()
                             .overflow_hidden()
-                            .child(icon_slot(Icon::Folder, color::TEXT_SECONDARY))
+                            .child(icon_slot(Icon::Folder, color::text_secondary()))
                             .child(
                                 div()
                                     .ml_2()
@@ -561,9 +573,9 @@ fn project_row(
                     .child(icon_slot(
                         Icon::Pin,
                         if project.pinned {
-                            color::ACCENT
+                            color::accent()
                         } else {
-                            color::TEXT_TERTIARY
+                            color::text_tertiary()
                         },
                     )),
             )
@@ -571,7 +583,7 @@ fn project_row(
                 div()
                     .mt_2()
                     .text_size(px(layout::TYPE_METADATA))
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .text_color(rgb(color::text_secondary()))
                     .flex()
                     .items_center()
                     .child(
@@ -581,7 +593,7 @@ fn project_row(
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(icon(Icon::MessageCircle, color::TEXT_SECONDARY)),
+                            .child(icon(Icon::MessageCircle, color::text_secondary())),
                     )
                     .child(div().ml_2().child(format!("{} tasks", project.task_count))),
             )
@@ -590,14 +602,14 @@ fn project_row(
                     .mt_2()
                     .pt_2()
                     .border_t_1()
-                    .border_color(rgb(color::BORDER))
+                    .border_color(rgb(color::border()))
                     .children(project.roots.iter().take(3).map(|root| {
                         div()
                             .mt_1()
                             .flex()
                             .items_center()
                             .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::TEXT_SECONDARY))
+                            .text_color(rgb(color::text_secondary()))
                             .child(
                                 div()
                                     .w(px(20.0))
@@ -611,7 +623,7 @@ fn project_row(
                                         } else {
                                             Icon::Folder
                                         },
-                                        color::TEXT_TERTIARY,
+                                        color::text_tertiary(),
                                     )),
                             )
                             .child(
@@ -628,7 +640,7 @@ fn project_row(
                         div()
                             .mt_1()
                             .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .text_color(rgb(color::text_tertiary()))
                             .child("No source folders")
                             .into_any_element()
                     } else {
@@ -640,7 +652,7 @@ fn project_row(
                     .mt_2()
                     .pt_2()
                     .border_t_1()
-                    .border_color(rgb(color::BORDER))
+                    .border_color(rgb(color::border()))
                     .child(
                         div()
                             .id("project-hover-edit")
@@ -650,8 +662,8 @@ fn project_row(
                             .role(gpui::Role::Button)
                             .aria_label("Edit project")
                             .tab_index(0)
-                            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
-                            .child(icon_slot(Icon::Gear, color::TEXT_SECONDARY))
+                            .hover(|style| style.bg(rgb(color::surface_hover())))
+                            .child(icon_slot(Icon::Gear, color::text_secondary()))
                             .child(div().ml_2().child("Edit project"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
@@ -679,7 +691,7 @@ fn projects_heading(
         .items_center()
         .justify_between()
         .text_size(px(layout::TYPE_METADATA))
-        .text_color(rgb(color::TEXT_TERTIARY))
+        .text_color(rgb(color::text_tertiary()))
         .child("Projects");
     let mut add = div()
         .id("create-project")
@@ -692,13 +704,13 @@ fn projects_heading(
         .role(gpui::Role::Button)
         .aria_label("Create project")
         .tab_index(0)
-        .child(icon(Icon::Plus, color::TEXT_SECONDARY));
+        .child(icon(Icon::Plus, color::text_secondary()));
     if mutations_enabled {
         add = add.on_click(
             cx.listener(|this, _, window, cx| this.open_project_dialog(None, window, cx)),
         );
     } else {
-        add = add.text_color(rgb(color::TEXT_TERTIARY));
+        add = add.text_color(rgb(color::text_tertiary()));
     }
     heading = heading.child(add);
     heading
@@ -720,7 +732,7 @@ fn product_surface_row(
         .items_center()
         .rounded_lg()
         .text_size(px(layout::TYPE_CONTROL))
-        .text_color(rgb(color::TEXT_SECONDARY))
+        .text_color(rgb(color::text_secondary()))
         .role(gpui::Role::Button)
         .aria_label(label)
         .aria_description(format!(
@@ -730,14 +742,14 @@ fn product_surface_row(
         .child(
             div()
                 .w(px(22.0))
-                .text_color(rgb(color::TEXT_TERTIARY))
-                .child(icon(icon_kind, color::TEXT_TERTIARY)),
+                .text_color(rgb(color::text_tertiary()))
+                .child(icon(icon_kind, color::text_tertiary())),
         )
         .child(div().flex_1().child(label))
         .child(
             div()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .child(shortcut),
         )
         .on_click(cx.listener(move |this, _, _, cx| {
@@ -787,9 +799,9 @@ pub(crate) fn session_pane(
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .bg(rgb(color::SIDEBAR))
+                .bg(rgb(color::sidebar()))
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .child("No projects yet")
                 .child(div().mt_1().child(if mutations_enabled {
                     "Use + to add a project"
@@ -831,7 +843,7 @@ pub(crate) fn session_pane(
                 .py_1()
                 .rounded_md()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .role(gpui::Role::Button)
                 .aria_label("Show more chats")
                 .tab_index(0)
@@ -849,7 +861,7 @@ pub(crate) fn session_pane(
             div()
                 .mt_4()
                 .rounded_lg()
-                .bg(rgb(color::SURFACE))
+                .bg(rgb(color::surface()))
                 .p_3()
                 .child(
                     div()
@@ -860,7 +872,7 @@ pub(crate) fn session_pane(
                     div()
                         .mt_1()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(if mutations_enabled {
                             "Create a chat to start a conversation."
                         } else {
@@ -884,19 +896,19 @@ pub(crate) fn session_pane(
         .justify_between()
         .rounded_lg()
         .bg(rgb(if mutations_enabled {
-            color::SURFACE_HOVER
+            color::surface_hover()
         } else {
-            color::SIDEBAR
+            color::sidebar()
         }))
         .role(gpui::Role::Button)
         .aria_label("Create new chat")
         .aria_keyshortcuts("⌘N")
         .tab_index(0)
-        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
         .text_color(rgb(if mutations_enabled {
-            color::TEXT_PRIMARY
+            color::text_primary()
         } else {
-            color::TEXT_TERTIARY
+            color::text_tertiary()
         }))
         .child(
             div()
@@ -908,14 +920,14 @@ pub(crate) fn session_pane(
                         .w(px(20.0))
                         .flex()
                         .items_center()
-                        .child(icon(Icon::NewChat, color::TEXT_PRIMARY)),
+                        .child(icon(Icon::NewChat, color::text_primary())),
                 )
                 .child(div().ml_2().child("New chat")),
         )
         .child(
             div()
                 .text_size(px(crate::light_theme::typography::SHORTCUT))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .child("⌘N"),
         );
     if mutations_enabled {
@@ -957,15 +969,15 @@ pub(crate) fn session_pane(
         .w(px(320.0))
         .rounded_xl()
         .border_1()
-        .border_color(rgb(color::BORDER))
-        .bg(rgb(color::ELEVATED))
+        .border_color(rgb(color::border()))
+        .bg(rgb(color::elevated()))
         .shadow_lg()
         .p_3();
     if activity_items.is_empty() {
         activity_popup = activity_popup.child(
             div()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(activity_status.to_owned()),
         );
     } else {
@@ -975,21 +987,21 @@ pub(crate) fn session_pane(
                 .id(stable_element_id("activity-item", &item.activity_id))
                 .py_2()
                 .border_b_1()
-                .border_color(rgb(color::BORDER))
+                .border_color(rgb(color::border()))
                 .text_size(px(layout::TYPE_METADATA))
                 .child(
                     div()
                         .text_color(rgb(if item.unread {
-                            color::TEXT_PRIMARY
+                            color::text_primary()
                         } else {
-                            color::TEXT_SECONDARY
+                            color::text_secondary()
                         }))
                         .child(item.title.clone()),
                 )
                 .child(
                     div()
                         .mt_1()
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(item.detail.clone()),
                 );
             if let Some(session_id) = session_id {
@@ -1009,7 +1021,7 @@ pub(crate) fn session_pane(
                 div()
                     .id("activity-mark-read")
                     .mt_2()
-                    .text_color(rgb(color::ACCENT))
+                    .text_color(rgb(color::accent()))
                     .role(gpui::Role::Button)
                     .aria_label("Mark all activity as read")
                     .tab_index(0)
@@ -1033,8 +1045,8 @@ pub(crate) fn session_pane(
         .w(px(224.0))
         .rounded_xl()
         .border_1()
-        .border_color(rgb(color::BORDER))
-        .bg(rgb(color::ELEVATED))
+        .border_color(rgb(color::border()))
+        .bg(rgb(color::elevated()))
         .shadow_lg()
         .p_1()
         .child(
@@ -1045,7 +1057,7 @@ pub(crate) fn session_pane(
                 .flex()
                 .items_center()
                 .rounded_md()
-                .bg(rgb(color::SURFACE_SELECTED))
+                .bg(rgb(color::surface_selected()))
                 .role(gpui::Role::MenuItem)
                 .aria_label("Codinal mode")
                 .aria_description("Current workspace mode")
@@ -1055,7 +1067,7 @@ pub(crate) fn session_pane(
                         .w(px(20.0))
                         .flex()
                         .items_center()
-                        .child(icon(Icon::Check, color::ACCENT)),
+                        .child(icon(Icon::Check, color::accent())),
                 )
                 .child("Codinal"),
         )
@@ -1067,7 +1079,7 @@ pub(crate) fn session_pane(
                 .flex()
                 .items_center()
                 .rounded_md()
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .role(gpui::Role::MenuItem)
                 .aria_label("ChatGPT mode unavailable")
                 .aria_description("ChatGPT mode is not available in the current Rust runtime")
@@ -1148,7 +1160,7 @@ pub(crate) fn session_pane(
                                 .ml_1()
                                 .flex()
                                 .items_center()
-                                .child(icon(Icon::ChevronDown, color::TEXT_SECONDARY)),
+                                .child(icon(Icon::ChevronDown, color::text_secondary())),
                         )
                         .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                             if is_activation_key(event) {
@@ -1171,12 +1183,12 @@ pub(crate) fn session_pane(
                                 .justify_center()
                                 .rounded_md()
                                 .text_size(px(layout::TYPE_CONTROL))
-                                .text_color(rgb(color::TEXT_SECONDARY))
+                                .text_color(rgb(color::text_secondary()))
                                 .role(gpui::Role::Button)
                                 .aria_label("Search chats")
                                 .aria_description("Search chats by title, path, or session")
                                 .tab_index(0)
-                                .child(icon(Icon::Search, color::TEXT_SECONDARY))
+                                .child(icon(Icon::Search, color::text_secondary()))
                                 .on_click(search_click),
                         )
                         .child(
@@ -1190,7 +1202,7 @@ pub(crate) fn session_pane(
                                 .justify_center()
                                 .rounded_md()
                                 .text_size(px(layout::TYPE_CONTROL))
-                                .text_color(rgb(color::TEXT_SECONDARY))
+                                .text_color(rgb(color::text_secondary()))
                                 .role(gpui::Role::Button)
                                 .aria_label("Open activity")
                                 .aria_description(if unread == 0 {
@@ -1202,9 +1214,9 @@ pub(crate) fn session_pane(
                                 .child(icon(
                                     Icon::Bell,
                                     if unread == 0 {
-                                        color::TEXT_SECONDARY
+                                        color::text_secondary()
                                     } else {
-                                        color::ACCENT
+                                        color::accent()
                                     },
                                 ))
                                 .on_click(activity_click),

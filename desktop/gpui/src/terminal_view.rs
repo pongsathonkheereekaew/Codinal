@@ -38,8 +38,8 @@ pub(crate) fn terminal_pane(
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(color::SURFACE))
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .bg(rgb(color::surface()))
+                    .text_color(rgb(color::text_secondary()))
                     .child(format!(
                         "Terminal unavailable · {}",
                         disabled_reason_label(disabled_reason)
@@ -54,13 +54,13 @@ pub(crate) fn terminal_pane(
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(color::SURFACE))
+                        .bg(rgb(color::surface()))
                         .role(gpui::Role::Button)
                         .aria_label("Choose terminal workspace")
                         .tab_index(0)
                         .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                        .border_color(rgb(color::border()))
+                        .focus_visible(|style| style.border_color(rgb(color::accent())))
                         .child("Choose workspace")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.choose_workspace(cx);
@@ -72,13 +72,13 @@ pub(crate) fn terminal_pane(
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(color::SURFACE))
+                        .bg(rgb(color::surface()))
                         .role(gpui::Role::Button)
                         .aria_label("Open native terminal")
                         .tab_index(0)
                         .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                        .border_color(rgb(color::border()))
+                        .focus_visible(|style| style.border_color(rgb(color::accent())))
                         .child("Open terminal")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.open_terminal(cx);
@@ -93,13 +93,13 @@ pub(crate) fn terminal_pane(
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(color::SURFACE))
+                        .bg(rgb(color::surface()))
                         .role(gpui::Role::Button)
                         .aria_label("Send Control-C to terminal")
                         .tab_index(0)
                         .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                        .border_color(rgb(color::border()))
+                        .focus_visible(|style| style.border_color(rgb(color::accent())))
                         .child("Ctrl-C")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.send_terminal_interrupt(cx);
@@ -111,14 +111,14 @@ pub(crate) fn terminal_pane(
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(color::DANGER_MUTED))
-                        .text_color(rgb(color::DANGER))
+                        .bg(rgb(color::danger_muted()))
+                        .text_color(rgb(color::danger()))
                         .role(gpui::Role::Button)
                         .aria_label("Stop native terminal")
                         .tab_index(0)
                         .border_1()
-                        .border_color(rgb(color::DANGER_MUTED))
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                        .border_color(rgb(color::danger_muted()))
+                        .focus_visible(|style| style.border_color(rgb(color::accent())))
                         .child("Stop terminal")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.kill_terminal(cx);
@@ -149,8 +149,8 @@ pub(crate) fn terminal_pane(
         .flex()
         .flex_col()
         .overflow_hidden()
-        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
-        .bg(rgb(color::SIDEBAR))
+        .focus_visible(|style| style.border_color(rgb(color::accent())))
+        .bg(rgb(color::sidebar()))
         .p_3()
         .child(
             div()
@@ -175,7 +175,7 @@ pub(crate) fn terminal_pane(
             div()
                 .mt_1()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(format!("Workspace: {workspace}")),
         )
         .child(actions)
@@ -188,7 +188,7 @@ pub(crate) fn terminal_pane(
                 .overflow_y_scroll()
                 .font_family("SF Mono")
                 .text_size(px(crate::light_theme::typography::CODE))
-                .text_color(rgb(color::TEXT_PRIMARY))
+                .text_color(rgb(color::text_primary()))
                 .child(output.to_owned()),
         )
         .child(

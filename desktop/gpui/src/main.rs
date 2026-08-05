@@ -108,12 +108,13 @@ use light_theme::{color, layout};
 use navigation::session_pane;
 use session_projection::parse_session_event;
 use session_stream::{spawn_session_stream, SessionStreamUpdate, SessionStreamWorker};
-use settings_view::{provider_settings_pane, updater_pane};
+use settings_view::{appearance_pane, provider_settings_pane, updater_pane};
 use shell::header;
 use shell_layout::{
-    load_panel_preferences, resize_panel_preferences, resolve_shell, save_panel_preferences,
-    PanelPreferences, PanelResizeTarget, ShellRequest, WorkbenchPlacement, FILE_TREE_MAX_WIDTH,
-    FILE_TREE_MIN_WIDTH, NAVIGATION_MAX_WIDTH, NAVIGATION_MIN_WIDTH, WORKBENCH_MAX_WIDTH,
+    advance_seam, load_panel_preferences, resize_panel_preferences, resolve_shell,
+    save_panel_preferences, toggle_has_settled, PanelPreferences, PanelResizeTarget, SeamSlide,
+    ShellRequest, WorkbenchPlacement, FILE_TREE_MAX_WIDTH, FILE_TREE_MIN_WIDTH,
+    NAVIGATION_DEFAULT_WIDTH, NAVIGATION_MAX_WIDTH, NAVIGATION_MIN_WIDTH, WORKBENCH_MAX_WIDTH,
     WORKBENCH_MIN_WIDTH,
 };
 use side_panel::{FilePreview, ReviewSnapshot, SidePanelTool, WorkspaceSnapshot};
@@ -132,7 +133,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 #[cfg(target_os = "macos")]
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use ui_model::{UiAction, UiEffect, UiEvent, UiEventDisposition, UiState};
 use workbench::Readiness;
 use zeroize::Zeroizing;
@@ -360,6 +361,12 @@ pub(crate) fn terminal_should_handle_key(terminal_has_focus: bool, event: &KeyDo
     terminal_has_focus && terminal_should_capture_key(event)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsSection {
+    Provider,
+    Appearance,
+}
+
 pub(crate) struct WorkspacePrototype {
     _runtime: DesktopRuntime,
     client: Arc<ControlPlaneClient>,
@@ -479,12 +486,22 @@ pub(crate) struct WorkspacePrototype {
     composer_marked_selection: Range<usize>,
     input_target: InputTarget,
     navigation_open: bool,
+    navigation_slide: Option<SeamSlide>,
+    navigation_seam: f32,
+    navigation_toggled_at: Option<Instant>,
     panel_preferences: PanelPreferences,
     panel_preferences_path: PathBuf,
     panel_preferences_save_task: Option<Task<()>>,
     active_panel_resize: Option<PanelResizeTarget>,
     context_panel_open: bool,
+    settings_section: SettingsSection,
+    context_slide: Option<SeamSlide>,
+    context_seam: f32,
+    context_toggled_at: Option<Instant>,
     dock: DockState,
+    dock_slide: Option<SeamSlide>,
+    dock_seam: f32,
+    dock_toggled_at: Option<Instant>,
     review_snapshot: Option<ReviewSnapshot>,
     review_status: String,
     review_generation: u64,
@@ -962,11 +979,31 @@ impl WorkspacePrototype {
     }
 
     pub(crate) fn toggle_context_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        if !toggle_has_settled(self.context_toggled_at.map(|at| now.duration_since(at))) {
+            return;
+        }
+        self.context_toggled_at = Some(now);
         self.context_panel_open = !self.context_panel_open;
         if !self.context_panel_open {
             self.context_panel_trigger_focus.focus(window, cx);
         }
+        self.begin_context_slide(cx);
         cx.notify();
+    }
+
+    fn settled_context_seam(&self) -> f32 {
+        if self.context_panel_open { 1.0 } else { 0.0 }
+    }
+
+    fn begin_context_slide(&mut self, cx: &mut Context<Self>) {
+        let to = self.settled_context_seam();
+        self.context_slide = (!cx.reduce_motion())
+            .then(|| SeamSlide::begin(self.context_seam, to))
+            .flatten();
+        if self.context_slide.is_none() {
+            self.context_seam = to;
+        }
     }
 
     pub(crate) fn toggle_open_in_menu(&mut self, cx: &mut Context<Self>) {
@@ -1395,6 +1432,8 @@ impl WorkspacePrototype {
         let _ = self.session_event_task.take();
         let _ = self.session_event_worker.take();
         self.dock.dispatch(DockAction::SelectSession(None));
+        self.dock_slide = None;
+        self.dock_seam = 0.0;
         self.selected_session_id = None;
         self.selected_project_id = None;
         self.side_chat_parent_id = None;
@@ -2574,9 +2613,40 @@ impl WorkspacePrototype {
     }
 
     pub(crate) fn toggle_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        if !toggle_has_settled(self.navigation_toggled_at.map(|at| now.duration_since(at))) {
+            return;
+        }
+        self.navigation_toggled_at = Some(now);
         self.navigation_open = !self.navigation_open;
+        self.begin_navigation_slide(cx);
         self.shell_focus.focus(window, cx);
         cx.notify();
+    }
+
+    fn settled_navigation_seam(&self) -> f32 {
+        if self.navigation_open {
+            self.panel_preferences.navigation_width
+        } else {
+            0.0
+        }
+    }
+
+    fn begin_navigation_slide(&mut self, cx: &mut Context<Self>) {
+        let to = self.settled_navigation_seam();
+        // When opening from fully closed, start the seam at the collapsed
+        // header width so the header strip doesn't pop in at 228px.
+        let from = if to > 0.0 && self.navigation_seam == 0.0 {
+            shell::COLLAPSED_NAVIGATION_WIDTH
+        } else {
+            self.navigation_seam
+        };
+        self.navigation_slide = (!cx.reduce_motion())
+            .then(|| SeamSlide::begin(from, to))
+            .flatten();
+        if self.navigation_slide.is_none() {
+            self.navigation_seam = to;
+        }
     }
 
     fn resize_navigation(
@@ -2694,6 +2764,11 @@ impl WorkspacePrototype {
     }
 
     pub(crate) fn toggle_side_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        if !toggle_has_settled(self.dock_toggled_at.map(|at| now.duration_since(at))) {
+            return;
+        }
+        self.dock_toggled_at = Some(now);
         let closing = self.dock.open();
         self.dock.dispatch(DockAction::Toggle);
         if self.dock.open() && self.dock.open_tabs().is_empty() {
@@ -2703,7 +2778,26 @@ impl WorkspacePrototype {
             self.input_target = InputTarget::Composer;
             self.side_panel_trigger_focus.focus(window, cx);
         }
+        self.begin_dock_slide(cx);
         cx.notify();
+    }
+
+    fn settled_dock_seam(&self) -> f32 {
+        if self.dock.open() {
+            self.panel_preferences.workbench_width
+        } else {
+            0.0
+        }
+    }
+
+    fn begin_dock_slide(&mut self, cx: &mut Context<Self>) {
+        let to = self.settled_dock_seam();
+        self.dock_slide = (!cx.reduce_motion())
+            .then(|| SeamSlide::begin(self.dock_seam, to))
+            .flatten();
+        if self.dock_slide.is_none() {
+            self.dock_seam = to;
+        }
     }
 
     pub(crate) fn toggle_tool_picker(&mut self, cx: &mut Context<Self>) {
@@ -2725,6 +2819,7 @@ impl WorkspacePrototype {
         if self.dock.active().is_none() {
             self.side_panel_trigger_focus.focus(window, cx);
         }
+        self.begin_dock_slide(cx);
         cx.notify();
     }
 
@@ -2837,6 +2932,7 @@ impl WorkspacePrototype {
         if focus_handoff {
             self.side_panel_trigger_focus.focus(window, cx);
         }
+        self.begin_dock_slide(cx);
         match tool {
             SidePanelTool::Review => self.refresh_review(cx),
             SidePanelTool::Terminal => cx.notify(),
@@ -3191,6 +3287,12 @@ impl WorkspacePrototype {
         self.session_action_status.clear();
         self.dock
             .dispatch(DockAction::SelectSession(Some(session_id.clone())));
+        self.dock_slide = None;
+        self.dock_seam = if self.dock.open() {
+            self.panel_preferences.workbench_width
+        } else {
+            0.0
+        };
         self.selected_session_id = Some(session_id.clone());
         self.selected_project_id = selected_session.project_id.clone();
         self.side_chat_parent_id = if selected_session.origin.as_deref() == Some("side_chat") {
@@ -5012,10 +5114,17 @@ fn navigation_resize_handle(cx: &mut Context<WorkspacePrototype>) -> impl IntoEl
             .w(px(layout::RESIZE_HIT_WIDTH))
             .cursor_col_resize()
             .block_mouse_except_scroll()
+            .hover(|style| {
+                style
+                    .bg(rgb(color::accent()).opacity(0.08))
+                    .w(px(2.0))
+                    .right(px(-1.0))
+            })
+            .active(|style| style.bg(rgb(color::accent()).opacity(0.15)))
             .role(gpui::Role::Button)
             .aria_label("Resize navigation sidebar")
             .tab_index(0)
-            .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+            .focus_visible(|style| style.bg(rgb(color::accent_muted())))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 match event.keystroke.key.as_str() {
                     "left" => this.adjust_panel_width(PanelResizeTarget::Navigation, -1.0, cx),
@@ -5046,10 +5155,17 @@ fn workbench_resize_handle(cx: &mut Context<WorkspacePrototype>) -> impl IntoEle
             .w(px(layout::RESIZE_HIT_WIDTH))
             .cursor_col_resize()
             .block_mouse_except_scroll()
+            .hover(|style| {
+                style
+                    .bg(rgb(color::accent()).opacity(0.08))
+                    .w(px(2.0))
+                    .left(px(-1.0))
+            })
+            .active(|style| style.bg(rgb(color::accent()).opacity(0.15)))
             .role(gpui::Role::Button)
             .aria_label("Resize workspace workbench")
             .tab_index(0)
-            .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+            .focus_visible(|style| style.bg(rgb(color::accent_muted())))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 match event.keystroke.key.as_str() {
                     "left" => this.adjust_panel_width(PanelResizeTarget::Workbench, 1.0, cx),
@@ -5076,7 +5192,7 @@ pub(crate) fn file_tree_resize_handle(cx: &mut Context<WorkspacePrototype>) -> i
         .h_full()
         .w(px(1.0))
         .flex_shrink_0()
-        .bg(rgb(color::BORDER))
+        .bg(rgb(color::border()))
         .child(deferred(
             div()
                 .id("file-tree-resize-hit")
@@ -5090,7 +5206,7 @@ pub(crate) fn file_tree_resize_handle(cx: &mut Context<WorkspacePrototype>) -> i
                 .role(gpui::Role::Button)
                 .aria_label("Resize workspace file tree")
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                     match event.keystroke.key.as_str() {
                         "left" => this.adjust_panel_width(PanelResizeTarget::FileTree, 1.0, cx),
@@ -5131,9 +5247,9 @@ fn session_rename_dialog(
         title.to_owned()
     };
     let title_color = if title.is_empty() {
-        color::TEXT_TERTIARY
+        color::text_tertiary()
     } else {
-        color::TEXT_PRIMARY
+        color::text_primary()
     };
     let input = div()
         .id("session-rename-input")
@@ -5143,8 +5259,8 @@ fn session_rename_dialog(
         .items_center()
         .rounded_lg()
         .border_1()
-        .border_color(rgb(color::ACCENT))
-        .bg(rgb(color::CANVAS))
+        .border_color(rgb(color::accent()))
+        .bg(rgb(color::canvas()))
         .role(gpui::Role::TextInput)
         .aria_label("Chat name")
         .tab_index(0)
@@ -5194,8 +5310,8 @@ fn session_rename_dialog(
                 .w(px(420.0))
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_4()
                 .child(
@@ -5212,9 +5328,9 @@ fn session_rename_dialog(
                         .text_size(px(layout::TYPE_METADATA))
                         .text_color(rgb(
                             if status.contains("failed") || status.contains("required") {
-                                color::DANGER
+                                color::danger()
                             } else {
-                                color::TEXT_SECONDARY
+                                color::text_secondary()
                             },
                         ))
                         .child(status.to_owned()),
@@ -5246,14 +5362,14 @@ fn session_rename_dialog(
                                 .py_2()
                                 .rounded_lg()
                                 .bg(rgb(if saving {
-                                    color::SURFACE_SELECTED
+                                    color::surface_selected()
                                 } else {
-                                    color::TEXT_PRIMARY
+                                    color::text_primary()
                                 }))
                                 .text_color(rgb(if saving {
-                                    color::TEXT_TERTIARY
+                                    color::text_tertiary()
                                 } else {
-                                    color::CANVAS
+                                    color::canvas()
                                 }))
                                 .role(gpui::Role::Button)
                                 .aria_label("Save chat name")
@@ -5299,8 +5415,8 @@ fn session_delete_dialog(
                 .w(px(420.0))
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_4()
                 .child(
@@ -5339,14 +5455,14 @@ fn session_delete_dialog(
                                 .py_2()
                                 .rounded_lg()
                                 .bg(rgb(if deleting {
-                                    color::SURFACE_SELECTED
+                                    color::surface_selected()
                                 } else {
-                                    color::DANGER
+                                    color::danger()
                                 }))
                                 .text_color(rgb(if deleting {
-                                    color::TEXT_TERTIARY
+                                    color::text_tertiary()
                                 } else {
-                                    color::CANVAS
+                                    color::canvas()
                                 }))
                                 .role(gpui::Role::Button)
                                 .aria_label("Delete chat")
@@ -5404,8 +5520,8 @@ fn project_remove_dialog(
                 .w(px(420.0))
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_4()
                 .child(
@@ -5449,14 +5565,14 @@ fn project_remove_dialog(
                                 .py_2()
                                 .rounded_lg()
                                 .bg(rgb(if removing {
-                                    color::SURFACE_SELECTED
+                                    color::surface_selected()
                                 } else {
-                                    color::DANGER
+                                    color::danger()
                                 }))
                                 .text_color(rgb(if removing {
-                                    color::TEXT_TERTIARY
+                                    color::text_tertiary()
                                 } else {
-                                    color::CANVAS
+                                    color::canvas()
                                 }))
                                 .role(gpui::Role::Button)
                                 .aria_label("Remove project")
@@ -5511,8 +5627,8 @@ fn project_archive_dialog(
                 .w(px(420.0))
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_4()
                 .child(
@@ -5556,14 +5672,14 @@ fn project_archive_dialog(
                                 .py_2()
                                 .rounded_lg()
                                 .bg(rgb(if archiving {
-                                    color::SURFACE_SELECTED
+                                    color::surface_selected()
                                 } else {
-                                    color::TEXT_PRIMARY
+                                    color::text_primary()
                                 }))
                                 .text_color(rgb(if archiving {
-                                    color::TEXT_TERTIARY
+                                    color::text_tertiary()
                                 } else {
-                                    color::CANVAS
+                                    color::canvas()
                                 }))
                                 .role(gpui::Role::Button)
                                 .aria_label("Archive project chats")
@@ -5616,14 +5732,14 @@ fn project_dialog(
         roots.to_owned()
     };
     let name_color = if name.is_empty() {
-        color::TEXT_TERTIARY
+        color::text_tertiary()
     } else {
-        color::TEXT_PRIMARY
+        color::text_primary()
     };
     let roots_color = if roots.is_empty() {
-        color::TEXT_TERTIARY
+        color::text_tertiary()
     } else {
-        color::TEXT_PRIMARY
+        color::text_primary()
     };
     let name_input = div()
         .id("project-name-input")
@@ -5633,8 +5749,8 @@ fn project_dialog(
         .items_center()
         .rounded_lg()
         .border_1()
-        .border_color(rgb(color::ACCENT))
-        .bg(rgb(color::CANVAS))
+        .border_color(rgb(color::accent()))
+        .bg(rgb(color::canvas()))
         .role(gpui::Role::TextInput)
         .aria_label("Project name")
         .tab_index(0)
@@ -5674,8 +5790,8 @@ fn project_dialog(
         .items_start()
         .rounded_lg()
         .border_1()
-        .border_color(rgb(color::BORDER))
-        .bg(rgb(color::CANVAS))
+        .border_color(rgb(color::border()))
+        .bg(rgb(color::canvas()))
         .role(gpui::Role::TextInput)
         .aria_label("Project source folders")
         .tab_index(0)
@@ -5729,9 +5845,9 @@ fn project_dialog(
                 .rounded_md()
                 .text_size(px(layout::TYPE_METADATA))
                 .text_color(rgb(if is_primary {
-                    color::ACCENT
+                    color::accent()
                 } else {
-                    color::TEXT_TERTIARY
+                    color::text_tertiary()
                 }))
                 .role(gpui::Role::Button)
                 .aria_label(if is_primary {
@@ -5760,14 +5876,14 @@ fn project_dialog(
                     .justify_between()
                     .rounded_lg()
                     .border_1()
-                    .border_color(rgb(color::BORDER))
-                    .bg(rgb(color::CANVAS))
+                    .border_color(rgb(color::border()))
+                    .bg(rgb(color::canvas()))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .min_w(px(0.0))
-                            .child(icon(Icon::Folder, color::TEXT_SECONDARY))
+                            .child(icon(Icon::Folder, color::text_secondary()))
                             .child(
                                 div()
                                     .ml_2()
@@ -5786,11 +5902,11 @@ fn project_dialog(
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_color(rgb(color::TEXT_TERTIARY))
+                                .text_color(rgb(color::text_tertiary()))
                                 .role(gpui::Role::Button)
                                 .aria_label(format!("Remove source folder {root}"))
                                 .tab_index(0)
-                                .child(icon(Icon::Close, color::TEXT_TERTIARY))
+                                .child(icon(Icon::Close, color::text_tertiary()))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.remove_project_root(remove_root.clone(), cx);
                                 })),
@@ -5809,9 +5925,9 @@ fn project_dialog(
             .px_3()
             .py_2()
             .rounded_lg()
-            .bg(rgb(color::DANGER_MUTED))
+            .bg(rgb(color::danger_muted()))
             .text_size(px(layout::TYPE_CONTROL))
-            .text_color(rgb(color::DANGER))
+            .text_color(rgb(color::danger()))
             .role(gpui::Role::Button)
             .aria_label("Remove project")
             .tab_index(0)
@@ -5844,8 +5960,8 @@ fn project_dialog(
                 .w(px(520.0))
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_4()
                 .child(
@@ -5875,7 +5991,7 @@ fn project_dialog(
                                 .role(gpui::Role::Button)
                                 .aria_label("Close project dialog")
                                 .tab_index(0)
-                                .child(icon(Icon::Close, color::TEXT_SECONDARY))
+                                .child(icon(Icon::Close, color::text_secondary()))
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.close_project_dialog(cx)),
                                 ),
@@ -5897,12 +6013,12 @@ fn project_dialog(
                         .px_3()
                         .py_2()
                         .rounded_lg()
-                        .bg(rgb(color::SURFACE))
+                        .bg(rgb(color::surface()))
                         .text_size(px(layout::TYPE_CONTROL))
                         .role(gpui::Role::Button)
                         .aria_label("Add project source folder")
                         .tab_index(0)
-                        .child(icon(Icon::AddFolder, color::TEXT_SECONDARY))
+                        .child(icon(Icon::AddFolder, color::text_secondary()))
                         .child(div().ml_2().child("Add folder"))
                         .on_click(cx.listener(|this, _, _, cx| this.add_project_folder(cx))),
                 )
@@ -5910,7 +6026,7 @@ fn project_dialog(
                     div()
                         .mt_2()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(
                             "Add folders Codinal can read and edit; one absolute path per line.",
                         ),
@@ -5921,11 +6037,11 @@ fn project_dialog(
                         .min_h(px(18.0))
                         .text_size(px(layout::TYPE_METADATA))
                         .text_color(rgb(if status.is_empty() {
-                            color::TEXT_TERTIARY
+                            color::text_tertiary()
                         } else if status.contains("failed") {
-                            color::DANGER
+                            color::danger()
                         } else {
-                            color::TEXT_SECONDARY
+                            color::text_secondary()
                         }))
                         .child(status.to_owned()),
                 )
@@ -5960,14 +6076,14 @@ fn project_dialog(
                                 .py_2()
                                 .rounded_lg()
                                 .bg(rgb(if saving {
-                                    color::SURFACE_SELECTED
+                                    color::surface_selected()
                                 } else {
-                                    color::TEXT_PRIMARY
+                                    color::text_primary()
                                 }))
                                 .text_color(rgb(if saving {
-                                    color::TEXT_TERTIARY
+                                    color::text_tertiary()
                                 } else {
-                                    color::CANVAS
+                                    color::canvas()
                                 }))
                                 .text_size(px(layout::TYPE_CONTROL))
                                 .role(gpui::Role::Button)
@@ -6002,9 +6118,9 @@ fn search_palette(
         query.to_owned()
     };
     let query_color = if query.is_empty() {
-        color::TEXT_TERTIARY
+        color::text_tertiary()
     } else {
-        color::TEXT_PRIMARY
+        color::text_primary()
     };
     let first_result = results.first().map(|session| session.session_id.clone());
     let search_input = div()
@@ -6015,8 +6131,8 @@ fn search_palette(
         .items_center()
         .rounded_lg()
         .border_1()
-        .border_color(rgb(color::ACCENT))
-        .bg(rgb(color::CANVAS))
+        .border_color(rgb(color::accent()))
+        .bg(rgb(color::canvas()))
         .role(gpui::Role::TextInput)
         .aria_label("Search chats")
         .aria_keyshortcuts("⌘F")
@@ -6035,8 +6151,8 @@ fn search_palette(
         .child(
             div()
                 .mr_2()
-                .text_color(rgb(color::TEXT_SECONDARY))
-                .child(icon(Icon::Search, color::TEXT_SECONDARY)),
+                .text_color(rgb(color::text_secondary()))
+                .child(icon(Icon::Search, color::text_secondary())),
         )
         .child(
             div()
@@ -6078,7 +6194,7 @@ fn search_palette(
                 .role(gpui::Role::Button)
                 .aria_label(format!("Open chat {}", session.title))
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                     if is_activation_key(event) {
                         this.select_search_result(keyboard_session_id.clone(), window, cx);
@@ -6103,7 +6219,7 @@ fn search_palette(
                             div()
                                 .ml_2()
                                 .text_size(px(layout::TYPE_METADATA))
-                                .text_color(rgb(color::TEXT_TERTIARY))
+                                .text_color(rgb(color::text_tertiary()))
                                 .child(format!("{} messages", session.messages)),
                         ),
                 )
@@ -6111,7 +6227,7 @@ fn search_palette(
                     div()
                         .mt_1()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .overflow_hidden()
                         .text_ellipsis()
                         .child(session.workspace.clone()),
@@ -6137,8 +6253,8 @@ fn search_palette(
                 .w(px(560.0))
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_3()
                 .child(
@@ -6153,7 +6269,7 @@ fn search_palette(
                         .child(
                             div()
                                 .text_size(px(layout::TYPE_METADATA))
-                                .text_color(rgb(color::TEXT_TERTIARY))
+                                .text_color(rgb(color::text_tertiary()))
                                 .child("Esc to close"),
                         ),
                 )
@@ -6164,7 +6280,7 @@ fn search_palette(
                         .mt_2()
                         .px_1()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(status.to_owned()),
                 ),
         )
@@ -6174,17 +6290,51 @@ fn search_palette(
 impl Render for WorkspacePrototype {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let has_pending_approval = self.ui.has_pending_approval();
-        let show_context = context_panel_should_show(self.context_panel_open, has_pending_approval);
+        let show_context =
+            context_panel_should_show(self.context_panel_open, has_pending_approval);
+
+        // Advance panel seam animations.
+        let now = Instant::now();
+        let nav_settled = self.settled_navigation_seam();
+        let navigation_seam = advance_seam(&mut self.navigation_slide, nav_settled, now, window);
+        let dock_settled = self.settled_dock_seam();
+        let dock_seam = advance_seam(&mut self.dock_slide, dock_settled, now, window);
+        let ctx_settled = self.settled_context_seam();
+        let context_seam = advance_seam(&mut self.context_slide, ctx_settled, now, window);
+
+        // A panel that is sliding shut still needs the layout to allocate space
+        // so the seam can animate across it.
+        let nav_layout_open = self.navigation_open || self.navigation_slide.is_some();
+        let dock_layout_open = self.dock.open() || self.dock_slide.is_some();
+        // Context panel: keep visible during close animation. Layout reserves
+        // space so the panel fades at full width rather than collapsing to 0.
+        let context_visible = show_context || self.context_slide.is_some();
+        let context_layout_open = context_visible;
+
         let resolved_shell = resolve_shell(
             self.panel_preferences,
             ShellRequest {
                 viewport_width: window.viewport_size().width.as_f32(),
-                navigation_open: self.navigation_open,
-                workbench_open: self.dock.open(),
-                context_open: show_context,
+                navigation_open: nav_layout_open,
+                workbench_open: dock_layout_open,
+                context_open: context_layout_open,
             },
         );
-        let navigation_visible = self.navigation_open;
+        // Override the resolved widths with the animated seams.
+        let animated_nav_width = if nav_layout_open && navigation_seam > 0.0 {
+            navigation_seam
+        } else {
+            resolved_shell.navigation_width
+        };
+        let animated_workbench_width = if dock_layout_open && dock_seam > 0.0 {
+            dock_seam
+        } else {
+            resolved_shell.workbench_width
+        };
+        // Context panel: use seam as opacity (0→1 for open, 1→0 for close).
+        let context_opacity = context_seam;
+
+        let navigation_visible = nav_layout_open;
         let session_status = if self.ui.session_stream_status.is_empty() {
             self.session_status.clone()
         } else {
@@ -6230,22 +6380,19 @@ impl Render for WorkspacePrototype {
             .as_ref()
             .map(|review| review.summary.as_str())
             .unwrap_or(self.review_status.as_str());
-        let show_side_tools = side_tools_should_show(self.dock.open(), has_pending_approval);
-        let context_reserve = if show_context {
-            resolved_shell.context_width + 32.0
-        } else {
-            0.0
-        };
+        let show_side_tools = side_tools_should_show(dock_layout_open, has_pending_approval);
+        // Context panel is absolute-positioned; it overlays, never pushes layout.
+        let context_reserve = 0.0;
         let left_sidebar: gpui::AnyElement = if navigation_visible {
             div()
                 .id("session-sidebar")
                 .relative()
-                .w(px(resolved_shell.navigation_width))
-                .min_w(px(resolved_shell.navigation_width))
+                .w(px(animated_nav_width))
+                .min_w(px(animated_nav_width))
                 .h_full()
                 .flex()
                 .flex_col()
-                .bg(rgb(color::SIDEBAR))
+                .bg(rgb(color::sidebar()))
                 .child(session_pane(
                     &self.sessions,
                     &self.projects,
@@ -6260,7 +6407,7 @@ impl Render for WorkspacePrototype {
                         .unwrap_or("runtime_read_only"),
                     &self.expanded_project_ids,
                     self.chats_expanded,
-                    resolved_shell.navigation_width,
+                    animated_nav_width,
                     self.mode_menu_open,
                     self.activity_open,
                     &self.activity_items,
@@ -6275,13 +6422,25 @@ impl Render for WorkspacePrototype {
                         .items_center()
                         .justify_between()
                         .border_t_1()
-                        .border_color(rgb(color::BORDER))
+                        .border_color(rgb(color::border()))
                         .text_size(px(crate::light_theme::typography::METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(
                             div()
+                                .id("sidebar-profile")
                                 .flex()
                                 .items_center()
+                                .role(gpui::Role::Button)
+                                .aria_label("Open settings")
+                                .tab_index(0)
+                                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+                                .hover(|style| style.bg(rgb(color::surface_hover())))
+                                .active(|style| style.opacity(0.8))
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.context_panel_open = true;
+                                    this.settings_section = SettingsSection::Appearance;
+                                    cx.notify();
+                                }))
                                 .child(
                                     div()
                                         .mr_2()
@@ -6291,7 +6450,7 @@ impl Render for WorkspacePrototype {
                                         .items_center()
                                         .justify_center()
                                         .rounded_full()
-                                        .bg(rgb(color::SURFACE_SELECTED))
+                                        .bg(rgb(color::surface_selected()))
                                         .text_size(px(layout::TYPE_METADATA))
                                         .child("PK"),
                                 )
@@ -6341,7 +6500,7 @@ impl Render for WorkspacePrototype {
             .mr(px(context_reserve))
             .flex()
             .flex_col()
-            .bg(rgb(color::CANVAS))
+            .bg(rgb(color::canvas()))
             .child(conversation_pane(
                 &self.ui.workbench.blocks,
                 self.ui.streaming_assistant.as_ref(),
@@ -6380,7 +6539,7 @@ impl Render for WorkspacePrototype {
                 cx.entity(),
                 cx,
             ));
-        let context_panel: gpui::AnyElement = if show_context {
+        let context_panel: gpui::AnyElement = if context_visible {
             div()
                 .id("context-panel")
                 .absolute()
@@ -6391,11 +6550,12 @@ impl Render for WorkspacePrototype {
                 .flex()
                 .flex_col()
                 .overflow_y_scroll()
-                .bg(rgb(color::ELEVATED))
+                .bg(rgb(color::elevated()))
                 .border_1()
-                .border_color(rgb(color::BORDER))
+                .border_color(rgb(color::border()))
                 .rounded_2xl()
                 .shadow_lg()
+                .opacity(context_opacity)
                 .child(
                     div()
                         .px_4()
@@ -6413,7 +6573,7 @@ impl Render for WorkspacePrototype {
                         .child(
                             div()
                                 .text_size(px(crate::light_theme::typography::SHORTCUT))
-                                .text_color(rgb(color::TEXT_TERTIARY))
+                                .text_color(rgb(color::text_tertiary()))
                                 .child("⌘K"),
                         ),
                 )
@@ -6475,6 +6635,7 @@ impl Render for WorkspacePrototype {
                         .unwrap_or("runtime_read_only"),
                     cx,
                 ))
+                .child(appearance_pane(cx))
                 .into_any_element()
         } else {
             div().into_any_element()
@@ -6521,8 +6682,8 @@ impl Render for WorkspacePrototype {
                 WorkbenchPlacement::Docked => div()
                     .id("workspace-workbench-dock")
                     .relative()
-                    .w(px(resolved_shell.workbench_width))
-                    .min_w(px(resolved_shell.workbench_width))
+                    .w(px(animated_workbench_width))
+                    .min_w(px(animated_workbench_width))
                     .h_full()
                     .child(panel)
                     .child(workbench_resize_handle(cx))
@@ -6533,11 +6694,11 @@ impl Render for WorkspacePrototype {
                     .top(px(8.0))
                     .right(px(8.0))
                     .bottom(px(8.0))
-                    .w(px(resolved_shell.workbench_width))
+                    .w(px(animated_workbench_width))
                     .overflow_hidden()
                     .rounded_xl()
                     .border_1()
-                    .border_color(rgb(color::BORDER))
+                    .border_color(rgb(color::border()))
                     .shadow_lg()
                     .occlude()
                     .child(panel)
@@ -6555,7 +6716,7 @@ impl Render for WorkspacePrototype {
             .flex_row()
             .flex_1()
             .min_h(px(0.0))
-            .bg(rgb(color::CANVAS))
+            .bg(rgb(color::canvas()))
             .on_drag_move::<DraggedWorkbenchDivider>(
                 cx.listener(|this, event, _window, cx| this.resize_workbench(event, cx)),
             )
@@ -6580,7 +6741,7 @@ impl Render for WorkspacePrototype {
             .h_full()
             .flex()
             .flex_col()
-            .bg(rgb(color::CANVAS))
+            .bg(rgb(color::canvas()))
             .child(workspace);
         let session_rename_dialog = session_rename_dialog(
             self.session_rename_open,
@@ -6673,13 +6834,16 @@ impl Render for WorkspacePrototype {
             &self.source_preview_status,
             cx,
         );
+        // Header strip stays at collapsed width (228px) when sidebar is closed,
+        // while the sidebar panel itself animates to 0.
+        let header_nav_width = animated_nav_width.max(shell::COLLAPSED_NAVIGATION_WIDTH);
         let top_chrome = header(
             &selected_title,
             selected_session,
             &self.projects,
             &self.runtime_capabilities,
             navigation_visible,
-            resolved_shell.navigation_width,
+            header_nav_width,
             show_context,
             show_side_tools,
             self.open_in_menu_open,
@@ -6714,9 +6878,9 @@ impl Render for WorkspacePrototype {
             .relative()
             .flex()
             .flex_col()
-            .bg(rgb(color::CANVAS))
+            .bg(rgb(color::canvas()))
             .text_size(px(layout::TYPE_BODY))
-            .text_color(rgb(color::TEXT_PRIMARY))
+            .text_color(rgb(color::text_primary()))
             .track_focus(&self.shell_focus)
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 this.resize_active_panel(event, window, cx)
@@ -7011,6 +7175,7 @@ fn prepare_native_terminal() -> io::Result<(Arc<PtyRegistry>, String, String)> {
 }
 
 fn main() -> io::Result<()> {
+    light_theme::set_dark_mode(false);
     #[cfg(target_os = "macos")]
     if run_restart_helper_if_requested().map_err(io::Error::other)? {
         return Ok(());
@@ -7284,12 +7449,22 @@ fn main() -> io::Result<()> {
                         composer_marked_selection: 0..0,
                         input_target: InputTarget::Composer,
                         navigation_open: true,
+                        navigation_slide: None,
+                        navigation_seam: NAVIGATION_DEFAULT_WIDTH,
+                        navigation_toggled_at: None,
                         panel_preferences,
                         panel_preferences_path,
                         panel_preferences_save_task: None,
                         active_panel_resize: None,
                         context_panel_open: initial_context_panel_open,
+                        settings_section: SettingsSection::Provider,
+                        context_slide: None,
+                        context_seam: if initial_context_panel_open { 1.0 } else { 0.0 },
+                        context_toggled_at: None,
                         dock: initial_dock,
+                        dock_slide: None,
+                        dock_seam: 0.0,
+                        dock_toggled_at: None,
                         review_snapshot: None,
                         review_status: "Select Review to inspect the workspace".to_owned(),
                         review_generation: 0,

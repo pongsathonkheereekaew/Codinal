@@ -9,15 +9,15 @@ use std::time::{Duration, Instant};
 pub const NAVIGATION_DEFAULT_WIDTH: f32 = 308.0;
 pub const NAVIGATION_MIN_WIDTH: f32 = 220.0;
 pub const NAVIGATION_MAX_WIDTH: f32 = 420.0;
-pub const WORKBENCH_DEFAULT_WIDTH: f32 = 424.0;
-pub const WORKBENCH_MIN_WIDTH: f32 = 320.0;
-pub const WORKBENCH_MAX_WIDTH: f32 = 720.0;
-pub const FILE_TREE_DEFAULT_WIDTH: f32 = 140.0;
-pub const FILE_TREE_MIN_WIDTH: f32 = 140.0;
+pub const WORKBENCH_DEFAULT_WIDTH: f32 = 320.0;
+pub const WORKBENCH_MIN_WIDTH: f32 = 300.0;
+pub const WORKBENCH_MAX_WIDTH: f32 = 640.0;
+pub const FILE_TREE_DEFAULT_WIDTH: f32 = 120.0;
+pub const FILE_TREE_MIN_WIDTH: f32 = 120.0;
 pub const FILE_TREE_MAX_WIDTH: f32 = 320.0;
 pub const FILE_DETAIL_MIN_WIDTH: f32 = 160.0;
 pub const CONVERSATION_MIN_WIDTH: f32 = 560.0;
-pub const CONTEXT_CARD_RESERVED_WIDTH: f32 = 368.0;
+pub const CONTEXT_CARD_RESERVED_WIDTH: f32 = 320.0;
 pub const CONTEXT_PANEL_INSET: f32 = 16.0;
 pub const OVERLAY_HORIZONTAL_MARGIN: f32 = 16.0;
 
@@ -26,15 +26,36 @@ pub const SEAM_SLIDE: Duration = Duration::from_millis(260);
 
 /// Evaluates whether a panel toggle shortcut should be honored.
 /// Drops key-repeat toggles arriving mid-slide (<260ms) to prevent stutter.
-#[allow(dead_code)]
 pub fn toggle_has_settled(since_last: Option<Duration>) -> bool {
     since_last.is_none_or(|since| since >= SEAM_SLIDE)
+}
+
+/// Advances one panel's seam by a frame and returns the width to paint,
+/// clearing the slide once it lands. An unfinished slide asks for the next
+/// frame itself: the seam is a plain animated width rather than a GPUI
+/// animation element, so nothing else will tick the window.
+pub fn advance_seam(
+    slide: &mut Option<SeamSlide>,
+    settled: f32,
+    now: Instant,
+    window: &gpui::Window,
+) -> f32 {
+    match *slide {
+        Some(active) if !active.is_done(now) => {
+            window.request_animation_frame();
+            active.seam_at(settled, now)
+        }
+        Some(_) => {
+            *slide = None;
+            settled
+        }
+        None => settled,
+    }
 }
 
 /// A critically damped spring step response (0.0..=1.0).
 /// Front-loads travel (>80% distance at t=0.5) and lands softly with zero overshoot,
 /// preventing flex-sibling layout oscillation stutter.
-#[allow(dead_code)]
 pub fn spring_settle(delta: f32) -> f32 {
     const STIFFNESS: f32 = 7.0;
     let remaining = |t: f32| (1.0 + STIFFNESS * t) * (-STIFFNESS * t).exp();
@@ -42,7 +63,6 @@ pub fn spring_settle(delta: f32) -> f32 {
 }
 
 /// Motion tracker for panel open/close seam slide.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug)]
 pub struct SeamSlide {
     from: f32,
@@ -365,9 +385,9 @@ mod tests {
         );
 
         assert_eq!(shell.navigation_width, 308.0);
-        assert_eq!(shell.workbench_width, 424.0);
-        assert_eq!(shell.conversation_width, 978.0);
-        assert_eq!(shell.file_tree_width, 140.0);
+        assert_eq!(shell.workbench_width, 320.0);
+        assert_eq!(shell.conversation_width, 1_082.0);
+        assert_eq!(shell.file_tree_width, 120.0);
     }
 
     #[test]
@@ -390,7 +410,7 @@ mod tests {
         assert_eq!(shell.conversation_width, 1_132.0);
         assert_eq!(
             shell.context_width,
-            super::CONTEXT_CARD_RESERVED_WIDTH - 32.0
+            288.0
         );
     }
 
@@ -494,7 +514,7 @@ mod tests {
         let docked = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_292.0,
+                viewport_width: 1_188.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: false,
@@ -509,7 +529,7 @@ mod tests {
         let overlaid = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_291.0,
+                viewport_width: 1_187.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: false,
@@ -524,7 +544,7 @@ mod tests {
         let context_docked = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_660.0,
+                viewport_width: 1_508.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: true,
@@ -542,7 +562,7 @@ mod tests {
         let context_overlaid = resolve_shell(
             PanelPreferences::default(),
             ShellRequest {
-                viewport_width: 1_659.0,
+                viewport_width: 1_507.0,
                 navigation_open: true,
                 workbench_open: true,
                 context_open: true,

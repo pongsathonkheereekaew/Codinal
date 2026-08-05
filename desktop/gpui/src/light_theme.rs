@@ -1,29 +1,44 @@
-//! Codinal's native light-theme tokens.
+//! Codinal's native theme tokens — light and dark.
 //!
-//! Colors stay as packed RGB values so the presentation layer can pass them
-//! directly to GPUI without introducing another styling or runtime layer.
+//! Colors are accessed via functions (`color::canvas()`) that read a global
+//! dark-mode flag. Call `set_dark_mode(true)` at startup or on toggle.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static DARK_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_dark_mode(dark: bool) {
+    DARK_MODE.store(dark, Ordering::Release);
+}
+
+pub fn is_dark_mode() -> bool {
+    DARK_MODE.load(Ordering::Acquire)
+}
+
+#[allow(non_snake_case)]
 pub mod color {
-    pub const CANVAS: u32 = 0xffffff;
-    pub const SIDEBAR: u32 = 0xfafafa;
-    pub const SURFACE: u32 = 0xf2f2f2;
-    pub const SURFACE_HOVER: u32 = 0xededed;
-    pub const SURFACE_SELECTED: u32 = 0xe7e7e7;
-    pub const ELEVATED: u32 = 0xffffff;
-    pub const BORDER: u32 = 0xe6e6e6;
-    pub const BORDER_STRONG: u32 = 0xd8d8d8;
+    use super::is_dark_mode;
 
-    pub const TEXT_PRIMARY: u32 = 0x202124;
-    pub const TEXT_SECONDARY: u32 = 0x686868;
-    pub const TEXT_TERTIARY: u32 = 0x989898;
+    pub fn canvas() -> u32 { if is_dark_mode() { 0x181818 } else { 0xffffff } }
+    pub fn sidebar() -> u32 { if is_dark_mode() { 0x282828 } else { 0xfafafa } }
+    pub fn surface() -> u32 { if is_dark_mode() { 0x2d2d2d } else { 0xf2f2f2 } }
+    pub fn surface_hover() -> u32 { if is_dark_mode() { 0x383838 } else { 0xededed } }
+    pub fn surface_selected() -> u32 { if is_dark_mode() { 0x333333 } else { 0xe7e7e7 } }
+    pub fn elevated() -> u32 { if is_dark_mode() { 0x2d2d2d } else { 0xffffff } }
+    pub fn border() -> u32 { if is_dark_mode() { 0x333333 } else { 0xe6e6e6 } }
+    pub fn border_strong() -> u32 { if is_dark_mode() { 0x444444 } else { 0xd8d8d8 } }
 
-    pub const ACCENT: u32 = 0x1677ff;
-    pub const ACCENT_MUTED: u32 = 0xeaf2ff;
-    pub const PURPLE: u32 = 0x8b5cf6;
-    pub const SUCCESS: u32 = 0x1b8f45;
-    pub const WARNING: u32 = 0xa85600;
-    pub const DANGER: u32 = 0xc9362b;
-    pub const DANGER_MUTED: u32 = 0xfeeceb;
+    pub fn text_primary() -> u32 { if is_dark_mode() { 0xd4d4d4 } else { 0x202124 } }
+    pub fn text_secondary() -> u32 { if is_dark_mode() { 0x999999 } else { 0x686868 } }
+    pub fn text_tertiary() -> u32 { if is_dark_mode() { 0x707070 } else { 0x989898 } }
+
+    pub fn accent() -> u32 { if is_dark_mode() { 0x509878 } else { 0x1677ff } }
+    pub fn accent_muted() -> u32 { if is_dark_mode() { 0x1a3328 } else { 0xeaf2ff } }
+    pub fn purple() -> u32 { 0x8b5cf6 }
+    pub fn success() -> u32 { if is_dark_mode() { 0x3fb950 } else { 0x1b8f45 } }
+    pub fn warning() -> u32 { if is_dark_mode() { 0xd29922 } else { 0xa85600 } }
+    pub fn danger() -> u32 { if is_dark_mode() { 0xf85149 } else { 0xc9362b } }
+    pub fn danger_muted() -> u32 { if is_dark_mode() { 0x3d1118 } else { 0xfeeceb } }
 }
 
 pub mod layout {
@@ -36,7 +51,7 @@ pub mod layout {
     pub const TOP_BAR_HEIGHT: f32 = 48.0;
     pub const CONTENT_MAX_WIDTH: f32 = 840.0;
     pub const MESSAGE_MAX_WIDTH: f32 = 620.0;
-    pub const CONTEXT_WIDTH: f32 = 336.0;
+    pub const CONTEXT_WIDTH: f32 = 288.0;
     pub const CONTEXT_MAX_HEIGHT: f32 = 640.0;
     pub const COMPOSER_HEIGHT: f32 = 126.0;
     pub const RESIZE_HIT_WIDTH: f32 = 8.0;
@@ -114,12 +129,12 @@ mod tests {
         assert_eq!(layout::TOP_BAR_HEIGHT, 48.0);
         assert_eq!(NAVIGATION_DEFAULT_WIDTH, 308.0);
         assert_eq!(layout::CONTENT_MAX_WIDTH, 840.0);
-        assert_eq!(layout::CONTEXT_WIDTH, 336.0);
+        assert_eq!(layout::CONTEXT_WIDTH, 288.0);
         assert_eq!(
             CONTEXT_CARD_RESERVED_WIDTH,
             layout::CONTEXT_WIDTH + CONTEXT_PANEL_INSET * 2.0
         );
-        assert_eq!(WORKBENCH_DEFAULT_WIDTH, 424.0);
+        assert_eq!(WORKBENCH_DEFAULT_WIDTH, 320.0);
         assert_eq!(layout::GOLDEN_VIEWPORT_WIDTH, 1_710.0);
         assert_eq!(layout::GOLDEN_VIEWPORT_HEIGHT, 1_112.0);
     }
@@ -135,16 +150,16 @@ mod tests {
 
     #[test]
     fn approved_light_palette_is_stable() {
-        assert_eq!(color::CANVAS, 0xffffff);
-        assert_eq!(color::SIDEBAR, 0xfafafa);
-        assert_eq!(color::SURFACE, 0xf2f2f2);
-        assert_eq!(color::BORDER, 0xe6e6e6);
-        assert_eq!(color::ACCENT, 0x1677ff);
+        assert_eq!(color::canvas(), 0xffffff);
+        assert_eq!(color::sidebar(), 0xfafafa);
+        assert_eq!(color::surface(), 0xf2f2f2);
+        assert_eq!(color::border(), 0xe6e6e6);
+        assert_eq!(color::accent(), 0x1677ff);
     }
 
     #[test]
     fn light_text_contrast_meets_accessibility_floor() {
-        assert!(contrast_ratio(color::TEXT_PRIMARY, color::CANVAS) >= 7.0);
-        assert!(contrast_ratio(color::TEXT_SECONDARY, color::CANVAS) >= 4.5);
+        assert!(contrast_ratio(color::text_primary(), color::canvas()) >= 7.0);
+        assert!(contrast_ratio(color::text_secondary(), color::canvas()) >= 4.5);
     }
 }

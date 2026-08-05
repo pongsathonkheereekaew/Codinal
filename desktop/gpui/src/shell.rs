@@ -14,7 +14,7 @@ use gpui::{
 // x=88 logical, so the header inset must be applied at exactly one layer.
 const NATIVE_TITLEBAR_LEADING_INSET: f32 = 88.0;
 const NAVIGATION_TRAILING_INSET: f32 = 8.0;
-const COLLAPSED_NAVIGATION_WIDTH: f32 = 228.0;
+pub(crate) const COLLAPSED_NAVIGATION_WIDTH: f32 = 228.0;
 const HEADER_CONTROL_SIZE: f32 = 28.0;
 const OPEN_IN_PRIMARY_WIDTH: f32 = 44.0;
 const OPEN_IN_ARROW_WIDTH: f32 = 24.0;
@@ -69,8 +69,8 @@ pub(crate) fn header(
         .w(px(236.0))
         .rounded_xl()
         .border_1()
-        .border_color(rgb(color::BORDER))
-        .bg(rgb(color::ELEVATED))
+        .border_color(rgb(color::border()))
+        .bg(rgb(color::elevated()))
         .shadow_lg()
         .p_1();
     if let Some(session) = selected_session {
@@ -85,6 +85,8 @@ pub(crate) fn header(
             .role(gpui::Role::MenuItem)
             .aria_label("Rename chat")
             .tab_index(0)
+            .hover(|style| style.bg(rgb(color::surface_hover())))
+            .active(|style| style.opacity(0.8))
             .child("Rename");
         if mutations_enabled {
             rename = rename.on_click(cx.listener(|this, _, window, cx| {
@@ -92,7 +94,7 @@ pub(crate) fn header(
             }));
         } else {
             rename = rename
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .aria_description(disabled_reason_label(&rename_disabled_reason));
         }
         session_menu = session_menu.child(rename);
@@ -113,6 +115,8 @@ pub(crate) fn header(
             .role(gpui::Role::MenuItem)
             .aria_label(pin_label)
             .tab_index(0)
+            .hover(|style| style.bg(rgb(color::surface_hover())))
+            .active(|style| style.opacity(0.8))
             .child(pin_label);
         if mutations_enabled {
             pin = pin.on_click(cx.listener(|this, _, _, cx| {
@@ -120,7 +124,7 @@ pub(crate) fn header(
             }));
         } else {
             pin = pin
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .aria_description(disabled_reason_label(&pin_disabled_reason));
         }
         session_menu = session_menu.child(pin);
@@ -131,7 +135,7 @@ pub(crate) fn header(
                     .mt_1()
                     .px_2()
                     .text_size(px(layout::TYPE_METADATA))
-                    .text_color(rgb(color::TEXT_TERTIARY))
+                    .text_color(rgb(color::text_tertiary()))
                     .child("Move to project"),
             );
             for project in projects.iter().take(12) {
@@ -152,7 +156,7 @@ pub(crate) fn header(
                         div()
                             .flex()
                             .items_center()
-                            .child(icon(Icon::Check, color::ACCENT))
+                            .child(icon(Icon::Check, color::accent()))
                             .child(div().ml_2().child(project_label))
                             .into_any_element()
                     } else {
@@ -163,7 +167,7 @@ pub(crate) fn header(
                         this.move_selected_session(Some(project_id.clone()), cx);
                     }));
                 } else {
-                    move_row = move_row.text_color(rgb(color::TEXT_TERTIARY));
+                    move_row = move_row.text_color(rgb(color::text_tertiary()));
                 }
                 session_menu = session_menu.child(move_row);
             }
@@ -188,7 +192,7 @@ pub(crate) fn header(
                 }));
             } else {
                 remove_project = remove_project
-                    .text_color(rgb(color::TEXT_TERTIARY))
+                    .text_color(rgb(color::text_tertiary()))
                     .aria_description(disabled_reason_label(&move_disabled_reason));
             }
             session_menu = session_menu.child(remove_project);
@@ -219,7 +223,7 @@ pub(crate) fn header(
             }));
         } else {
             archive = archive
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .aria_description(disabled_reason_label(&archive_disabled_reason));
         }
         session_menu = session_menu.child(archive);
@@ -242,13 +246,13 @@ pub(crate) fn header(
             }));
         } else {
             delete = delete
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .aria_description(disabled_reason_label(&delete_disabled_reason));
         }
         session_menu = session_menu.child(delete.text_color(rgb(if mutations_enabled {
-            color::DANGER
+            color::danger()
         } else {
-            color::TEXT_TERTIARY
+            color::text_tertiary()
         })));
     } else {
         session_menu = session_menu.child(
@@ -256,7 +260,7 @@ pub(crate) fn header(
                 .px_2()
                 .py_2()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .child("Select a chat to see actions"),
         );
     }
@@ -266,9 +270,9 @@ pub(crate) fn header(
         div().into_any_element()
     };
     let open_in_icon_color = if open_in_enabled {
-        color::TEXT_SECONDARY
+        color::text_secondary()
     } else {
-        color::TEXT_TERTIARY
+        color::text_tertiary()
     };
     let mut open_in_finder = div()
         .id("open-in-finder")
@@ -282,9 +286,9 @@ pub(crate) fn header(
         .aria_label("Open workspace in Finder")
         .tab_index(0)
         .text_color(rgb(if open_in_enabled {
-            color::TEXT_PRIMARY
+            color::text_primary()
         } else {
-            color::TEXT_TERTIARY
+            color::text_tertiary()
         }))
         .child(
             div()
@@ -304,14 +308,14 @@ pub(crate) fn header(
         .child(icon(
             Icon::Check,
             if open_in_enabled {
-                color::ACCENT
+                color::accent()
             } else {
-                color::TEXT_TERTIARY
+                color::text_tertiary()
             },
         ));
     if open_in_enabled {
         open_in_finder = open_in_finder
-            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+            .hover(|style| style.bg(rgb(color::surface_hover())))
             .on_click(cx.listener(|this, _, _, cx| {
                 cx.stop_propagation();
                 this.reveal_selected_workspace_in_finder(cx);
@@ -330,8 +334,8 @@ pub(crate) fn header(
                 .w(px(220.0))
                 .rounded_xl()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_1()
                 .child(open_in_finder)
@@ -343,7 +347,7 @@ pub(crate) fn header(
                         .flex()
                         .items_center()
                         .rounded_md()
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .role(gpui::Role::MenuItem)
                         .aria_label("Open workspace in Terminal")
                         .aria_description("External Terminal launching is not available")
@@ -355,7 +359,7 @@ pub(crate) fn header(
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(icon(Icon::Terminal, color::TEXT_TERTIARY)),
+                                .child(icon(Icon::Terminal, color::text_tertiary())),
                         )
                         .child(div().ml_2().child("Terminal")),
                 )
@@ -367,7 +371,7 @@ pub(crate) fn header(
                         .flex()
                         .items_center()
                         .rounded_md()
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .role(gpui::Role::MenuItem)
                         .aria_label("Open workspace in Ghostty")
                         .aria_description("External Ghostty launching is not available")
@@ -379,7 +383,7 @@ pub(crate) fn header(
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(icon(Icon::Terminal, color::TEXT_TERTIARY)),
+                                .child(icon(Icon::Terminal, color::text_tertiary())),
                         )
                         .child(div().ml_2().child("Ghostty")),
                 )
@@ -391,7 +395,7 @@ pub(crate) fn header(
                         .flex()
                         .items_center()
                         .rounded_md()
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .role(gpui::Role::MenuItem)
                         .aria_label("Open workspace in Xcode")
                         .aria_description("External Xcode launching is not available")
@@ -403,7 +407,7 @@ pub(crate) fn header(
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(icon(Icon::Hammer, color::TEXT_TERTIARY)),
+                                .child(icon(Icon::Hammer, color::text_tertiary())),
                         )
                         .child(div().ml_2().child("Xcode")),
                 )
@@ -423,7 +427,7 @@ pub(crate) fn header(
         .justify_center()
         .rounded_md()
         .text_size(px(layout::TYPE_CONTROL))
-        .text_color(rgb(color::TEXT_SECONDARY))
+        .text_color(rgb(color::text_secondary()))
         .role(gpui::Role::Button)
         .aria_label(if navigation_visible {
             "Hide navigation sidebar"
@@ -431,12 +435,13 @@ pub(crate) fn header(
             "Show navigation sidebar"
         })
         .tab_index(0)
-        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-        .child(icon(Icon::Navigation, color::TEXT_SECONDARY))
-        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+        .child(icon(Icon::Navigation, color::text_secondary()))
+        .hover(|style| style.bg(rgb(color::surface_hover())))
+        .active(|style| style.bg(rgb(color::surface_selected())).opacity(0.8))
         .on_click(cx.listener(|this, _, window, cx| this.toggle_navigation(window, cx)));
     if navigation_visible {
-        navigation_toggle = navigation_toggle.bg(rgb(color::SURFACE_SELECTED));
+        navigation_toggle = navigation_toggle.bg(rgb(color::surface_selected()));
     }
     let navigation_controls = div()
         .flex_shrink_0()
@@ -447,13 +452,14 @@ pub(crate) fn header(
         .h_full()
         .flex()
         .items_center()
+        .overflow_hidden()
         .pl(px(NATIVE_TITLEBAR_LEADING_INSET))
         .pr(px(NAVIGATION_TRAILING_INSET))
         .border_r_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         // The header strip sits over the sidebar, so it uses the sidebar
         // background instead of the conversation canvas.
-        .bg(rgb(color::SIDEBAR))
+        .bg(rgb(color::sidebar()))
         .child(navigation_toggle)
         .child(
             div()
@@ -464,12 +470,12 @@ pub(crate) fn header(
                 .items_center()
                 .justify_center()
                 .rounded_md()
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .role(gpui::Role::Button)
                 .aria_label("Go back")
                 .aria_description("Navigation history is not available in the native runtime")
                 .tab_index(0)
-                .child(icon(Icon::ArrowLeft, color::TEXT_TERTIARY)),
+                .child(icon(Icon::ArrowLeft, color::text_tertiary())),
         )
         .child(
             div()
@@ -481,12 +487,12 @@ pub(crate) fn header(
                 .items_center()
                 .justify_center()
                 .rounded_md()
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .role(gpui::Role::Button)
                 .aria_label("Go forward")
                 .aria_description("Navigation history is not available in the native runtime")
                 .tab_index(0)
-                .child(icon(Icon::ArrowRight, color::TEXT_TERTIARY)),
+                .child(icon(Icon::ArrowRight, color::text_tertiary())),
         );
     let mut open_in_primary = div()
         .id("open-in-primary")
@@ -509,7 +515,7 @@ pub(crate) fn header(
         })
         .tab_index(0)
         .text_color(rgb(open_in_icon_color))
-        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+        .hover(|style| style.bg(rgb(color::surface_hover())))
         .child(icon(Icon::ArrowSquareOut, open_in_icon_color));
     if open_in_enabled {
         open_in_primary = open_in_primary.on_click(cx.listener(|this, _, _, cx| {
@@ -523,9 +529,9 @@ pub(crate) fn header(
         .flex()
         .items_center()
         .rounded_md()
-        .bg(rgb(color::SURFACE))
+        .bg(rgb(color::surface()))
         .border_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         .child(open_in_menu)
         .child(open_in_primary)
         .child(
@@ -538,7 +544,7 @@ pub(crate) fn header(
                 .justify_center()
                 .rounded_r_lg()
                 .border_l_1()
-                .border_color(rgb(color::BORDER))
+                .border_color(rgb(color::border()))
                 .role(gpui::Role::Button)
                 .aria_label(if open_in_menu_open {
                     "Close open in menu"
@@ -546,9 +552,9 @@ pub(crate) fn header(
                     "Choose where to open the workspace"
                 })
                 .tab_index(0)
-                .text_color(rgb(color::TEXT_SECONDARY))
-                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
-                .child(icon(Icon::ChevronDown, color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
+                .hover(|style| style.bg(rgb(color::surface_hover())))
+                .child(icon(Icon::ChevronDown, color::text_secondary()))
                 .on_click(cx.listener(|this, _, _, cx| {
                     cx.stop_propagation();
                     this.toggle_open_in_menu(cx);
@@ -567,8 +573,8 @@ pub(crate) fn header(
         .child(
             div()
                 .mr_3()
-                .text_color(rgb(color::TEXT_SECONDARY))
-                .child(icon(Icon::Folder, color::TEXT_SECONDARY)),
+                .text_color(rgb(color::text_secondary()))
+                .child(icon(Icon::Folder, color::text_secondary())),
         )
         .child(
             div()
@@ -576,7 +582,7 @@ pub(crate) fn header(
                 .min_w(px(0.0))
                 .overflow_hidden()
                 .text_size(px(crate::light_theme::typography::HEADER_TITLE))
-                .text_color(rgb(color::TEXT_PRIMARY))
+                .text_color(rgb(color::text_primary()))
                 .text_ellipsis()
                 .child(title.to_owned()),
         )
@@ -592,7 +598,7 @@ pub(crate) fn header(
                 .items_center()
                 .justify_center()
                 .rounded_md()
-                .text_color(rgb(color::TEXT_TERTIARY))
+                .text_color(rgb(color::text_tertiary()))
                 .role(gpui::Role::Button)
                 .aria_label(if session_menu_open {
                     "Close chat actions"
@@ -600,8 +606,8 @@ pub(crate) fn header(
                     "Open chat actions"
                 })
                 .tab_index(0)
-                .child(icon(Icon::More, color::TEXT_TERTIARY))
-                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .child(icon(Icon::More, color::text_tertiary()))
+                .hover(|style| style.bg(rgb(color::surface_hover())))
                 .child(deferred(session_menu).with_priority(10))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.toggle_session_menu(cx);
@@ -617,7 +623,7 @@ pub(crate) fn header(
         .justify_center()
         .rounded_md()
         .text_size(px(layout::TYPE_CONTROL))
-        .text_color(rgb(color::TEXT_SECONDARY))
+        .text_color(rgb(color::text_secondary()))
         .role(gpui::Role::Button)
         .aria_label(if context_open {
             "Hide pinned environment summary"
@@ -630,12 +636,13 @@ pub(crate) fn header(
         ))
         .track_focus(context_focus)
         .tab_index(0)
-        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
-        .child(icon(Icon::Sliders, color::TEXT_SECONDARY))
+        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+        .hover(|style| style.bg(rgb(color::surface_hover())))
+        .active(|style| style.bg(rgb(color::surface_selected())).opacity(0.8))
+        .child(icon(Icon::Sliders, color::text_secondary()))
         .on_click(cx.listener(|this, _, window, cx| this.toggle_context_panel(window, cx)));
     if context_open {
-        context_toggle = context_toggle.bg(rgb(color::SURFACE_SELECTED));
+        context_toggle = context_toggle.bg(rgb(color::surface_selected()));
     }
     let mut tools_toggle = div()
         .id("tools-toggle")
@@ -646,7 +653,7 @@ pub(crate) fn header(
         .items_center()
         .justify_center()
         .rounded_md()
-        .text_color(rgb(color::TEXT_SECONDARY))
+        .text_color(rgb(color::text_secondary()))
         .role(gpui::Role::Button)
         .aria_label(if tools_open {
             "Hide workspace tools"
@@ -655,26 +662,26 @@ pub(crate) fn header(
         })
         .track_focus(tools_focus)
         .tab_index(0)
-        .focus_visible(|style| style.bg(rgb(color::SURFACE_HOVER)))
-        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
-        .child(icon(Icon::Workbench, color::TEXT_SECONDARY))
+        .focus_visible(|style| style.bg(rgb(color::surface_hover())))
+        .hover(|style| style.bg(rgb(color::surface_hover())))
+        .active(|style| style.bg(rgb(color::surface_selected())).opacity(0.8))
+        .child(icon(Icon::Workbench, color::text_secondary()))
         .on_click(cx.listener(|this, _, window, cx| this.toggle_side_panel(window, cx)));
     if tools_open {
-        tools_toggle = tools_toggle.bg(rgb(color::SURFACE_SELECTED));
+        tools_toggle = tools_toggle.bg(rgb(color::surface_selected()));
     }
     div()
         .h(px(layout::TOP_BAR_HEIGHT))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .justify_between()
         // The traffic-light clearance is applied once, inside the navigation
         // control strip above; the conversation and title areas start at the
         // sidebar edge.
         .pr(px(HEADER_RIGHT_INSET))
         .border_b_1()
-        .border_color(rgb(color::BORDER))
-        .bg(rgb(color::CANVAS))
+        .border_color(rgb(color::border()))
+        .bg(rgb(color::canvas()))
         .child(navigation_controls)
         .child(title_group)
         .child(

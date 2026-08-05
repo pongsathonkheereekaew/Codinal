@@ -80,10 +80,10 @@ impl StarterCategory {
 
     fn icon_color(self) -> u32 {
         match self {
-            Self::Explore => color::ACCENT,
-            Self::Build => color::PURPLE,
-            Self::Review => color::SUCCESS,
-            Self::Fix => color::DANGER,
+            Self::Explore => color::accent(),
+            Self::Build => color::purple(),
+            Self::Review => color::success(),
+            Self::Fix => color::danger(),
         }
     }
 }
@@ -133,7 +133,7 @@ pub(crate) fn conversation_pane(
                     div()
                         .max_w(px(layout::MESSAGE_MAX_WIDTH))
                         .rounded_2xl()
-                        .bg(rgb(color::SURFACE))
+                        .bg(rgb(color::surface()))
                         .px_4()
                         .py_3()
                         .text_size(px(crate::light_theme::typography::BODY))
@@ -149,7 +149,7 @@ pub(crate) fn conversation_pane(
                     div()
                         .mb_2()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(if block.streaming {
                             "Codinal · working"
                         } else {
@@ -159,7 +159,7 @@ pub(crate) fn conversation_pane(
                 .child(
                     div()
                         .text_size(px(crate::light_theme::typography::BODY))
-                        .text_color(rgb(color::TEXT_PRIMARY))
+                        .text_color(rgb(color::text_primary()))
                         .child(block.content.clone()),
                 )
                 .into_any_element()
@@ -170,20 +170,20 @@ pub(crate) fn conversation_pane(
                 .mb_5()
                 .rounded_lg()
                 .border_1()
-                .border_color(rgb(color::ACCENT))
-                .bg(rgb(color::ACCENT_MUTED))
+                .border_color(rgb(color::accent()))
+                .bg(rgb(color::accent_muted()))
                 .p_3()
                 .child(
                     div()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::ACCENT))
+                        .text_color(rgb(color::accent()))
                         .child("Terminal receipt"),
                 )
                 .child(
                     div()
                         .mt_2()
                         .text_size(px(crate::light_theme::typography::BODY))
-                        .text_color(rgb(color::TEXT_PRIMARY))
+                        .text_color(rgb(color::text_primary()))
                         .child(block.content.clone()),
                 )
                 .into_any_element()
@@ -194,13 +194,13 @@ pub(crate) fn conversation_pane(
                 .mb_5()
                 .rounded_lg()
                 .border_1()
-                .border_color(rgb(color::BORDER))
-                .bg(rgb(color::SIDEBAR))
+                .border_color(rgb(color::border()))
+                .bg(rgb(color::sidebar()))
                 .p_3()
                 .child(
                     div()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(role),
                 )
                 .child(
@@ -242,14 +242,14 @@ pub(crate) fn conversation_pane(
                         div()
                             .mt_2()
                             .text_size(px(crate::light_theme::typography::BODY))
-                            .text_color(rgb(color::TEXT_SECONDARY))
+                            .text_color(rgb(color::text_secondary()))
                             .child("Choose a chat from the sidebar to continue a conversation."),
                     )
                     .child(
                         div()
                             .mt_3()
                             .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::WARNING))
+                            .text_color(rgb(color::warning()))
                             .child(if mutations_enabled {
                                 if turns_enabled {
                                     "Click + New chat to start a conversation."
@@ -266,7 +266,7 @@ pub(crate) fn conversation_pane(
                         div()
                             .mt_2()
                             .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::TEXT_SECONDARY))
+                            .text_color(rgb(color::text_secondary()))
                             .child(format!(
                                 "Run unavailable · {}",
                                 disabled_reason_label(run_disabled_reason)
@@ -293,7 +293,7 @@ pub(crate) fn conversation_pane(
                 div()
                     .text_size(px(layout::TYPE_SECTION))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(color::TEXT_PRIMARY))
+                    .text_color(rgb(color::text_primary()))
                     .child(format!("What should we build in {starter_context}?")),
             );
         if let Some(category) = starter_category {
@@ -308,7 +308,7 @@ pub(crate) fn conversation_pane(
                         .flex()
                         .items_center()
                         .text_size(px(crate::light_theme::typography::BODY))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .role(gpui::Role::Button)
                         .aria_label(format!("Use suggestion {suggestion}"))
                         .tab_index(0)
@@ -324,7 +324,7 @@ pub(crate) fn conversation_pane(
                     div()
                         .mt_2()
                         .text_size(px(crate::light_theme::typography::BODY))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(format!(
                             "{} ideas to get started",
                             selected_category.title()
@@ -345,23 +345,23 @@ pub(crate) fn conversation_pane(
                         .justify_between()
                         .rounded_xl()
                         .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .bg(rgb(color::ELEVATED))
+                        .border_color(rgb(color::border()))
+                        .bg(rgb(color::elevated()))
                         .role(gpui::Role::Button)
                         .aria_label(format!("Start {}", category.title()))
                         .tab_index(0)
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                        .focus_visible(|style| style.border_color(rgb(color::accent())))
                         .child(
                             div()
                                 .text_size(px(layout::TYPE_SECTION))
-                                .text_color(rgb(color::ACCENT))
+                                .text_color(rgb(color::accent()))
                                 .child(icon(category.icon(), category.icon_color())),
                         )
                         .child(
                             div()
                                 .mt_4()
                                 .text_size(px(layout::TYPE_CONTROL))
-                                .text_color(rgb(color::TEXT_PRIMARY))
+                                .text_color(rgb(color::text_primary()))
                                 .child(category.title()),
                         )
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -393,7 +393,7 @@ pub(crate) fn conversation_pane(
         .min_w(px(220.0))
         .flex()
         .flex_col()
-        .bg(rgb(color::CANVAS))
+        .bg(rgb(color::canvas()))
         .child(
             div()
                 .w_full()
@@ -404,7 +404,7 @@ pub(crate) fn conversation_pane(
                 .child(
                     div()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(stream_status.to_owned()),
                 ),
         )

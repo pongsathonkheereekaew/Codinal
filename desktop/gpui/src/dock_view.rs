@@ -17,8 +17,8 @@ use crate::{
 };
 use codinal_control_plane_client::{ProjectRootSummary, SessionSummary};
 use gpui::{
-    div, px, rgb, Context, FocusHandle, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled,
+    deferred, div, px, rgb, Context, FocusHandle, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, StatefulInteractiveElement, Styled,
 };
 
 fn workspace_tool_menu(cx: &mut Context<WorkspacePrototype>) -> impl IntoElement {
@@ -29,8 +29,8 @@ fn workspace_tool_menu(cx: &mut Context<WorkspacePrototype>) -> impl IntoElement
         .flex_col()
         .rounded_xl()
         .border_1()
-        .border_color(rgb(color::BORDER))
-        .bg(rgb(color::ELEVATED))
+        .border_color(rgb(color::border()))
+        .bg(rgb(color::elevated()))
         .shadow_lg()
         .p_2()
         .occlude();
@@ -49,8 +49,9 @@ fn workspace_tool_menu(cx: &mut Context<WorkspacePrototype>) -> impl IntoElement
                 .aria_label(format!("Open {}", item.label))
                 .tab_index(0)
                 .text_size(px(layout::TYPE_CONTROL))
-                .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
-                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .focus_visible(|style| style.border_color(rgb(color::accent())))
+                .hover(|style| style.bg(rgb(color::surface_hover())))
+                .active(|style| style.opacity(0.8))
                 .child(
                     div()
                         .flex()
@@ -62,8 +63,8 @@ fn workspace_tool_menu(cx: &mut Context<WorkspacePrototype>) -> impl IntoElement
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .text_color(rgb(color::TEXT_SECONDARY))
-                                .child(icon(item.icon, color::TEXT_SECONDARY)),
+                                .text_color(rgb(color::text_secondary()))
+                                .child(icon(item.icon, color::text_secondary())),
                         )
                         .child(div().child(item.label)),
                 )
@@ -72,9 +73,9 @@ fn workspace_tool_menu(cx: &mut Context<WorkspacePrototype>) -> impl IntoElement
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(color::SURFACE))
+                        .bg(rgb(color::surface()))
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(item.shortcut),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -162,28 +163,29 @@ pub(crate) fn tools_panel(
         tabs = tabs.child(
             div()
                 .id(stable_element_id("workspace-tool-tab", item.label))
-                .h(px(34.0))
-                .px_3()
+                .h(px(28.0))
+                .px_2()
                 .flex()
                 .items_center()
                 .rounded_lg()
                 .bg(rgb(if selected {
-                    color::SURFACE_SELECTED
+                    color::surface_selected()
                 } else {
-                    color::CANVAS
+                    color::canvas()
                 }))
                 .text_size(px(layout::TYPE_CONTROL))
                 .text_color(rgb(if selected {
-                    color::TEXT_PRIMARY
+                    color::text_primary()
                 } else {
-                    color::TEXT_SECONDARY
+                    color::text_secondary()
                 }))
                 .role(gpui::Role::Tab)
                 .aria_label(format!("Show {}", item.label))
                 .aria_selected(selected)
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-                .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+                .hover(|style| style.bg(rgb(color::surface_hover())))
+                .active(|style| style.opacity(0.8))
                 .child(
                     div()
                         .w(px(20.0))
@@ -194,9 +196,9 @@ pub(crate) fn tools_panel(
                         .child(icon(
                             item.icon,
                             if selected {
-                                color::TEXT_PRIMARY
+                                color::text_primary()
                             } else {
-                                color::TEXT_SECONDARY
+                                color::text_secondary()
                             },
                         )),
                 )
@@ -208,13 +210,15 @@ pub(crate) fn tools_panel(
     }
 
     let floating_menu: gpui::AnyElement = if tool_picker_open && !open_tabs.is_empty() {
-        div()
-            .id("workspace-tool-picker")
-            .absolute()
-            .top(px(layout::TOP_BAR_HEIGHT - 4.0))
-            .right(px(8.0))
-            .child(workspace_tool_menu(cx))
-            .into_any_element()
+        deferred(
+            div()
+                .id("workspace-tool-picker")
+                .absolute()
+                .top(px(layout::TOP_BAR_HEIGHT - 4.0))
+                .right(px(8.0))
+                .child(workspace_tool_menu(cx)),
+        )
+        .into_any_element()
     } else {
         div().into_any_element()
     };
@@ -228,15 +232,15 @@ pub(crate) fn tools_panel(
                 .py_1()
                 .rounded_md()
                 .bg(rgb(if file_roots.len() > 1 {
-                    color::SURFACE
+                    color::surface()
                 } else {
-                    color::CANVAS
+                    color::canvas()
                 }))
                 .text_size(px(layout::TYPE_METADATA))
                 .text_color(rgb(if file_roots.len() > 1 {
-                    color::TEXT_PRIMARY
+                    color::text_primary()
                 } else {
-                    color::TEXT_TERTIARY
+                    color::text_tertiary()
                 }))
                 .overflow_hidden()
                 .text_ellipsis()
@@ -265,8 +269,8 @@ pub(crate) fn tools_panel(
                         .mt_1()
                         .rounded_lg()
                         .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .bg(rgb(color::ELEVATED))
+                        .border_color(rgb(color::border()))
+                        .bg(rgb(color::elevated()))
                         .shadow_lg()
                         .p_1();
                     for root in file_roots {
@@ -280,9 +284,9 @@ pub(crate) fn tools_panel(
                                 .rounded_md()
                                 .text_size(px(layout::TYPE_METADATA))
                                 .text_color(rgb(if selected {
-                                    color::ACCENT
+                                    color::accent()
                                 } else {
-                                    color::TEXT_PRIMARY
+                                    color::text_primary()
                                 }))
                                 .role(gpui::Role::MenuItem)
                                 .aria_label(format!("Review source root {}", root.path))
@@ -319,14 +323,14 @@ pub(crate) fn tools_panel(
                                 .px_2()
                                 .py_1()
                                 .rounded_md()
-                                .bg(rgb(color::SURFACE))
+                                .bg(rgb(color::surface()))
                                 .text_size(px(layout::TYPE_CONTROL))
                                 .role(gpui::Role::Button)
                                 .aria_label("Refresh workspace review")
                                 .tab_index(0)
                                 .border_1()
-                                .border_color(rgb(color::BORDER))
-                                .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                                .border_color(rgb(color::border()))
+                                .focus_visible(|style| style.border_color(rgb(color::accent())))
                                 .child("Refresh")
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh_review(cx))),
                         ),
@@ -335,7 +339,7 @@ pub(crate) fn tools_panel(
                     div()
                         .mt_2()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(review_status.to_owned()),
                 )
                 .child(scope_picker)
@@ -346,7 +350,7 @@ pub(crate) fn tools_panel(
                     .id("tool-review-files")
                     .mt_3()
                     .rounded_lg()
-                    .bg(rgb(color::SURFACE))
+                    .bg(rgb(color::surface()))
                     .p_3()
                     .text_size(px(layout::TYPE_METADATA));
                 files = files.child(
@@ -354,7 +358,7 @@ pub(crate) fn tools_panel(
                         .flex()
                         .items_center()
                         .justify_between()
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child("Changed files")
                         .child(format!("{} file(s)", changed_paths.len())),
                 );
@@ -362,7 +366,7 @@ pub(crate) fn tools_panel(
                     files = files.child(
                         div()
                             .mt_2()
-                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .text_color(rgb(color::text_tertiary()))
                             .child("No file changes in the selected workspace"),
                     );
                 } else {
@@ -372,8 +376,8 @@ pub(crate) fn tools_panel(
                                 .mt_2()
                                 .flex()
                                 .items_center()
-                                .text_color(rgb(color::TEXT_PRIMARY))
-                                .child(icon(Icon::File, color::TEXT_SECONDARY))
+                                .text_color(rgb(color::text_primary()))
+                                .child(icon(Icon::File, color::text_secondary()))
                                 .child(
                                     div()
                                         .ml_2()
@@ -395,8 +399,8 @@ pub(crate) fn tools_panel(
                             .px_2()
                             .py_1()
                             .rounded_md()
-                            .bg(rgb(color::CANVAS))
-                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .bg(rgb(color::canvas()))
+                            .text_color(rgb(color::text_tertiary()))
                             .role(gpui::Role::Button)
                             .aria_label("Stage all changes unavailable")
                             .aria_description("Review is read-only until a Git mutation route is available")
@@ -409,8 +413,8 @@ pub(crate) fn tools_panel(
                             .px_2()
                             .py_1()
                             .rounded_md()
-                            .bg(rgb(color::CANVAS))
-                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .bg(rgb(color::canvas()))
+                            .text_color(rgb(color::text_tertiary()))
                             .role(gpui::Role::Button)
                             .aria_label("Revert changes unavailable")
                             .aria_description("Review is read-only until a Git mutation route is available")
@@ -423,8 +427,8 @@ pub(crate) fn tools_panel(
                             .px_2()
                             .py_1()
                             .rounded_md()
-                            .bg(rgb(color::CANVAS))
-                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .bg(rgb(color::canvas()))
+                            .text_color(rgb(color::text_tertiary()))
                             .role(gpui::Role::Button)
                             .aria_label("Inline comments unavailable")
                             .aria_description("Inline review comments are not exposed by the current runtime")
@@ -436,7 +440,7 @@ pub(crate) fn tools_panel(
                         div()
                             .mt_3()
                             .rounded_lg()
-                            .bg(rgb(color::SURFACE))
+                            .bg(rgb(color::surface()))
                             .p_3()
                             .text_size(px(layout::TYPE_CONTROL))
                             .child(
@@ -450,9 +454,9 @@ pub(crate) fn tools_panel(
                                             .px_2()
                                             .py_1()
                                             .rounded_md()
-                                            .bg(rgb(color::ACCENT_MUTED))
+                                            .bg(rgb(color::accent_muted()))
                                             .text_size(px(layout::TYPE_METADATA))
-                                            .text_color(rgb(color::ACCENT))
+                                            .text_color(rgb(color::accent()))
                                             .child(review.branch.clone()),
                                     ),
                             )
@@ -460,14 +464,14 @@ pub(crate) fn tools_panel(
                                 div()
                                     .mt_2()
                                     .text_size(px(layout::TYPE_METADATA))
-                                    .text_color(rgb(color::TEXT_SECONDARY))
+                                    .text_color(rgb(color::text_secondary()))
                                     .child(review.summary.clone()),
                             )
                             .child(
                                 div()
                                     .mt_2()
                                     .text_size(px(layout::TYPE_METADATA))
-                                    .text_color(rgb(color::TEXT_TERTIARY))
+                                    .text_color(rgb(color::text_tertiary()))
                                     .child("Read-only Git projection"),
                             ),
                     )
@@ -482,11 +486,11 @@ pub(crate) fn tools_panel(
                             .flex_col()
                             .overflow_y_scroll()
                             .rounded_lg()
-                            .bg(rgb(color::SIDEBAR))
+                            .bg(rgb(color::sidebar()))
                             .p_3()
                             .font_family("SF Mono")
                             .text_size(px(crate::light_theme::typography::CODE))
-                            .text_color(rgb(color::TEXT_PRIMARY))
+                            .text_color(rgb(color::text_primary()))
                             .child(review.diff.clone()),
                     );
             }
@@ -527,24 +531,24 @@ pub(crate) fn tools_panel(
                     .items_center()
                     .rounded_lg()
                     .border_1()
-                    .border_color(rgb(color::BORDER))
-                    .bg(rgb(color::SURFACE))
+                    .border_color(rgb(color::border()))
+                    .bg(rgb(color::surface()))
                     .text_size(px(layout::TYPE_CONTROL))
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .text_color(rgb(color::text_secondary()))
                     .child(browser_url.to_owned()),
             )
             .child(
                 div()
                     .mt_2()
                     .text_size(px(layout::TYPE_METADATA))
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .text_color(rgb(color::text_secondary()))
                     .child("Embedded WebView is unavailable in the Rust + GPUI runtime."),
             )
             .child(
                 div()
                     .mt_2()
                     .rounded_lg()
-                    .bg(rgb(color::SURFACE))
+                    .bg(rgb(color::surface()))
                     .p_3()
                     .text_size(px(layout::TYPE_CONTROL))
                     .child("Navigation controls are disabled until a native browser bridge is available."),
@@ -553,7 +557,7 @@ pub(crate) fn tools_panel(
                 div()
                     .mt_2()
                     .text_size(px(layout::TYPE_METADATA))
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .text_color(rgb(color::text_secondary()))
                     .child(browser_status.to_owned()),
             )
             .child(
@@ -563,14 +567,14 @@ pub(crate) fn tools_panel(
                     .px_3()
                     .py_2()
                     .rounded_lg()
-                    .bg(rgb(color::SURFACE_SELECTED))
+                    .bg(rgb(color::surface_selected()))
                     .text_size(px(layout::TYPE_CONTROL))
                     .role(gpui::Role::Button)
                     .aria_label("Open browser URL")
                     .tab_index(0)
                     .border_1()
-                    .border_color(rgb(color::BORDER))
-                    .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                    .border_color(rgb(color::border()))
+                    .focus_visible(|style| style.border_color(rgb(color::accent())))
                     .child("Open in system browser…")
                     .on_click(cx.listener(|this, _, _, cx| this.show_browser_prompt(cx))),
             )
@@ -587,15 +591,15 @@ pub(crate) fn tools_panel(
                 .py_1()
                 .rounded_md()
                 .bg(rgb(if file_roots.len() > 1 {
-                    color::SURFACE
+                    color::surface()
                 } else {
-                    color::CANVAS
+                    color::canvas()
                 }))
                 .text_size(px(layout::TYPE_METADATA))
                 .text_color(rgb(if file_roots.len() > 1 {
-                    color::TEXT_PRIMARY
+                    color::text_primary()
                 } else {
-                    color::TEXT_TERTIARY
+                    color::text_tertiary()
                 }))
                 .overflow_hidden()
                 .text_ellipsis()
@@ -619,8 +623,8 @@ pub(crate) fn tools_panel(
                     .mt_1()
                     .rounded_lg()
                     .border_1()
-                    .border_color(rgb(color::BORDER))
-                    .bg(rgb(color::ELEVATED))
+                    .border_color(rgb(color::border()))
+                    .bg(rgb(color::elevated()))
                     .shadow_lg()
                     .p_1();
                 for root in file_roots.iter().cloned() {
@@ -658,7 +662,7 @@ pub(crate) fn tools_panel(
                 .flex()
                 .flex_col()
                 .overflow_hidden()
-                .bg(rgb(color::CANVAS))
+                .bg(rgb(color::canvas()))
                 .p_2()
                 .child(
                     div()
@@ -673,14 +677,14 @@ pub(crate) fn tools_panel(
                                 .px_2()
                                 .py_1()
                                 .rounded_md()
-                                .bg(rgb(color::SURFACE))
+                                .bg(rgb(color::surface()))
                                 .text_size(px(layout::TYPE_METADATA))
                                 .role(gpui::Role::Button)
                                 .aria_label("Refresh workspace files")
                                 .tab_index(0)
                                 .border_1()
-                                .border_color(rgb(color::BORDER))
-                                .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                                .border_color(rgb(color::border()))
+                                .focus_visible(|style| style.border_color(rgb(color::accent())))
                                 .child("Refresh")
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh_files(cx))),
                         ),
@@ -690,7 +694,7 @@ pub(crate) fn tools_panel(
                 .child(
                     div()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(files_status.to_owned()),
                 );
             if let Some(files) = files {
@@ -702,7 +706,7 @@ pub(crate) fn tools_panel(
                     .flex()
                     .flex_col()
                     .overflow_y_scroll()
-                    .bg(rgb(color::CANVAS));
+                    .bg(rgb(color::canvas()));
                 for entry in files.entries.iter().take(80) {
                     let selected = file_preview
                         .is_some_and(|preview| preview.relative_path == entry.relative_path);
@@ -715,20 +719,20 @@ pub(crate) fn tools_panel(
                         .py_1()
                         .rounded_md()
                         .bg(rgb(if selected {
-                            color::SURFACE_SELECTED
+                            color::surface_selected()
                         } else {
-                            color::CANVAS
+                            color::canvas()
                         }))
                         .text_size(px(layout::TYPE_CONTROL))
                         .text_color(rgb(if entry.is_directory {
-                            color::TEXT_PRIMARY
+                            color::text_primary()
                         } else {
-                            color::TEXT_SECONDARY
+                            color::text_secondary()
                         }))
                         .child(if entry.is_directory {
-                            icon(Icon::Folder, color::TEXT_PRIMARY).into_any_element()
+                            icon(Icon::Folder, color::text_primary()).into_any_element()
                         } else {
-                            icon(Icon::File, color::TEXT_SECONDARY).into_any_element()
+                            icon(Icon::File, color::text_secondary()).into_any_element()
                         })
                         .child(div().ml_2().child(entry.relative_path.clone()));
                     if !entry.is_directory {
@@ -737,7 +741,7 @@ pub(crate) fn tools_panel(
                             .role(gpui::Role::Button)
                             .aria_label(format!("Open {}", entry.relative_path))
                             .tab_index(0)
-                            .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                            .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_workspace_file(relative_path.clone(), cx);
                             }));
@@ -769,7 +773,7 @@ pub(crate) fn tools_panel(
                                     .px_2()
                                     .py_1()
                                     .rounded_md()
-                                    .bg(rgb(color::SURFACE))
+                                    .bg(rgb(color::surface()))
                                     .text_size(px(layout::TYPE_METADATA))
                                     .role(gpui::Role::Button)
                                     .aria_label("Reveal file in Finder")
@@ -784,7 +788,7 @@ pub(crate) fn tools_panel(
                         div()
                             .mt_1()
                             .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::TEXT_SECONDARY))
+                            .text_color(rgb(color::text_secondary()))
                             .child(file_preview_status.to_owned()),
                     )
                     .child(
@@ -806,7 +810,7 @@ pub(crate) fn tools_panel(
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .text_color(rgb(color::text_secondary()))
                     .child(
                         div()
                             .text_size(px(layout::TYPE_SECTION))
@@ -846,7 +850,7 @@ pub(crate) fn tools_panel(
                 side_chat_list = side_chat_list.child(
                     div()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(if side_chat_parent_id.is_some() {
                             "No side chats for this parent yet"
                         } else {
@@ -858,7 +862,7 @@ pub(crate) fn tools_panel(
                     div()
                         .mb_1()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child("Side chats"),
                 );
                 for session in side_chat_sessions {
@@ -872,14 +876,14 @@ pub(crate) fn tools_panel(
                             .py_2()
                             .rounded_lg()
                             .bg(rgb(if selected {
-                                color::SURFACE_SELECTED
+                                color::surface_selected()
                             } else {
-                                color::SURFACE
+                                color::surface()
                             }))
                             .role(gpui::Role::Button)
                             .aria_label(format!("Open side chat {}", session.title))
                             .tab_index(0)
-                            .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                            .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                             .child(
                                 div()
                                     .text_size(px(layout::TYPE_CONTROL))
@@ -891,7 +895,7 @@ pub(crate) fn tools_panel(
                                 div()
                                     .mt_1()
                                     .text_size(px(layout::TYPE_METADATA))
-                                    .text_color(rgb(color::TEXT_TERTIARY))
+                                    .text_color(rgb(color::text_tertiary()))
                                     .child(format!("{} message(s)", session.messages)),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -908,9 +912,9 @@ pub(crate) fn tools_panel(
                     .px_3()
                     .py_2()
                     .rounded_lg()
-                    .bg(rgb(color::CANVAS))
+                    .bg(rgb(color::canvas()))
                     .text_size(px(layout::TYPE_METADATA))
-                    .text_color(rgb(color::TEXT_SECONDARY))
+                    .text_color(rgb(color::text_secondary()))
                     .role(gpui::Role::Button)
                     .aria_label("Open parent chat")
                     .tab_index(0)
@@ -937,14 +941,14 @@ pub(crate) fn tools_panel(
                     div()
                         .mt_2()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_SECONDARY))
+                        .text_color(rgb(color::text_secondary()))
                         .child(side_chat_status.to_owned()),
                 )
                 .child(
                     div()
                         .mt_2()
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(format!("Parent: {parent}")),
                 )
                 .child(parent_action)
@@ -957,22 +961,22 @@ pub(crate) fn tools_panel(
                         .py_2()
                         .rounded_lg()
                         .bg(rgb(if side_chat_in_flight {
-                            color::SURFACE
+                            color::surface()
                         } else {
-                            color::SURFACE_SELECTED
+                            color::surface_selected()
                         }))
                         .text_size(px(layout::TYPE_CONTROL))
                         .text_color(rgb(if side_chat_in_flight {
-                            color::TEXT_TERTIARY
+                            color::text_tertiary()
                         } else {
-                            color::TEXT_PRIMARY
+                            color::text_primary()
                         }))
                         .role(gpui::Role::Button)
                         .aria_label("Create side chat")
                         .tab_index(0)
                         .border_1()
-                        .border_color(rgb(color::BORDER))
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                        .border_color(rgb(color::border()))
+                        .focus_visible(|style| style.border_color(rgb(color::accent())))
                         .child(if side_chat_in_flight {
                             "Creating side chat…"
                         } else {
@@ -1002,9 +1006,9 @@ pub(crate) fn tools_panel(
         .flex()
         .flex_col()
         .overflow_hidden()
-        .bg(rgb(color::ELEVATED))
+        .bg(rgb(color::elevated()))
         .border_l_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         .child(
             div()
                 .h(px(layout::TOP_BAR_HEIGHT))
@@ -1013,34 +1017,34 @@ pub(crate) fn tools_panel(
                 .flex()
                 .items_center()
                 .border_b_1()
-                .border_color(rgb(color::BORDER))
+                .border_color(rgb(color::border()))
                 .child(tabs)
                 .child(
                     div()
                         .id("workspace-tool-add")
                         .ml_1()
-                        .w(px(30.0))
-                        .h(px(30.0))
+                        .w(px(26.0))
+                        .h(px(26.0))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_lg()
-                        .text_size(px(layout::TYPE_SECTION))
+                        .rounded_md()
+                        .text_size(px(layout::TYPE_CONTROL))
                         .font_weight(FontWeight::SEMIBOLD)
                         .role(gpui::Role::Button)
                         .aria_label("Add workspace tool")
                         .tab_index(0)
-                        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-                        .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
-                        .child(icon(Icon::Plus, color::TEXT_SECONDARY))
+                        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+                        .hover(|style| style.bg(rgb(color::surface_hover())))
+                        .child(icon(Icon::Plus, color::text_secondary()))
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_tool_picker(cx))),
                 )
                 .child({
                     let mut close = div()
                         .id("workspace-tool-close-tab")
                         .ml_1()
-                        .w(px(28.0))
-                        .h(px(28.0))
+                        .w(px(26.0))
+                        .h(px(26.0))
                         .flex()
                         .items_center()
                         .justify_center()
@@ -1048,24 +1052,24 @@ pub(crate) fn tools_panel(
                         .role(gpui::Role::Button)
                         .aria_label("Close active workspace tool")
                         .tab_index(0)
-                        .focus_visible(|style| style.border_color(rgb(color::ACCENT)))
+                        .focus_visible(|style| style.border_color(rgb(color::accent())))
                         .child(icon(
                             Icon::Close,
                             if selected_tool.is_some() {
-                                color::TEXT_SECONDARY
+                                color::text_secondary()
                             } else {
-                                color::TEXT_TERTIARY
+                                color::text_tertiary()
                             },
                         ));
                     if selected_tool.is_some() {
                         close = close
-                            .hover(|style| style.bg(rgb(color::SURFACE_HOVER)))
+                            .hover(|style| style.bg(rgb(color::surface_hover())))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.close_active_side_panel_tab(window, cx)
                             }));
                     } else {
                         close = close
-                            .text_color(rgb(color::TEXT_TERTIARY))
+                            .text_color(rgb(color::text_tertiary()))
                             .aria_description("No workspace tool is open");
                     }
                     close

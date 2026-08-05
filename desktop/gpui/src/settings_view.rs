@@ -29,12 +29,12 @@ pub(crate) fn updater_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::SURFACE))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .bg(rgb(color::surface()))
+                .text_color(rgb(color::text_secondary()))
                 .role(gpui::Role::Button)
                 .aria_label("Check for updates")
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .child("Check for updates")
                 .on_click(cx.listener(|this, _, _, cx| this.check_for_update(cx))),
         );
@@ -46,12 +46,12 @@ pub(crate) fn updater_pane(
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(color::ACCENT_MUTED))
-                    .text_color(rgb(color::SUCCESS))
+                    .bg(rgb(color::accent_muted()))
+                    .text_color(rgb(color::success()))
                     .role(gpui::Role::Button)
                     .aria_label("Install signed update")
                     .tab_index(0)
-                    .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                    .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                     .child("Install signed update")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.show_update_install_prompt(window, cx);
@@ -68,12 +68,12 @@ pub(crate) fn updater_pane(
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(color::ACCENT_MUTED))
-                    .text_color(rgb(color::SUCCESS))
+                    .bg(rgb(color::accent_muted()))
+                    .text_color(rgb(color::success()))
                     .role(gpui::Role::Button)
                     .aria_label("Restart after signed update")
                     .tab_index(0)
-                    .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                    .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                     .child("Restart now")
                     .on_click(cx.listener(|this, _, _, cx| this.restart_after_update(cx))),
             );
@@ -84,12 +84,12 @@ pub(crate) fn updater_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::DANGER_MUTED))
-                .text_color(rgb(color::DANGER))
+                .bg(rgb(color::danger_muted()))
+                .text_color(rgb(color::danger()))
                 .role(gpui::Role::Button)
                 .aria_label("Restore previous signed version")
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::DANGER_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::danger_muted())))
                 .child("Restore previous version")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.show_update_rollback_prompt(window, cx);
@@ -102,7 +102,7 @@ pub(crate) fn updater_pane(
         .aria_label("Native signed updater")
         .aria_description(status.to_owned())
         .border_t_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         .p_3()
         .child(
             div()
@@ -113,7 +113,7 @@ pub(crate) fn updater_pane(
             div()
                 .mt_1()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(status.to_owned()),
         )
         .child(div().mt_2().child(actions))
@@ -136,7 +136,7 @@ pub(crate) fn provider_settings_pane(
         .max_h(px(300.0))
         .overflow_y_scroll()
         .border_t_1()
-        .border_color(rgb(color::BORDER))
+        .border_color(rgb(color::border()))
         .p_3()
         .child(
             div()
@@ -147,14 +147,14 @@ pub(crate) fn provider_settings_pane(
             div()
                 .mt_2()
                 .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(settings.to_owned()),
         );
     pane = pane.child(
         div()
             .mt_2()
             .text_size(px(layout::TYPE_METADATA))
-            .text_color(rgb(color::TEXT_SECONDARY))
+            .text_color(rgb(color::text_secondary()))
             .child(probe_status.to_owned()),
     );
     let mut edit_actions = div().flex().flex_row().flex_wrap();
@@ -167,12 +167,12 @@ pub(crate) fn provider_settings_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::ACCENT_MUTED))
-                .text_color(rgb(color::ACCENT))
+                .bg(rgb(color::accent_muted()))
+                .text_color(rgb(color::accent()))
                 .role(gpui::Role::Button)
                 .aria_label("Check provider capability")
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .child("Check provider capability")
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.probe_provider_capability(cx);
@@ -193,11 +193,11 @@ pub(crate) fn provider_settings_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::SURFACE))
+                .bg(rgb(color::surface()))
                 .role(gpui::Role::Button)
                 .aria_label(label.clone())
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.show_provider_edit_prompt(provider.clone(), cx);
@@ -218,11 +218,11 @@ pub(crate) fn provider_settings_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::SURFACE))
+                .bg(rgb(color::surface()))
                 .role(gpui::Role::Button)
                 .aria_label(label.clone())
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.show_custom_provider_edit_prompt(Some(provider.clone()), cx);
@@ -238,11 +238,11 @@ pub(crate) fn provider_settings_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::SURFACE))
+                .bg(rgb(color::surface()))
                 .role(gpui::Role::Button)
                 .aria_label("Add custom provider")
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .child("Add custom provider…")
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.show_custom_provider_edit_prompt(None, cx);
@@ -254,7 +254,7 @@ pub(crate) fn provider_settings_pane(
             div()
                 .mt_2()
                 .text_size(px(layout::TYPE_BODY))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .text_color(rgb(color::text_secondary()))
                 .child(format!(
                     "Provider changes unavailable · {}",
                     disabled_reason_label(disabled_reason)
@@ -286,12 +286,12 @@ pub(crate) fn provider_settings_pane(
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(color::DANGER_MUTED))
-                    .text_color(rgb(color::DANGER))
+                    .bg(rgb(color::danger_muted()))
+                    .text_color(rgb(color::danger()))
                     .role(gpui::Role::Button)
                     .aria_label(label.clone())
                     .tab_index(0)
-                    .focus_visible(|style| style.bg(rgb(color::DANGER_MUTED)))
+                    .focus_visible(|style| style.bg(rgb(color::danger_muted())))
                     .child(label)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.show_provider_delete_prompt(target.clone(), window, cx);
@@ -302,4 +302,75 @@ pub(crate) fn provider_settings_pane(
     } else {
         pane
     }
+}
+
+pub(crate) fn appearance_pane(
+    cx: &mut Context<WorkspacePrototype>,
+) -> impl gpui::IntoElement {
+    let dark = crate::light_theme::is_dark_mode();
+    let dark_label = if dark { "Dark" } else { "Light" };
+    div()
+        .id("appearance-pane")
+        .border_t_1()
+        .border_color(rgb(color::border()))
+        .p_3()
+        .child(
+            div()
+                .text_size(px(layout::TYPE_CONTROL))
+                .child("Appearance"),
+        )
+        .child(
+            div()
+                .mt_1()
+                .text_size(px(layout::TYPE_METADATA))
+                .text_color(rgb(color::text_secondary()))
+                .child(format!("Current: {dark_label}")),
+        )
+        .child(
+            div()
+                .mt_2()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(
+                    div()
+                        .id("appearance-light")
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(if !dark { color::accent_muted() } else { color::surface() }))
+                        .text_color(rgb(if !dark { color::accent() } else { color::text_secondary() }))
+                        .role(gpui::Role::Button)
+                        .aria_label("Light appearance")
+                        .tab_index(0)
+                        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+                        .hover(|style| style.bg(rgb(color::surface_hover())))
+                        .active(|style| style.opacity(0.8))
+                        .child("Light")
+                        .on_click(cx.listener(|_this, _, _, cx| {
+                            crate::light_theme::set_dark_mode(false);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    div()
+                        .id("appearance-dark")
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .bg(rgb(if dark { color::accent_muted() } else { color::surface() }))
+                        .text_color(rgb(if dark { color::accent() } else { color::text_secondary() }))
+                        .role(gpui::Role::Button)
+                        .aria_label("Dark appearance")
+                        .tab_index(0)
+                        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+                        .hover(|style| style.bg(rgb(color::surface_hover())))
+                        .active(|style| style.opacity(0.8))
+                        .child("Dark")
+                        .on_click(cx.listener(|_this, _, _, cx| {
+                            crate::light_theme::set_dark_mode(true);
+                            cx.notify();
+                        })),
+                ),
+        )
 }

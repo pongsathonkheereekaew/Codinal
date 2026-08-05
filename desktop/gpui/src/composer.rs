@@ -57,9 +57,9 @@ pub(crate) fn composer_pane(
         composer_text.to_owned()
     };
     let input_color = if composer_text.is_empty() || !input_enabled {
-        rgb(color::TEXT_TERTIARY)
+        rgb(color::text_tertiary())
     } else {
-        rgb(color::TEXT_PRIMARY)
+        rgb(color::text_primary())
     };
     let composer_line_count = composer_text.split('\n').count().max(1) as f32;
     let input_height = (52.0 + (composer_line_count - 1.0) * 22.0).min(104.0);
@@ -78,7 +78,13 @@ pub(crate) fn composer_pane(
         .aria_label("Composer input")
         .aria_placeholder(input_placeholder)
         .tab_index(0)
-        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+        .focus_visible(|style| {
+            style
+                .bg(rgb(color::accent_muted()))
+                .border_color(rgb(color::accent()))
+        })
+        .border_1()
+        .border_color(rgb(color::border()))
         .on_click(cx.listener(|this, _, window, cx| {
             this.focus_composer(window, cx);
         }))
@@ -119,19 +125,21 @@ pub(crate) fn composer_pane(
             .items_center()
             .justify_center()
             .rounded_full()
-            .bg(rgb(color::TEXT_PRIMARY))
-            .text_color(rgb(color::CANVAS))
+            .bg(rgb(color::text_primary()))
+            .text_color(rgb(color::canvas()))
             .role(gpui::Role::Button)
             .aria_label("Run turn")
             .aria_keyshortcuts("⌘↩")
             .tab_index(0)
-            .focus_visible(|style| style.bg(rgb(color::ACCENT)))
+            .focus_visible(|style| style.bg(rgb(color::accent())))
+            .hover(|style| style.bg(rgb(color::text_primary()).opacity(0.85)))
+            .active(|style| style.opacity(0.7))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if is_activation_key(event) {
                     this.submit_composer(cx);
                 }
             }))
-            .child(icon(Icon::Send, color::CANVAS))
+            .child(icon(Icon::Send, color::canvas()))
             .on_click(cx.listener(|this, _, _, cx| this.submit_composer(cx)))
             .into_any_element()
     } else {
@@ -143,8 +151,8 @@ pub(crate) fn composer_pane(
             .items_center()
             .justify_center()
             .rounded_full()
-            .bg(rgb(color::SURFACE_SELECTED))
-            .text_color(rgb(color::TEXT_TERTIARY))
+            .bg(rgb(color::surface_selected()))
+            .text_color(rgb(color::text_tertiary()))
             .role(gpui::Role::Button)
             .aria_label("Run turn unavailable")
             .aria_description(if approval_pending {
@@ -153,8 +161,8 @@ pub(crate) fn composer_pane(
                 "Turn execution is not ready"
             })
             .tab_index(0)
-            .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
-            .child(icon(Icon::Send, color::TEXT_TERTIARY))
+            .focus_visible(|style| style.bg(rgb(color::accent_muted())))
+            .child(icon(Icon::Send, color::text_tertiary()))
             .into_any_element()
     };
     let mut actions = div().flex().items_center();
@@ -165,13 +173,14 @@ pub(crate) fn composer_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::DANGER_MUTED))
-                .text_color(rgb(color::DANGER))
+                .bg(rgb(color::danger_muted()))
+                .text_color(rgb(color::danger()))
                 .role(gpui::Role::Button)
                 .aria_label("Interrupt turn")
                 .aria_keyshortcuts("Escape")
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::DANGER)))
+                .focus_visible(|style| style.bg(rgb(color::danger())))
+                .active(|style| style.opacity(0.7))
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                     if is_activation_key(event) {
                         this.interrupt_turn(cx);
@@ -191,12 +200,12 @@ pub(crate) fn composer_pane(
                 .px_2()
                 .py_1()
                 .rounded_md()
-                .bg(rgb(color::SURFACE))
-                .text_color(rgb(color::TEXT_SECONDARY))
+                .bg(rgb(color::surface()))
+                .text_color(rgb(color::text_secondary()))
                 .role(gpui::Role::Button)
                 .aria_label("Interrupt turn unavailable")
                 .tab_index(0)
-                .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                 .child(format!(
                     "Interrupt unavailable · {}",
                     disabled_reason_label(reason)
@@ -240,9 +249,9 @@ pub(crate) fn composer_pane(
         "Read-only"
     };
     let access_color = if selected_model_profile.ready {
-        color::SUCCESS
+        color::success()
     } else {
-        color::WARNING
+        color::warning()
     };
     let model_label =
         if selected_model_profile.model.is_empty() || selected_model_profile.model == "unknown" {
@@ -281,8 +290,8 @@ pub(crate) fn composer_pane(
             .w(px(360.0))
             .rounded_xl()
             .border_1()
-            .border_color(rgb(color::BORDER))
-            .bg(rgb(color::ELEVATED))
+            .border_color(rgb(color::border()))
+            .bg(rgb(color::elevated()))
             .shadow_lg()
             .p_2()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -313,20 +322,20 @@ pub(crate) fn composer_pane(
                     })
                     .tab_index(0)
                     .text_color(rgb(if available {
-                        color::TEXT_PRIMARY
+                        color::text_primary()
                     } else {
-                        color::TEXT_TERTIARY
+                        color::text_tertiary()
                     }))
                     .child(
                         div()
                             .w(px(22.0))
                             .text_color(rgb(if selected {
-                                color::ACCENT
+                                color::accent()
                             } else {
-                                color::TEXT_TERTIARY
+                                color::text_tertiary()
                             }))
                             .child(if selected {
-                                icon(Icon::Check, color::ACCENT).into_any_element()
+                                icon(Icon::Check, color::accent()).into_any_element()
                             } else {
                                 div().into_any_element()
                             }),
@@ -339,7 +348,7 @@ pub(crate) fn composer_pane(
                                 div()
                                     .mt_1()
                                     .text_size(px(layout::TYPE_METADATA))
-                                    .text_color(rgb(color::TEXT_TERTIARY))
+                                    .text_color(rgb(color::text_tertiary()))
                                     .child(description),
                             ),
                     )
@@ -361,8 +370,8 @@ pub(crate) fn composer_pane(
             .w(px(360.0))
             .rounded_xl()
             .border_1()
-            .border_color(rgb(color::BORDER))
-            .bg(rgb(color::ELEVATED))
+            .border_color(rgb(color::border()))
+            .bg(rgb(color::elevated()))
             .shadow_lg()
             .p_2()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -403,20 +412,20 @@ pub(crate) fn composer_pane(
                     })
                     .tab_index(0)
                     .text_color(rgb(if available {
-                        color::TEXT_PRIMARY
+                        color::text_primary()
                     } else {
-                        color::TEXT_TERTIARY
+                        color::text_tertiary()
                     }))
                     .child(
                         div()
                             .w(px(22.0))
                             .text_color(rgb(if selected {
-                                color::ACCENT
+                                color::accent()
                             } else {
-                                color::TEXT_TERTIARY
+                                color::text_tertiary()
                             }))
                             .child(if selected {
-                                icon(Icon::Check, color::ACCENT).into_any_element()
+                                icon(Icon::Check, color::accent()).into_any_element()
                             } else {
                                 div().into_any_element()
                             }),
@@ -429,7 +438,7 @@ pub(crate) fn composer_pane(
                                 div()
                                     .mt_1()
                                     .text_size(px(layout::TYPE_METADATA))
-                                    .text_color(rgb(color::TEXT_TERTIARY))
+                                    .text_color(rgb(color::text_tertiary()))
                                     .child(if available {
                                         format!("{} · {}", profile.provider, profile.effort)
                                     } else {
@@ -457,9 +466,9 @@ pub(crate) fn composer_pane(
         .items_center()
         .text_size(px(layout::TYPE_METADATA))
         .text_color(rgb(if selected_model_profile.ready {
-            color::TEXT_SECONDARY
+            color::text_secondary()
         } else {
-            color::TEXT_TERTIARY
+            color::text_tertiary()
         }))
         .role(gpui::Role::Button)
         .aria_label(format!("Model: {}", model_label))
@@ -476,7 +485,7 @@ pub(crate) fn composer_pane(
         }))
         .on_click(cx.listener(|this, _, _, cx| this.toggle_model_menu(cx)))
         .child(model_label)
-        .child(icon(Icon::ChevronDown, color::TEXT_SECONDARY));
+        .child(icon(Icon::ChevronDown, color::text_secondary()));
     let voice_button = div()
         .id("composer-voice")
         .mr_2()
@@ -485,12 +494,12 @@ pub(crate) fn composer_pane(
         .items_center()
         .justify_center()
         .text_size(px(layout::TYPE_METADATA))
-        .text_color(rgb(color::TEXT_TERTIARY))
+        .text_color(rgb(color::text_tertiary()))
         .role(gpui::Role::Button)
         .aria_label("Voice input unavailable")
         .aria_description("Voice input is not exposed by the native runtime")
         .tab_index(0)
-        .child(icon(Icon::Mic, color::TEXT_TERTIARY));
+        .child(icon(Icon::Mic, color::text_tertiary()));
     div()
         .id("composer-prompt")
         .relative()
@@ -499,7 +508,7 @@ pub(crate) fn composer_pane(
         .pb_4()
         .flex()
         .justify_center()
-        .bg(rgb(color::CANVAS))
+        .bg(rgb(color::canvas()))
         .child(
             div()
                 .w_full()
@@ -507,8 +516,8 @@ pub(crate) fn composer_pane(
                 .h(px(composer_height))
                 .rounded_2xl()
                 .border_1()
-                .border_color(rgb(color::BORDER_STRONG))
-                .bg(rgb(color::ELEVATED))
+                .border_color(rgb(color::border_strong()))
+                .bg(rgb(color::elevated()))
                 .shadow_lg()
                 .p_3()
                 .child(composer_input)
@@ -516,7 +525,7 @@ pub(crate) fn composer_pane(
                     div()
                         .h(px(18.0))
                         .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::TEXT_TERTIARY))
+                        .text_color(rgb(color::text_tertiary()))
                         .child(composer_status),
                 )
                 .child(
@@ -539,13 +548,13 @@ pub(crate) fn composer_pane(
                                         .items_center()
                                         .justify_center()
                                         .rounded_full()
-                                        .bg(rgb(color::ACCENT_MUTED))
-                                        .text_color(rgb(color::ACCENT))
+                                        .bg(rgb(color::accent_muted()))
+                                        .text_color(rgb(color::accent()))
                                         .role(gpui::Role::Button)
                                         .aria_label("Show Environment")
                                         .aria_keyshortcuts("⌘K")
                                         .tab_index(0)
-                                        .focus_visible(|style| style.bg(rgb(color::ACCENT_MUTED)))
+                                        .focus_visible(|style| style.bg(rgb(color::accent_muted())))
                                         .on_key_down(cx.listener(
                                             |this, event: &KeyDownEvent, window, cx| {
                                                 if is_activation_key(event) {
@@ -553,7 +562,7 @@ pub(crate) fn composer_pane(
                                                 }
                                             },
                                         ))
-                                        .child(icon(Icon::Plus, color::ACCENT))
+                                        .child(icon(Icon::Plus, color::accent()))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.toggle_context_panel(window, cx);
                                         })),
@@ -596,7 +605,7 @@ pub(crate) fn composer_pane(
                                         .flex()
                                         .items_center()
                                         .text_size(px(layout::TYPE_METADATA))
-                                        .text_color(rgb(color::TEXT_SECONDARY))
+                                        .text_color(rgb(color::text_secondary()))
                                         .child(selected_model_profile.provider.clone()),
                                 )
                                 .child(model_button)
@@ -607,7 +616,7 @@ pub(crate) fn composer_pane(
                                         .flex()
                                         .items_center()
                                         .text_size(px(layout::TYPE_METADATA))
-                                        .text_color(rgb(color::TEXT_TERTIARY))
+                                        .text_color(rgb(color::text_tertiary()))
                                         .child(format!(
                                             "{} · {active_sessions}",
                                             selected_model_profile.effort
