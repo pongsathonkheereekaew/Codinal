@@ -46,10 +46,8 @@ pub(crate) fn composer_pane(
     let input_entity = entity.clone();
     let input_placeholder = if has_selected_session {
         "Ask Codinal to inspect, change, or explain…"
-    } else if has_selected_project {
-        "Do anything"
     } else {
-        "Select a chat to start composing…"
+        "Do anything"
     };
     let input_text = if composer_text.is_empty() {
         input_placeholder.to_owned()

@@ -3,7 +3,6 @@
 //! This view accepts bounded typed blocks from `ui_model`; it does not parse
 //! durable strings or invoke runtime effects.
 
-use crate::disabled_reason_label;
 use crate::icons::{icon, Icon};
 use crate::light_theme::{color, layout};
 use crate::stable_element_id;
@@ -93,12 +92,6 @@ pub(crate) fn conversation_pane(
     messages: &[TimelineBlock],
     streaming_assistant: Option<&TimelineBlock>,
     stream_status: &str,
-    has_selected_session: bool,
-    has_selected_project: bool,
-    mutations_enabled: bool,
-    turns_enabled: bool,
-    mutation_disabled_reason: &str,
-    run_disabled_reason: &str,
     starter_context: &str,
     starter_category: Option<StarterCategory>,
     cx: &mut Context<crate::WorkspacePrototype>,
@@ -222,62 +215,7 @@ pub(crate) fn conversation_pane(
         || streaming_assistant
             .map(|block| !block.content.is_empty())
             .unwrap_or(false);
-    let body: gpui::AnyElement = if !has_selected_session && !has_selected_project {
-        div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                .child(
-                    div()
-                        .w(px(520.0))
-                        .p_5()
-                    .child(
-                        div()
-                            .text_size(px(layout::TYPE_SECTION))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Start a new chat"),
-                    )
-                    .child(
-                        div()
-                            .mt_2()
-                            .text_size(px(crate::light_theme::typography::BODY))
-                            .text_color(rgb(color::text_secondary()))
-                            .child("Choose a chat from the sidebar to continue a conversation."),
-                    )
-                    .child(
-                        div()
-                            .mt_3()
-                            .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::warning()))
-                            .child(if mutations_enabled {
-                                if turns_enabled {
-                                    "Click + New chat to start a conversation."
-                                } else {
-                                    "Chat creation is ready; configure the provider in Context before running."
-                                }
-                            } else {
-                                disabled_reason_label(mutation_disabled_reason)
-                            }
-                            .to_owned(),
-                    ),
-                    )
-                    .child(if mutations_enabled && !turns_enabled {
-                        div()
-                            .mt_2()
-                            .text_size(px(layout::TYPE_METADATA))
-                            .text_color(rgb(color::text_secondary()))
-                            .child(format!(
-                                "Run unavailable · {}",
-                                disabled_reason_label(run_disabled_reason)
-                            ))
-                            .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }),
-            )
-            .into_any_element()
-    } else if !has_content {
+    let body: gpui::AnyElement = if !has_content {
         let categories = [
             StarterCategory::Explore,
             StarterCategory::Build,

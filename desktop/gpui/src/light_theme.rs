@@ -19,26 +19,130 @@ pub fn is_dark_mode() -> bool {
 pub mod color {
     use super::is_dark_mode;
 
-    pub fn canvas() -> u32 { if is_dark_mode() { 0x181818 } else { 0xffffff } }
-    pub fn sidebar() -> u32 { if is_dark_mode() { 0x282828 } else { 0xfafafa } }
-    pub fn surface() -> u32 { if is_dark_mode() { 0x2d2d2d } else { 0xf2f2f2 } }
-    pub fn surface_hover() -> u32 { if is_dark_mode() { 0x383838 } else { 0xededed } }
-    pub fn surface_selected() -> u32 { if is_dark_mode() { 0x333333 } else { 0xe7e7e7 } }
-    pub fn elevated() -> u32 { if is_dark_mode() { 0x2d2d2d } else { 0xffffff } }
-    pub fn border() -> u32 { if is_dark_mode() { 0x333333 } else { 0xe6e6e6 } }
-    pub fn border_strong() -> u32 { if is_dark_mode() { 0x444444 } else { 0xd8d8d8 } }
+    pub fn canvas() -> u32 {
+        if is_dark_mode() {
+            0x181818
+        } else {
+            0xffffff
+        }
+    }
+    pub fn sidebar() -> u32 {
+        if is_dark_mode() {
+            0x282828
+        } else {
+            0xfafafa
+        }
+    }
+    pub fn surface() -> u32 {
+        if is_dark_mode() {
+            0x2d2d2d
+        } else {
+            0xf2f2f2
+        }
+    }
+    pub fn surface_hover() -> u32 {
+        if is_dark_mode() {
+            0x383838
+        } else {
+            0xededed
+        }
+    }
+    pub fn surface_selected() -> u32 {
+        if is_dark_mode() {
+            0x333333
+        } else {
+            0xe7e7e7
+        }
+    }
+    pub fn elevated() -> u32 {
+        if is_dark_mode() {
+            0x2d2d2d
+        } else {
+            0xffffff
+        }
+    }
+    pub fn border() -> u32 {
+        if is_dark_mode() {
+            0x333333
+        } else {
+            0xe6e6e6
+        }
+    }
+    pub fn border_strong() -> u32 {
+        if is_dark_mode() {
+            0x444444
+        } else {
+            0xd8d8d8
+        }
+    }
 
-    pub fn text_primary() -> u32 { if is_dark_mode() { 0xd4d4d4 } else { 0x202124 } }
-    pub fn text_secondary() -> u32 { if is_dark_mode() { 0x999999 } else { 0x686868 } }
-    pub fn text_tertiary() -> u32 { if is_dark_mode() { 0x707070 } else { 0x989898 } }
+    pub fn text_primary() -> u32 {
+        if is_dark_mode() {
+            0xd4d4d4
+        } else {
+            0x202124
+        }
+    }
+    pub fn text_secondary() -> u32 {
+        if is_dark_mode() {
+            0x999999
+        } else {
+            0x686868
+        }
+    }
+    pub fn text_tertiary() -> u32 {
+        if is_dark_mode() {
+            0x707070
+        } else {
+            0x989898
+        }
+    }
 
-    pub fn accent() -> u32 { if is_dark_mode() { 0x509878 } else { 0x1677ff } }
-    pub fn accent_muted() -> u32 { if is_dark_mode() { 0x1a3328 } else { 0xeaf2ff } }
-    pub fn purple() -> u32 { 0x8b5cf6 }
-    pub fn success() -> u32 { if is_dark_mode() { 0x3fb950 } else { 0x1b8f45 } }
-    pub fn warning() -> u32 { if is_dark_mode() { 0xd29922 } else { 0xa85600 } }
-    pub fn danger() -> u32 { if is_dark_mode() { 0xf85149 } else { 0xc9362b } }
-    pub fn danger_muted() -> u32 { if is_dark_mode() { 0x3d1118 } else { 0xfeeceb } }
+    pub fn accent() -> u32 {
+        if is_dark_mode() {
+            0x509878
+        } else {
+            0x1677ff
+        }
+    }
+    pub fn accent_muted() -> u32 {
+        if is_dark_mode() {
+            0x1a3328
+        } else {
+            0xeaf2ff
+        }
+    }
+    pub fn purple() -> u32 {
+        0x8b5cf6
+    }
+    pub fn success() -> u32 {
+        if is_dark_mode() {
+            0x3fb950
+        } else {
+            0x1b8f45
+        }
+    }
+    pub fn warning() -> u32 {
+        if is_dark_mode() {
+            0xd29922
+        } else {
+            0xa85600
+        }
+    }
+    pub fn danger() -> u32 {
+        if is_dark_mode() {
+            0xf85149
+        } else {
+            0xc9362b
+        }
+    }
+    pub fn danger_muted() -> u32 {
+        if is_dark_mode() {
+            0x3d1118
+        } else {
+            0xfeeceb
+        }
+    }
 }
 
 pub mod layout {

@@ -92,16 +92,9 @@ echo "== runtime truth =="
 echo "runtime truth: OK"
 
 echo "== product tests =="
-if ! "$PYTHON_BIN" -c "import fastapi, httpx, pytest, uvicorn, yaml, jsonschema" 2>/dev/null; then
-  echo "FAIL: test dependencies missing; install requirements-dev.txt" >&2
-  exit 1
-fi
-# Pytest's faulthandler plugin remains enabled by default. An empty environment
-# value is required to disable it; `PYTHONFAULTHANDLER=0` still enables it.
-PYTHONFAULTHANDLER= "$PYTHON_BIN" -m pytest -q \
-  --timeout=90 --timeout-method=thread \
-  -p no:cacheprovider
-echo "product tests: OK"
+# Product tests are Rust-only after the full retire (Python control plane and
+# web UI removed). Unit/integration coverage lives in the cargo gates below.
+echo "product tests: Rust-only (covered by the desktop shell and cutover gates)"
 
 echo "== desktop shell (macOS) =="
 if [ "$(uname -s)" = "Darwin" ] && command -v cargo >/dev/null 2>&1; then

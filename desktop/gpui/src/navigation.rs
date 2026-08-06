@@ -77,7 +77,10 @@ fn section_heading(label: &'static str) -> impl gpui::IntoElement {
         .child(label)
 }
 
-fn chats_heading(cx: &mut Context<WorkspacePrototype>) -> impl gpui::IntoElement {
+fn chats_heading(
+    chats_collapsed: bool,
+    cx: &mut Context<WorkspacePrototype>,
+) -> impl gpui::IntoElement {
     div()
         .id("chats-heading")
         .mt_4()
@@ -85,14 +88,24 @@ fn chats_heading(cx: &mut Context<WorkspacePrototype>) -> impl gpui::IntoElement
         .px_3()
         .flex()
         .items_center()
+        .gap_1()
         .text_size(px(layout::TYPE_METADATA))
         .text_color(rgb(color::text_tertiary()))
         .role(gpui::Role::Button)
-        .aria_label("Show chats")
+        .aria_label("Toggle chats")
         .tab_index(0)
-        .child("Chats")
+        .hover(|style| style.text_color(rgb(color::text_secondary())))
+        .child(div().w(px(14.0)).child(icon(
+            if chats_collapsed {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            },
+            color::text_tertiary(),
+        )))
+        .child("Recents")
         .on_click(cx.listener(|this, _, _, cx| {
-            this.clear_project_selection(cx);
+            this.toggle_sidebar_chats(cx);
         }))
 }
 
@@ -125,11 +138,13 @@ fn session_row(
         .aria_label(format!("Open chat {}", session.title))
         .tab_index(0)
         .focus_visible(|style| style.bg(rgb(color::accent_muted())))
-        .hover(|style| style.bg(rgb(if selected {
-            color::surface_selected()
-        } else {
-            color::surface_hover()
-        })))
+        .hover(|style| {
+            style.bg(rgb(if selected {
+                color::surface_selected()
+            } else {
+                color::surface_hover()
+            }))
+        })
         .active(|style| style.opacity(0.8))
         .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
             if is_activation_key(event) {
@@ -681,8 +696,30 @@ fn project_row(
 
 fn projects_heading(
     mutations_enabled: bool,
+    projects_collapsed: bool,
     cx: &mut Context<WorkspacePrototype>,
 ) -> impl gpui::IntoElement {
+    let toggle = div()
+        .id("projects-toggle")
+        .flex()
+        .items_center()
+        .gap_1()
+        .role(gpui::Role::Button)
+        .aria_label("Toggle projects")
+        .tab_index(0)
+        .hover(|style| style.text_color(rgb(color::text_secondary())))
+        .child(div().w(px(14.0)).child(icon(
+            if projects_collapsed {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            },
+            color::text_tertiary(),
+        )))
+        .child("Projects")
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.toggle_sidebar_projects(cx);
+        }));
     let mut heading = div()
         .mt_4()
         .mb_1()
@@ -692,7 +729,7 @@ fn projects_heading(
         .justify_between()
         .text_size(px(layout::TYPE_METADATA))
         .text_color(rgb(color::text_tertiary()))
-        .child("Projects");
+        .child(toggle);
     let mut add = div()
         .id("create-project")
         .w(px(24.0))
@@ -769,6 +806,10 @@ pub(crate) fn session_pane(
     mutation_disabled_reason: &str,
     expanded_project_ids: &BTreeSet<String>,
     chats_expanded: bool,
+    sidebar_projects_collapsed: bool,
+    sidebar_chats_collapsed: bool,
+    projects_seam: f32,
+    chats_seam: f32,
     navigation_width: f32,
     mode_menu_open: bool,
     activity_open: bool,
@@ -790,7 +831,11 @@ pub(crate) fn session_pane(
             list = list.child(session_row(session, selected_session_id, cx));
         }
     }
-    list = list.child(projects_heading(mutations_enabled, cx));
+    list = list.child(projects_heading(
+        mutations_enabled,
+        sidebar_projects_collapsed,
+        cx,
+    ));
     if projects.is_empty() {
         list = list.child(
             div()
@@ -809,9 +854,10 @@ pub(crate) fn session_pane(
                     "Project changes require the Rust writer"
                 })),
         );
-    } else {
+    } else if !sidebar_projects_collapsed || projects_seam > 0.0 {
+        let mut project_rows = div().opacity(projects_seam);
         for project in projects {
-            list = list.child(project_row(
+            project_rows = project_rows.child(project_row(
                 project,
                 sessions,
                 selected_session_id,
@@ -824,62 +870,67 @@ pub(crate) fn session_pane(
                 cx,
             ));
         }
+        list = list.child(project_rows);
     }
-    list = list.child(chats_heading(cx));
-    let visible_chats = lists.chats.iter().take(if chats_expanded {
-        lists.chats.len()
-    } else {
-        INITIAL_SESSION_ROWS
-    });
-    for session in visible_chats {
-        list = list.child(session_row(session, selected_session_id, cx));
-    }
-    if !chats_expanded && lists.chats.len() > INITIAL_SESSION_ROWS {
-        list = list.child(
-            div()
-                .id("chats-show-more")
-                .mt_1()
-                .px_3()
-                .py_1()
-                .rounded_md()
-                .text_size(px(layout::TYPE_METADATA))
-                .text_color(rgb(color::text_secondary()))
-                .role(gpui::Role::Button)
-                .aria_label("Show more chats")
-                .tab_index(0)
-                .child(format!(
-                    "Show more ({} more)",
-                    lists.chats.len() - INITIAL_SESSION_ROWS
-                ))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.toggle_chats_expanded(cx);
-                })),
-        );
-    }
-    if lists.chats.is_empty() {
-        list = list.child(
-            div()
-                .mt_4()
-                .rounded_lg()
-                .bg(rgb(color::surface()))
-                .p_3()
-                .child(
-                    div()
-                        .text_size(px(layout::TYPE_CONTROL))
-                        .child("No chats yet"),
-                )
-                .child(
-                    div()
-                        .mt_1()
-                        .text_size(px(layout::TYPE_METADATA))
-                        .text_color(rgb(color::text_secondary()))
-                        .child(if mutations_enabled {
-                            "Create a chat to start a conversation."
-                        } else {
-                            "Chats appear after the Rust writer is ready."
-                        }),
-                ),
-        );
+    list = list.child(chats_heading(sidebar_chats_collapsed, cx));
+    if !sidebar_chats_collapsed || chats_seam > 0.0 {
+        let mut chat_rows = div().opacity(chats_seam);
+        let visible_chats = lists.chats.iter().take(if chats_expanded {
+            lists.chats.len()
+        } else {
+            INITIAL_SESSION_ROWS
+        });
+        for session in visible_chats {
+            chat_rows = chat_rows.child(session_row(session, selected_session_id, cx));
+        }
+        if !chats_expanded && lists.chats.len() > INITIAL_SESSION_ROWS {
+            chat_rows = chat_rows.child(
+                div()
+                    .id("chats-show-more")
+                    .mt_1()
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .text_size(px(layout::TYPE_METADATA))
+                    .text_color(rgb(color::text_secondary()))
+                    .role(gpui::Role::Button)
+                    .aria_label("Show more chats")
+                    .tab_index(0)
+                    .child(format!(
+                        "Show more ({} more)",
+                        lists.chats.len() - INITIAL_SESSION_ROWS
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_chats_expanded(cx);
+                    })),
+            );
+        }
+        if lists.chats.is_empty() {
+            chat_rows = chat_rows.child(
+                div()
+                    .mt_4()
+                    .rounded_lg()
+                    .bg(rgb(color::surface()))
+                    .p_3()
+                    .child(
+                        div()
+                            .text_size(px(layout::TYPE_CONTROL))
+                            .child("No chats yet"),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(layout::TYPE_METADATA))
+                            .text_color(rgb(color::text_secondary()))
+                            .child(if mutations_enabled {
+                                "Create a chat to start a conversation."
+                            } else {
+                                "Chats appear after the Rust writer is ready."
+                            }),
+                    ),
+            );
+        }
+        list = list.child(chat_rows);
     }
     if !lists.archived.is_empty() {
         list = list.child(section_heading("Archived"));

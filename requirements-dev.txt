@@ -1,5 +1,2 @@
--r runtime/requirements.in
-pytest>=8.0
-pytest-timeout>=2.3
 pyyaml>=6.0
 jsonschema>=4.20

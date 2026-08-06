@@ -494,6 +494,12 @@ pub(crate) struct WorkspacePrototype {
     panel_preferences_save_task: Option<Task<()>>,
     active_panel_resize: Option<PanelResizeTarget>,
     context_panel_open: bool,
+    sidebar_projects_collapsed: bool,
+    sidebar_chats_collapsed: bool,
+    projects_seam: f32,
+    projects_slide: Option<SeamSlide>,
+    chats_seam: f32,
+    chats_slide: Option<SeamSlide>,
     settings_section: SettingsSection,
     context_slide: Option<SeamSlide>,
     context_seam: f32,
@@ -993,7 +999,11 @@ impl WorkspacePrototype {
     }
 
     fn settled_context_seam(&self) -> f32 {
-        if self.context_panel_open { 1.0 } else { 0.0 }
+        if self.context_panel_open {
+            1.0
+        } else {
+            0.0
+        }
     }
 
     fn begin_context_slide(&mut self, cx: &mut Context<Self>) {
@@ -1004,6 +1014,49 @@ impl WorkspacePrototype {
         if self.context_slide.is_none() {
             self.context_seam = to;
         }
+    }
+
+    fn begin_projects_seam(&mut self, cx: &mut Context<Self>) {
+        let to = if self.sidebar_projects_collapsed {
+            0.0
+        } else {
+            1.0
+        };
+        self.projects_slide = (!cx.reduce_motion())
+            .then(|| SeamSlide::begin(self.projects_seam, to))
+            .flatten();
+        if self.projects_slide.is_none() {
+            self.projects_seam = to;
+        }
+    }
+
+    fn begin_chats_seam(&mut self, cx: &mut Context<Self>) {
+        let to = if self.sidebar_chats_collapsed {
+            0.0
+        } else {
+            1.0
+        };
+        self.chats_slide = (!cx.reduce_motion())
+            .then(|| SeamSlide::begin(self.chats_seam, to))
+            .flatten();
+        if self.chats_slide.is_none() {
+            self.chats_seam = to;
+        }
+    }
+
+    pub(crate) fn toggle_sidebar_projects(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_projects_collapsed = !self.sidebar_projects_collapsed;
+        self.begin_projects_seam(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_sidebar_chats(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_chats_collapsed = !self.sidebar_chats_collapsed;
+        if !self.sidebar_chats_collapsed {
+            self.clear_project_selection(cx);
+        }
+        self.begin_chats_seam(cx);
+        cx.notify();
     }
 
     pub(crate) fn toggle_open_in_menu(&mut self, cx: &mut Context<Self>) {
@@ -6290,8 +6343,7 @@ fn search_palette(
 impl Render for WorkspacePrototype {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let has_pending_approval = self.ui.has_pending_approval();
-        let show_context =
-            context_panel_should_show(self.context_panel_open, has_pending_approval);
+        let show_context = context_panel_should_show(self.context_panel_open, has_pending_approval);
 
         // Advance panel seam animations.
         let now = Instant::now();
@@ -6301,6 +6353,28 @@ impl Render for WorkspacePrototype {
         let dock_seam = advance_seam(&mut self.dock_slide, dock_settled, now, window);
         let ctx_settled = self.settled_context_seam();
         let context_seam = advance_seam(&mut self.context_slide, ctx_settled, now, window);
+        let projects_seam = advance_seam(
+            &mut self.projects_slide,
+            if self.sidebar_projects_collapsed {
+                0.0
+            } else {
+                1.0
+            },
+            now,
+            window,
+        );
+        let chats_seam = advance_seam(
+            &mut self.chats_slide,
+            if self.sidebar_chats_collapsed {
+                0.0
+            } else {
+                1.0
+            },
+            now,
+            window,
+        );
+        self.projects_seam = projects_seam;
+        self.chats_seam = chats_seam;
 
         // A panel that is sliding shut still needs the layout to allocate space
         // so the seam can animate across it.
@@ -6407,6 +6481,10 @@ impl Render for WorkspacePrototype {
                         .unwrap_or("runtime_read_only"),
                     &self.expanded_project_ids,
                     self.chats_expanded,
+                    self.sidebar_projects_collapsed,
+                    self.sidebar_chats_collapsed,
+                    projects_seam,
+                    chats_seam,
                     animated_nav_width,
                     self.mode_menu_open,
                     self.activity_open,
@@ -6505,18 +6583,6 @@ impl Render for WorkspacePrototype {
                 &self.ui.workbench.blocks,
                 self.ui.streaming_assistant.as_ref(),
                 &self.ui.session_stream_status,
-                self.selected_session_id.is_some(),
-                self.selected_project_id.is_some(),
-                self.runtime_capabilities.mutations,
-                self.selected_model_profile.ready,
-                self.runtime_capabilities
-                    .mutation_disabled_reason
-                    .as_deref()
-                    .unwrap_or("runtime_read_only"),
-                self.runtime_capabilities
-                    .run_disabled_reason
-                    .as_deref()
-                    .unwrap_or("provider_not_configured"),
                 starter_context,
                 self.starter_category,
                 cx,
@@ -7199,15 +7265,10 @@ fn main() -> io::Result<()> {
         .iter()
         .filter(|session| !session.archived && session.origin.as_deref() != Some("side_chat"))
         .count();
-    let initial_context_panel_open = !sessions.is_empty();
+    let initial_context_panel_open = false;
     let mut initial_dock = DockState::default();
-    if sessions.is_empty() {
-        initial_dock.dispatch(DockAction::Toggle);
-    }
-    let initial_messages = match sessions.first() {
-        Some(session) => client.session_messages(&session.session_id)?,
-        None => Vec::new(),
-    };
+    initial_dock.dispatch(DockAction::Toggle);
+    let initial_messages = Vec::new();
     let initial_side_chat_parent_id = sessions.first().and_then(|session| {
         if session.origin.as_deref() == Some("side_chat") {
             session.origin_session_id.clone()
@@ -7221,10 +7282,7 @@ fn main() -> io::Result<()> {
         Some(session_id) => client.pending_approvals(session_id)?,
         None => Vec::new(),
     };
-    let turn_receipts = match approval_session_id.as_deref() {
-        Some(session_id) => client.turn_receipts(session_id)?,
-        None => Vec::new(),
-    };
+    let turn_receipts = Vec::new();
     let readiness = readiness_from_capabilities(&runtime_capabilities);
     let provider_probe_status = capability_probe_status(&runtime_capabilities);
     let selected_model_profile = runtime_capabilities
@@ -7333,12 +7391,8 @@ fn main() -> io::Result<()> {
                         ui,
                         session_count,
                         projects,
-                        selected_session_id: sessions
-                            .first()
-                            .map(|session| session.session_id.clone()),
-                        selected_project_id: sessions
-                            .first()
-                            .and_then(|session| session.project_id.clone()),
+                        selected_session_id: None,
+                        selected_project_id: None,
                         mode_menu_open: false,
                         open_in_menu_open: false,
                         session_menu_open: false,
@@ -7457,6 +7511,12 @@ fn main() -> io::Result<()> {
                         panel_preferences_save_task: None,
                         active_panel_resize: None,
                         context_panel_open: initial_context_panel_open,
+                        sidebar_projects_collapsed: true,
+                        sidebar_chats_collapsed: true,
+                        projects_seam: 0.0,
+                        projects_slide: None,
+                        chats_seam: 0.0,
+                        chats_slide: None,
                         settings_section: SettingsSection::Provider,
                         context_slide: None,
                         context_seam: if initial_context_panel_open { 1.0 } else { 0.0 },

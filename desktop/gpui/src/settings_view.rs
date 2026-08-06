@@ -304,9 +304,7 @@ pub(crate) fn provider_settings_pane(
     }
 }
 
-pub(crate) fn appearance_pane(
-    cx: &mut Context<WorkspacePrototype>,
-) -> impl gpui::IntoElement {
+pub(crate) fn appearance_pane(cx: &mut Context<WorkspacePrototype>) -> impl gpui::IntoElement {
     let dark = crate::light_theme::is_dark_mode();
     let dark_label = if dark { "Dark" } else { "Light" };
     div()
@@ -338,8 +336,16 @@ pub(crate) fn appearance_pane(
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(if !dark { color::accent_muted() } else { color::surface() }))
-                        .text_color(rgb(if !dark { color::accent() } else { color::text_secondary() }))
+                        .bg(rgb(if !dark {
+                            color::accent_muted()
+                        } else {
+                            color::surface()
+                        }))
+                        .text_color(rgb(if !dark {
+                            color::accent()
+                        } else {
+                            color::text_secondary()
+                        }))
                         .role(gpui::Role::Button)
                         .aria_label("Light appearance")
                         .tab_index(0)
@@ -358,8 +364,16 @@ pub(crate) fn appearance_pane(
                         .px_2()
                         .py_1()
                         .rounded_md()
-                        .bg(rgb(if dark { color::accent_muted() } else { color::surface() }))
-                        .text_color(rgb(if dark { color::accent() } else { color::text_secondary() }))
+                        .bg(rgb(if dark {
+                            color::accent_muted()
+                        } else {
+                            color::surface()
+                        }))
+                        .text_color(rgb(if dark {
+                            color::accent()
+                        } else {
+                            color::text_secondary()
+                        }))
                         .role(gpui::Role::Button)
                         .aria_label("Dark appearance")
                         .tab_index(0)

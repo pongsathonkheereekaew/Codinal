@@ -408,10 +408,7 @@ mod tests {
             super::WorkbenchPlacement::Overlay
         );
         assert_eq!(shell.conversation_width, 1_132.0);
-        assert_eq!(
-            shell.context_width,
-            288.0
-        );
+        assert_eq!(shell.context_width, 288.0);
     }
 
     #[test]
