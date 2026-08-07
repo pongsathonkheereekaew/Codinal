@@ -83,3 +83,28 @@ modal approval/status prompts are excluded from headless runs.
 - E2E suite exercises the command (exit 0; headless may skip native view
   render); extension tests 66 pass.
 - Kept the BrowserOS MCP panel as the login/profile-rich fallback.
+
+## Browser fixes from preview feedback (2026-08-08)
+
+- `Page.enable: Method not found` fixed: CDP session now runs
+  `Target.getTargets` + `Target.attachToTarget` (flatten) first, then routes
+  `Page.enable`/`Runtime.enable`/`Page.captureScreenshot` with the page
+  `sessionId`. Unit tests assert the attach sequence with a fake CDP session
+  (68 extension tests pass).
+- Screenshot moved to a separate `CEDIA: Screenshot native CEDIA browser`
+  command so opening a tab never blocks on capture (and headless E2E stays
+  green; E2E exits 0).
+- Homepage defaults to Google (`cediaAgent.homepage`, default
+  `https://www.google.com`) for both native tab and BrowserOS panel.
+- BrowserOS panel stage is now `min-height:0` with responsive img/iframe, so
+  it fits window resizes.
+
+## Browser engine review (answer to "are we using BrowserOS yet?")
+
+- Agent-driven browsing + the `CEDIA: Open embedded CEDIA browser` panel use
+  **BrowserOS neo** through MCP (`tabs`, `navigate`, `screenshot`, console).
+- The `CEDIA: Open native CEDIA browser tab` uses the VS Code fork's
+  **WebContentsView/Chromium** (real editor tab) with direct CDP; it does not
+  use BrowserOS. Both paths are intentional: BrowserOS for logins/profile and
+  agent tools, native WebContentsView for an in-window browser without a
+  separate app.
