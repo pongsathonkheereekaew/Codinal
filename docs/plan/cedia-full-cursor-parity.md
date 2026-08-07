@@ -261,3 +261,30 @@ Gates:
 
 Start P1: remove hard tool cap, add web search + fetch rules + clarifying
 questions + queued messages + auto-checkpoints + image payload, then P1 gates.
+
+## Execution status (2026-08-07)
+
+- P1 done: budget-based loop (50 rounds / 200k tokens), web search, fetch
+  rules, clarifying questions, queued messages, auto-checkpoints, real image
+  payload; 43 tests.
+- P2 done: agent/plan/ask/debug modes (permission mask), debug log tool,
+  Agent Review quick/deep, plan persistence, Agents Window; 45 tests.
+- P3 done: regex search, explore, worktrees, canvases, BrowserOS action
+  mapping; 49 tests.
+- P4 done: permissions.json, sandbox.json, run modes (auto-review/allowlist/
+  run-everything), ignore file, workspace trust; 55 tests.
+- P5 done: mentions (past/terminal/git/file), context ring + token
+  breakdown, past-chat persistence, voice detection (deferred backend); 57
+  tests.
+- P6 done: skills/commands/rules/subagents loader, hooks lifecycle,
+  plugins-lite, customize view; 61 tests.
+- P7 done: CLI modes + JSON output, SDK wrapper, evals runner; 63 tests.
+- P8: hosted surfaces deferred with reason (Cloud Agents/computer use,
+  Bugbot/PR automation, marketplace/leaderboards, enterprise SSO/admin,
+  first-party integrations). Local approximations: code-review skill +
+  MCP connectors as users add them.
+
+Remaining honest gaps for true "all docs" parity: hosted infra, real
+embedding model (keyword-hash fallback only), OS-level sandbox (guardrail
+only), stable voice dictation, full plugin marketplace. Each is recorded as
+deferred with reason rather than silently dropped.
