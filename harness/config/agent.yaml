@@ -66,7 +66,7 @@ mcp:
     enabled: false
   - id: cedia-browser
     transport: http
-    url: http://127.0.0.1:9200/mcp
+    url: http://127.0.0.1:9010/mcp
     enabled: false
   - id: cedia-browser-playwright
     transport: stdio
