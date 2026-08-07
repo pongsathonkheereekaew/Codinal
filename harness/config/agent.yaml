@@ -1,4 +1,4 @@
-# Minimal agent configuration for the Codinal IDE harness.
+# Minimal agent configuration for the CEDIA IDE harness.
 #
 # Switch models across all supported providers by changing ONE field:
 #   active_model: <model profile id>
@@ -45,25 +45,25 @@ models:
     capabilities: [streaming, tools]
 
 plugins:
-  - id: codinal-agent
+  - id: cedia-agent
     version: 0.1.0
-    entry: extensions/codinal-agent
+    entry: extensions/cedia-agent
     skills: [core]
     permissions: [read, edit, bash, webfetch, websearch, external_directory]
-    mcp: [codinal-filesystem]
+    mcp: [cedia-filesystem, cedia-browser]
 
 mcp:
-  - id: codinal-filesystem
+  - id: cedia-filesystem
     transport: stdio
     command: npx
     args: ["-y", "@modelcontextprotocol/server-filesystem"]
     enabled: false
-  - id: codinal-browser
+  - id: cedia-browser
     transport: stdio
     command: npx
     args: ["-y", "@playwright/mcp@latest"]
     enabled: false
-  - id: codinal-context
+  - id: cedia-context
     transport: http
     url: http://127.0.0.1:41783/mcp
     enabled: false

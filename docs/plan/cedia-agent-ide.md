@@ -14,7 +14,7 @@ word is never a marketing label in this repo.
 
 | Surface | Cursor-class capability | Our implementation | Phase | Gate evidence |
 | --- | --- | --- | --- | --- |
-| Agent loop | Chat/composer with streaming, stop/restart, model/profile picker | `extensions/codinal-agent` view + provider adapter | 1 | scripted turn E2E |
+| Agent loop | Chat/composer with streaming, stop/restart, model/profile picker | `extensions/cedia-agent` view + provider adapter | 1 | scripted turn E2E |
 | Agent loop | Plan mode with editable structured plan and selective approval | markdown plan + plan diff | 1 | plan→approve→apply test |
 | Agent loop | Tool calls: read/write/shell/git/search/terminal; bounded output | VS Code workspace APIs + approved terminal/process runner | 1 | tool conformance tests |
 | Agent loop | MCP servers (stdio/HTTP), catalog and per-project config | VS Code MCP extension API | 2 | MCP round-trip tests |
@@ -38,7 +38,7 @@ word is never a marketing label in this repo.
 ## Acceptance (in order)
 
 1. Phase 0: fork builds, `yarn watch` opens, upstream focused test passes.
-2. Phase 1: bundled `codinal-agent` completes plan → approve → tool → diff →
+2. Phase 1: bundled `cedia-agent` completes plan → approve → tool → diff →
    apply in a scratch workspace without another editor AI.
 3. Phase 2: review, MCP, subagents, checkpoints, context sources, worktrees
    pass their individual gates.
@@ -48,7 +48,7 @@ word is never a marketing label in this repo.
 
 ## Phase 0 — Fork and dev baseline
 
-- Fork from `~`: `gh repo fork microsoft/vscode --clone --fork-name codinal-ide --default-branch-only`, producing `~/codinal-ide`.
+- Fork from `~`: `gh repo fork microsoft/vscode --clone --fork-name cedia-ide --default-branch-only`, producing `~/cedia-ide`.
 - Add `microsoft/vscode` as `upstream`; work on `codex/agent-ide`.
 - Pin the upstream commit before local edits; keep the fork diff minimal.
 - Use the upstream toolchain exactly: Node from `.nvmrc`, `yarn install --frozen-lockfile`, then `yarn watch`.
@@ -58,7 +58,7 @@ no editor-core source file changed in this phase.
 
 ## Phase 1 — Agent loop (must-have parity)
 
-Create `extensions/codinal-agent`:
+Create `extensions/cedia-agent`:
 
 - Chat/composer view with streaming, stop, model/profile selection, and turn
   receipts.
@@ -111,12 +111,14 @@ complete on UI presence alone.
 
 Phase 1 is built by this Codex session (the harness is not yet self-hosting).
 Starting at phase 2, each phase's real change to this repository is authored
-by `codinal-agent`, then verified with `bash verify.sh`.
+by `cedia-agent`, then verified with `bash verify.sh`.
 
 ## Repository boundaries
 
-- `~/codinal-ide` owns the editor fork, its bundled `extensions/codinal-agent`,
+- `~/cedia-ide` owns the editor fork, its bundled `extensions/cedia-agent`,
   packaging, and release workflow.
+- `~/cedia-browser` owns the BrowserOS fork (AGPL-3.0) as the agentic
+  browser layer; the IDE talks to it over MCP (`cedia-browser`).
 - This repo (`harness-flow`) remains the SSOT for policy, standards, skills,
   and the acceptance/verify gates; the extension reads it read-only.
 - Do not copy harness content into the fork; install/symlink it.

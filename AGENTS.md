@@ -1,4 +1,4 @@
-# Codinal agent policy
+# CEDIA agent policy
 
 Read the SSOT: [harness/AGENTS.md](harness/AGENTS.md).
 

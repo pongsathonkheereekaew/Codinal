@@ -1,11 +1,11 @@
-# Aidel — AI Coding Desktop
+# CEDIA — AI Coding Desktop
 
-> **Aidel (formerly Codinal/harness-flow, renamed 2026-08-07).** This repo is
-> the SSOT for the Aidel harness plus the plan for the Aidel Code-OSS IDE
-> fork. The IDE fork lives at `pongsathonkheeereekaew/Aidel-IDE` and reads
+> **CEDIA (formerly Codinal/Aidel/harness-flow, renamed 2026-08-07).** This repo is
+> the SSOT for the CEDIA harness plus the plan for the CEDIA Code-OSS IDE
+> fork. The IDE fork lives at `pongsathonkheeereekaew/CEDIA-IDE` and reads
 > harness content here read-only.
 
-> **⚠️ Repo repurposed to Codinal (2026-07-25).** This repo is now the **Codinal** product repo (macOS coding-agent desktop). Harness content still lives here — now under `harness/` — and the `~/.agents/` install contract is **unchanged**. Existing harness users see [`MIGRATING.md`](MIGRATING.md); to stay on the last harness-only release: `git checkout last-harness-only`. Architecture/plan: [`docs/decisions/`](docs/decisions/) + [`docs/plan/`](docs/plan/).
+> **⚠️ Repo repurposed to CEDIA (2026-07-25).** This repo is now the **CEDIA** product repo (macOS coding-agent desktop). Harness content still lives here — now under `harness/` — and the `~/.agents/` install contract is **unchanged**. Existing harness users see [`MIGRATING.md`](MIGRATING.md); to stay on the last harness-only release: `git checkout last-harness-only`. Architecture/plan: [`docs/decisions/`](docs/decisions/) + [`docs/plan/`](docs/plan/).
 
 **ตรา:** multi-AI harness alignment — นโยบายบางร่วมกันทุกเครื่องมือ + สกิลเรียกเมื่อใช้ (ไม่ยัดทุกโดเมนเข้า always-on)
 

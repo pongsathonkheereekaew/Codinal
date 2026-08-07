@@ -11,7 +11,7 @@ supersedes: []
 
 ## Context
 
-Codinal's GPUI desktop shell reached a passing Rust-only baseline
+CEDIA's GPUI desktop shell reached a passing Rust-only baseline
 (`verify.sh` + ~445 Rust tests), but the owner wants a Cursor-like result:
 a fork of the real editor core with an in-house agent harness, using the best
 existing tool per domain instead of a custom Rust UI. The success criterion is
@@ -30,13 +30,13 @@ produce the requested "exactly like Cursor" IDE result.
 
 - Use the upstream VS Code repository as the editor core, exactly the pattern
   Cursor uses.
-- Keep the fork in a separate repo (`codinal-ide`) rather than nesting the
+- Keep the fork in a separate repo (`cedia-ide`) rather than nesting the
   ~1.3 GB upstream history inside this harness repo.
 - This repo (`harness-flow`) remains the harness/policy/skills SSOT.
 
 ### D2 — First implementation surface: bundled agent extension
 
-- Start inside the fork as a bundled extension (`extensions/codinal-agent`)
+- Start inside the fork as a bundled extension (`extensions/cedia-agent`)
   rather than rewriting editor internals.
 - The agent loop is ours: conversation model, plan mode, tool execution,
   policy approval, diff review, and apply. It calls provider APIs directly and
@@ -49,6 +49,16 @@ produce the requested "exactly like Cursor" IDE result.
 - Adopt bb's useful ideas later (threads, orchestration, CLI/SDK parity) only
   after the editor fork and agent extension prove the self-hosting loop.
 - Do not embed bb's server/daemon model into the editor fork in phase 1.
+
+### D3a — Browser layer: BrowserOS (AGPL-3.0), not Chromium/Firefox engines
+
+- CEDIA ships a full agentic browser surface. Fork `browseros-ai/BrowserOS`
+  (TypeScript, AGPL-3.0) as the browser layer in a separate repo
+  (`~/cedia-browser`), and connect it to the IDE and agent through MCP.
+- Do not fork Chromium (BSD-3, ~65 GB source) or Firefox (~5.2 GB source);
+  they are full browser engines and are the wrong weight for an agent
+  browser surface. VS Code's built-in webview is not a browser product and
+  does not cover tabs/navigation/DOM-to-agent by itself.
 
 ### D4 — Self-hosting is the acceptance gate
 
