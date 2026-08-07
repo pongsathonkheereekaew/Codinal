@@ -196,6 +196,11 @@ Reviewer findings and resolutions (2026-08-07):
   completion; 12 extension tests pass; VSIX packaging works.
 - `CEDIA: Self-host gate` runs the agent in the current repo then
   `bash verify.sh`; this is the self-hosting acceptance surface.
+- Headless gate CLI proven: `node out/cli.js --task "write gate-probe.txt"
+  --verify verify.sh` writes the file and verify passes (mock provider).
+- Live browser proven with Playwright MCP: `browser_navigate` returned
+  `https://example.com/` + "Example Domain" using the installed
+  Chrome-for-Testing binary; no extra download needed.
 - Fork launch verified: `scripts/code.sh` starts Electron, syncs built-in
   extensions, and runs the extension host on this machine.
 - Review workflow gained per-file revert; apply creates a session branch;
