@@ -72,7 +72,7 @@ When the deliverable is a file, end the reply with a markdown link the user can 
 ## Spines & installs
 
 - Do not install competing full spines into `~/.agents` (GSD whole pack, full Superpowers dump, ultra-review duplicates, second episodic memory).
-- New portable skills → harness-flow repo → `harness sync`. Never `skills add -a '*'` real copies into adapter dirs.
+- New portable skills → CEDIA repo → `harness sync`. Never `skills add -a '*'` real copies into adapter dirs.
 - Do not use vendor installers that write real copies under `~/.codex/skills` or similar when a harness SSOT path exists.
 - Do not port a second coworker/desktop-agent runtime into this harness (policy/skills only).
 

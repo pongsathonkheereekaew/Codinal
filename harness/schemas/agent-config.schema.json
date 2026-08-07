@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://harness-flow/schemas/agent-config.schema.json",
+  "$id": "https://CEDIA/schemas/agent-config.schema.json",
   "title": "Minimal agent configuration",
   "type": "object",
   "required": ["schema_version", "active_model", "models", "plugins", "mcp"],

@@ -7,7 +7,7 @@ metadata:
 ---
 
 **Durable facts (shared):** `~/.agents/memory/` — one fact per file, indexed in `MEMORY.md`.  
-SSOT after install = harness-flow `memory/` → `./install.sh`. Load `MEMORY.md` then only relevant files — do not dump the folder every turn.
+SSOT after install = CEDIA `memory/` → `./install.sh`. Load `MEMORY.md` then only relevant files — do not dump the folder every turn.
 
 **Episodic (Claude-only):** claude-mem auto-capture/recall. Hooks/plugins stay under `~/.claude`. Not in this folder.
 

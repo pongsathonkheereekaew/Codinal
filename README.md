@@ -1,6 +1,6 @@
 # CEDIA — AI Coding Desktop
 
-> **CEDIA (formerly Codinal/Aidel/harness-flow, renamed 2026-08-07).** This repo is
+> **CEDIA (formerly Codinal/Aidel/CEDIA, renamed 2026-08-07).** This repo is
 > the SSOT for the CEDIA harness plus the plan for the CEDIA Code-OSS IDE
 > fork. The IDE fork lives at `pongsathonkheeereekaew/CEDIA-IDE` and reads
 > harness content here read-only.
@@ -26,7 +26,7 @@
 | **Agent Harness** | นโยบายสั้นที่โหลดเสมอ + สกิลเรียกเมื่อใช้ |
 | **`AGENTS.md`** | นโยบายร่วม (lingua franca) |
 | **`~/.agents/`** | SSOT สดหลังติดตั้ง |
-| **harness-flow** | repo นี้ — git SSOT ของเนื้อหานั้น |
+| **CEDIA** | repo นี้ — git SSOT ของเนื้อหานั้น |
 
 ออฟฟิศ / Hermes อยู่ repo แยก: [agentmonitor](https://github.com/pongsathonkheereekaew/agentmonitor) — **ไม่จำเป็น** สำหรับเครื่องเขียนโค้ดล้วนๆ
 
@@ -92,13 +92,13 @@ Harness **ไม่** ลิงก์ skill เข้า Antigravity อัต�
 ## ขั้นที่ 3 — ติดตั้ง harness (ครั้งเดียว)
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh
+git clone git@github.com:pongsathonkheereekaew/CEDIA.git ~/CEDIA && ~/CEDIA/bootstrap.sh
 ```
 
 SSH ไม่ได้ — ใช้ HTTPS:
 
 ```bash
-git clone https://github.com/pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh
+git clone https://github.com/pongsathonkheereekaew/CEDIA.git ~/CEDIA && ~/CEDIA/bootstrap.sh
 ```
 
 `bootstrap.sh` ทำครบ:
@@ -121,7 +121,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ใช้ได้ — พอติด AI ทีหลัง รันซ้ำ:
 
 ```bash
-cd ~/harness-flow && ./install.sh
+cd ~/CEDIA && ./install.sh
 ```
 
 ---
@@ -136,7 +136,7 @@ cd ~/harness-flow && ./install.sh
 
 ```bash
 harness doctor
-bash ~/harness-flow/verify.sh
+bash ~/CEDIA/verify.sh
 ```
 
 ---
@@ -150,7 +150,7 @@ harness update
 หรือ:
 
 ```bash
-cd ~/harness-flow && git pull && ./install.sh
+cd ~/CEDIA && git pull && ./install.sh
 ```
 
 ---
@@ -272,7 +272,7 @@ git clone git@github.com:pongsathonkheereekaew/agentmonitor.git ~/agentmonitor &
 | Antigravity adapter เฉพาะ | ยังไม่อยู่ใน harness |
 | secrets / tokens | ห้าม commit |
 
-| อย่าใส่ใน harness-flow | เก็บที่ไหน |
+| อย่าใส่ใน CEDIA | เก็บที่ไหน |
 |------------------------|-----------|
 | Hermes / office | `agentmonitor` |
 | Claude hooks runtime bodies | `~/.claude` (defaults ใส่ให้อัตโนมัติ) |

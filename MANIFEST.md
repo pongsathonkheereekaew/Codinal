@@ -16,7 +16,7 @@
 ## Install once
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh
+git clone git@github.com:pongsathonkheereekaew/CEDIA.git ~/CEDIA && ~/CEDIA/bootstrap.sh
 ```
 
 Then open Cursor / Claude Code — no harness tweaks required.

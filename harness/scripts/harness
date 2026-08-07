@@ -36,9 +36,9 @@ case "$cmd" in
     exec python3 "$SCRIPTS/harness_skill.py" "${@:2}"
     ;;
   install)
-    local_repo="${HARNESS_FLOW_HOME:-$HOME/harness-flow}"
+    local_repo="${CEDIA_HOME:-$HOME/CEDIA}"
     if [[ ! -x "$local_repo/install.sh" ]]; then
-      echo "ERROR: no install.sh at $local_repo (set HARNESS_FLOW_HOME or clone ~/harness-flow)" >&2
+      echo "ERROR: no install.sh at $local_repo (set CEDIA_HOME or clone ~/CEDIA)" >&2
       exit 1
     fi
     exec "$local_repo/install.sh"
@@ -58,10 +58,10 @@ rules_cmd() {
 }
 
 update_cmd() {
-  local repo="${HARNESS_FLOW_HOME:-$HOME/harness-flow}"
+  local repo="${CEDIA_HOME:-$HOME/CEDIA}"
   if [[ ! -d "$repo/.git" ]]; then
     echo "ERROR: no clone at $repo — run bootstrap once:" >&2
-    echo "  git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh" >&2
+    echo "  git clone git@github.com:pongsathonkheereekaew/CEDIA.git ~/CEDIA && ~/CEDIA/bootstrap.sh" >&2
     exit 1
   fi
   echo "=== harness update ($repo) ==="
@@ -321,11 +321,11 @@ Usage:
   harness skill disable NAME            Disable a catalog skill (core refused)
   harness skill reset                   Re-enable every disabled skill
   harness skill audit [--json]          Classification + journal health
-  harness update                        git pull ~/harness-flow && ./install.sh
+  harness update                        git pull ~/CEDIA && ./install.sh
   harness help                          This text
 
 New machine (once):
-  git clone <repo> ~/harness-flow && ~/harness-flow/bootstrap.sh
+  git clone <repo> ~/CEDIA && ~/CEDIA/bootstrap.sh
 
 Install a skill (once):
   cp -R <skill-dir> ~/.agents/skills/<name>

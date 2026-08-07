@@ -21,10 +21,10 @@ import sys
 from pathlib import Path
 
 # Resolve repo / agents-home root from this file's location (works both in the
-# dev tree and under ~/.agents/scripts/ after install). HARNESS_FLOW_HOME
+# dev tree and under ~/.agents/scripts/ after install). CEDIA_HOME
 # overrides for isolated smoke/contract runs.
 ROOT = Path(__file__).resolve().parent.parent
-_hf = os.environ.get("HARNESS_FLOW_HOME")
+_hf = os.environ.get("CEDIA_HOME")
 if _hf:
     ROOT = Path(_hf).resolve()
 for sub in ("scripts",):

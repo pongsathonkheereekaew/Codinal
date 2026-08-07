@@ -2,13 +2,13 @@
 # One-shot: clone (if needed) + install + verify — new machine, zero tweak.
 # Usage:
 #   ./bootstrap.sh
-#   # or from anywhere after first clone lives at ~/harness-flow:
+#   # or from anywhere after first clone lives at ~/CEDIA:
 #   curl not required — clone once, then forever: harness update
 set -euo pipefail
 
-REPO_SSH="${HARNESS_FLOW_SSH:-git@github.com:pongsathonkheereekaew/harness-flow.git}"
-REPO_HTTPS="${HARNESS_FLOW_HTTPS:-https://github.com/pongsathonkheereekaew/harness-flow.git}"
-DEST="${HARNESS_FLOW_HOME:-$HOME/harness-flow}"
+REPO_SSH="${CEDIA_SSH:-git@github.com:pongsathonkheereekaew/CEDIA.git}"
+REPO_HTTPS="${CEDIA_HTTPS:-https://github.com/pongsathonkheereekaew/CEDIA.git}"
+DEST="${CEDIA_HOME:-$HOME/CEDIA}"
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -20,7 +20,7 @@ need_cmd() {
 need_cmd git
 need_cmd python3
 
-echo "=== harness-flow bootstrap → $DEST ==="
+echo "=== CEDIA bootstrap → $DEST ==="
 
 if [[ -d "$DEST/.git" ]]; then
   echo "repo exists — fast-forward pull"

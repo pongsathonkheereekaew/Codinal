@@ -32,7 +32,7 @@ produce the requested "exactly like Cursor" IDE result.
   Cursor uses.
 - Keep the fork in a separate repo (`cedia-ide`) rather than nesting the
   ~1.3 GB upstream history inside this harness repo.
-- This repo (`harness-flow`) remains the harness/policy/skills SSOT.
+- This repo (`CEDIA`) remains the harness/policy/skills SSOT.
 
 ### D2 — First implementation surface: bundled agent extension
 

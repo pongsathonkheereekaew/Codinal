@@ -1,1 +1,1 @@
-"""harness-flow runtime library (manifest, jsonc, ownership, merge)."""
+"""CEDIA runtime library (manifest, jsonc, ownership, merge)."""

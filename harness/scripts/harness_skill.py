@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-_hf = os.environ.get("HARNESS_FLOW_HOME")
+_hf = os.environ.get("CEDIA_HOME")
 if _hf:
     ROOT = Path(_hf).resolve()
 for sub in ("scripts",):

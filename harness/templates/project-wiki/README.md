@@ -14,7 +14,7 @@ Do not install a competing vault or LLM-wiki app as a capture engine.
 
 ## Init into a project
 
-From the harness-flow repo root:
+From the CEDIA repo root:
 
 ```bash
 bash templates/project-wiki/init-wiki.sh /path/to/your-plugin-or-app-repo

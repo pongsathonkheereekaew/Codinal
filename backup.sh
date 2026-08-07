@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$ROOT/harness"
 cd "$ROOT"
 
-echo "=== backup ~/.agents → harness-flow/harness ==="
+echo "=== backup ~/.agents → CEDIA/harness ==="
 
 if [ -d "$HOME/.agents/skills" ]; then
   rsync -a --delete "$HOME/.agents/skills/" "$HARNESS/skills/"

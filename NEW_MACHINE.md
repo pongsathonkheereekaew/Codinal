@@ -10,7 +10,7 @@
 3. Harness:
 
 ```bash
-git clone git@github.com:pongsathonkheereekaew/harness-flow.git ~/harness-flow && ~/harness-flow/bootstrap.sh
+git clone git@github.com:pongsathonkheereekaew/CEDIA.git ~/CEDIA && ~/CEDIA/bootstrap.sh
 ```
 
 4. เปิด AI แล้วทำงาน  

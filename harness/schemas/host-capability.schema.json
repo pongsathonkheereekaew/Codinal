@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://harness-flow/schemas/host-capability.schema.json",
+  "$id": "https://CEDIA/schemas/host-capability.schema.json",
   "title": "Host capability manifest",
   "type": "object",
   "required": ["schema_version", "hosts"],

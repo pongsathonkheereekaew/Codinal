@@ -119,7 +119,7 @@ by `cedia-agent`, then verified with `bash verify.sh`.
   packaging, and release workflow.
 - `~/cedia-browser` owns the BrowserOS fork (AGPL-3.0) as the agentic
   browser layer; the IDE talks to it over MCP (`cedia-browser`).
-- This repo (`harness-flow`) remains the SSOT for policy, standards, skills,
+- This repo (`CEDIA`) remains the SSOT for policy, standards, skills,
   and the acceptance/verify gates; the extension reads it read-only.
 - Do not copy harness content into the fork; install/symlink it.
 

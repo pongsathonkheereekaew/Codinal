@@ -7,13 +7,13 @@
 | **Agent Harness** | Method: one content hub + thin adapters |
 | **Lingua franca** | `AGENTS.md` (keep this filename) |
 | **`~/.agents/`** | Live SSOT after install |
-| **harness-flow** | This repo — git SSOT for policy + skills |
+| **CEDIA** | This repo — git SSOT for policy + skills |
 | **agentmonitor** | Separate repo — Hermes kit + pixel office |
 
 ## Day to day
 
 ```bash
-# In harness-flow (preferred — git is SSOT)
+# In CEDIA (preferred — git is SSOT)
 edit skills/ or AGENTS.md
 ./install.sh                         # → ~/.agents (backs up differing live AGENTS.md)
 ~/.agents/scripts/harness doctor
@@ -26,7 +26,7 @@ Always-on `AGENTS.md` stays **thin** (core skill router). Full packs live under 
 ## Clean setup
 
 ```bash
-git clone …/harness-flow && cd harness-flow && ./install.sh
+git clone …/CEDIA && cd CEDIA && ./install.sh
 ```
 
 Optional office:
