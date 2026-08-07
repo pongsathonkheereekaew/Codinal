@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Codinal product acceptance — harness, Rust desktop stack, and macOS desktop shell
-# Codinal layout: harness content under harness/, product at root.
+# CEDIA acceptance — harness, Rust desktop stack, and macOS desktop shell
+# CEDIA layout: harness content under harness/, product at root.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$ROOT/harness"
@@ -10,7 +10,7 @@ if [ -x "$ROOT/.venv/bin/python" ]; then
 fi
 cd "$ROOT"
 
-echo "=== Codinal verify ==="
+echo "=== CEDIA verify ==="
 
 echo "== layout =="
 test -f "$HARNESS/AGENTS.md"
@@ -151,6 +151,13 @@ for f in "$HARNESS"/standards/*.md; do
 done
 echo "policy invariants: OK"
 
+echo "== live smokes (skip when secrets/binary absent) =="
+"$PYTHON_BIN" - <<'PY' || true
+print("scripts/live-provider-smoke.sh and scripts/browseros-smoke.sh exist")
+PY
+bash "$ROOT/scripts/live-provider-smoke.sh"
+bash "$ROOT/scripts/browseros-smoke.sh"
+
 echo "== host install (skip on CI) =="
 if [ -d ~/.agents ]; then
   # SSOT integrity: at least one symlink adapter under ~/.agents/skills is a live symlink
@@ -164,5 +171,5 @@ else
 fi
 
 echo ""
-echo "Codinal verify: PASS"
+echo "CEDIA verify: PASS"
 echo "On a machine after install, also run: harness doctor"

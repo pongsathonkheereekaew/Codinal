@@ -1,6 +1,6 @@
 # CEDIA — AI Coding Desktop
 
-> **CEDIA (formerly Codinal/Aidel/CEDIA, renamed 2026-08-07).** This repo is
+> **CEDIA (formerly Codinal/Aidel/harness-flow, renamed 2026-08-07).** This repo is
 > the SSOT for the CEDIA harness plus the plan for the CEDIA Code-OSS IDE
 > fork. The IDE fork lives at `pongsathonkheeereekaew/CEDIA-IDE` and reads
 > harness content here read-only.
