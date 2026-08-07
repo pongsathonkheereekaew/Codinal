@@ -209,6 +209,11 @@ Reviewer findings and resolutions (2026-08-07):
 - Live provider and BrowserOS-native smokes are wired into `verify.sh` and
   CI (`live-smoke.yml`); they skip cleanly until a real API key or BrowserOS
   binary is available.
+- Live hosted provider proven end-to-end with DeepSeek (`deepseek-chat`):
+  `scripts/live-provider-smoke.sh` reports PASS after the agent writes
+  `LIVE_PROVIDER_PROBE.md` through the OpenAI-compatible adapter. CEDIA is the
+  product name, not a provider; provider profiles are upstream models the
+  agent calls.
 - Live browser proven with Playwright MCP: `browser_navigate` returned
   `https://example.com/` + "Example Domain" using the installed
   Chrome-for-Testing binary; no extra download needed.
