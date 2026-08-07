@@ -178,10 +178,14 @@ Reviewer findings and resolutions (2026-08-07):
   Chromium fork needs ~100 GB and is deferred. Until then, BrowserOS remains
   the primary browser layer; a Playwright MCP fallback can be enabled in
   `agent.yaml` for local browser tool coverage.
+- BrowserOS MCP server discovers CDP at `[::1]:9000` while stock Chromium
+  binds IPv4; that plus `Browser.getTabs` keeps stock browsers unusable.
 - Extension tests now prove the full headless agent loop (7 tests): streaming
   provider, tool-call merge, approved write, and an MCP HTTP browser call.
 - Browser tool now speaks MCP streamable HTTP correctly (initialize +
-  session-id + notifications/initialized + tools/call); 8 extension tests pass.
+  session-id + notifications/initialized + tools/call).
+- Generic `mcp` tool resolves servers from `harness agent list-mcp` and calls
+  any configured HTTP MCP server; 9 extension tests pass.
 - Review workflow gained per-file revert; apply creates a session branch;
   snapshot/restore covers checkpoints.
 - `harness agent list-mcp` exposes configured MCP servers to the extension;
