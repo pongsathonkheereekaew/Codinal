@@ -1,0 +1,28 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{font-family:-apple-system,sans-serif;margin:24px;background:#f6f7f9;color:#111}
+.shell{max-width:720px;background:#fff;border:1px solid #d8dbe0;border-radius:8px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.grid{display:grid;gap:12px;margin-top:12px}
+.card{border:1px solid #d8dbe0;border-radius:6px;padding:12px;display:grid;gap:8px}
+h2{margin:0;font-size:15px}
+label{font-size:12px;color:#666}
+input,select{padding:6px 8px;border:1px solid #d8dbe0;border-radius:4px;font:inherit}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #eee}
+.badge{padding:2px 8px;border-radius:3px;font-size:11px}
+.badge.warn{background:#fff3d4;color:#8a6d00}
+.btn{padding:6px 12px;border-radius:4px;font-size:12px;background:#1f6bff;color:#fff;border:0;cursor:pointer}
+.btn.danger{background:transparent;color:#d1242f;border:1px solid #d1242f}
+</style></head><body><div class="shell">
+<div class="grid"><div class="card"><h2>Welcome to CEDIA</h2>
+<label>Provider</label><select><option>DeepSeek</option><option>OpenAI</option></select>
+<label>API key</label><input type="password" placeholder="sk-...">
+<button class="btn">Save and continue</button></div></div>
+<div class="grid"><div class="card"><h2>Approvals</h2>
+<div class="row"><span>run git status</span><span class="badge warn">warn</span><span><button class="btn">Allow</button> <button class="btn danger">Deny</button></span></div>
+<div class="row"><span>write src/agent.ts</span><span class="badge warn">warn</span><span><button class="btn">Allow</button> <button class="btn danger">Deny</button></span></div>
+</div></div>
+<div class="grid"><div class="card"><h2>Settings</h2>
+<label>Active provider</label><select><option>DeepSeek</option></select>
+<label>MCP servers</label><div>cedia-browser · cedia-context · cedia-filesystem</div>
+<label><input type="checkbox" checked> Telemetry opt-out</label>
+<button class="btn">Save</button></div></div>
+</div></body></html>
