@@ -5,6 +5,15 @@
 > fork. The IDE fork lives at `pongsathonkheeereekaew/CEDIA-IDE` and reads
 > harness content here read-only.
 
+## CEDIA repos
+
+- `pongsathonkheeereekaew/CEDIA` — harness SSOT, policy, skills, agent config,
+  and this repo.
+- `pongsathonkheeereekaew/CEDIA-IDE` — Code-OSS fork (`~/cedia-ide`) with the
+  bundled `cedia-agent` extension.
+- `pongsathonkheeereekaew/CEDIA-BrowserOS` — BrowserOS fork (`~/cedia-browser`)
+  providing the agentic browser layer over MCP.
+
 > **⚠️ Repo repurposed to CEDIA (2026-07-25).** This repo is now the **CEDIA** product repo (macOS coding-agent desktop). Harness content still lives here — now under `harness/` — and the `~/.agents/` install contract is **unchanged**. Existing harness users see [`MIGRATING.md`](MIGRATING.md); to stay on the last harness-only release: `git checkout last-harness-only`. Architecture/plan: [`docs/decisions/`](docs/decisions/) + [`docs/plan/`](docs/plan/).
 
 **ตรา:** multi-AI harness alignment — นโยบายบางร่วมกันทุกเครื่องมือ + สกิลเรียกเมื่อใช้ (ไม่ยัดทุกโดเมนเข้า always-on)
