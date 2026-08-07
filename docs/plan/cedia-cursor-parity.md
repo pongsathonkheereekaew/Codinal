@@ -153,3 +153,26 @@ telemetry policy test.
 
 Start P1: scaffold `src/ui/` tokens/components, add first chat history +
 plan-step UI, and write the P1 gate scripts.
+
+## Progress (2026-08-07)
+
+- P1 done: UI tokens/components, bounded chat history, streaming blocks,
+  editable plan steps with per-step approve/reject; 23 tests; evidence
+  `docs/evidence/parity/p1/chat-plan.png`.
+- P2 done: unified diff parser, per-file/per-hunk accept/reject review panel,
+  apply logic; 28 tests; evidence `docs/evidence/parity/p2/review.png`.
+- P3 done: Cursor Tab-style inline edit (ghost text decoration, accept/reject
+  commands, remaining-text logic); 29 tests; evidence
+  `docs/evidence/parity/p3/inline-edit.png`.
+- P4 done: hash embeddings + cosine rank, `@` mention picker, image paste
+  attachment, browser context row; 30 tests; evidence
+  `docs/evidence/parity/p4/context-browser.png`.
+- P5 done: onboarding/settings webviews, approval queue UI, telemetry opt-out
+  toggle; 33 tests; evidence `docs/evidence/parity/p5/product.png`.
+- CEDIA IDE `verify.sh` PASS after all phases; every phase committed to
+  `CEDIA-IDE` (`codex/agent-ide`) and evidence to `CEDIA` (`main`).
+
+Remaining before "match" is defensible end-to-end: real GUI E2E in `code.sh`
+(accept/reject/inline-tab/image/onboarding), axe accessibility run, measured
+inline-edit latency, and the owner-gated signed release. The feature/UX code
+surface is now in place.
