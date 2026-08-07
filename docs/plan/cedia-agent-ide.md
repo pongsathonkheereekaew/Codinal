@@ -178,6 +178,12 @@ Reviewer findings and resolutions (2026-08-07):
   Chromium fork needs ~100 GB and is deferred. Until then, BrowserOS remains
   the primary browser layer; a Playwright MCP fallback can be enabled in
   `agent.yaml` for local browser tool coverage.
+- Extension tests now prove the full headless agent loop (7 tests): streaming
+  provider, tool-call merge, approved write, and an MCP HTTP browser call.
+- Review workflow gained per-file revert; apply creates a session branch;
+  snapshot/restore covers checkpoints.
+- `harness agent list-mcp` exposes configured MCP servers to the extension;
+  `cediaAgent.status` shows active model + workspace + MCP servers.
 - Remaining: live provider round-trip (needs a real API key), BrowserOS fork
   Chromium build (~100 GB) or verified fallback, full review/MCP/checkpoints/
   apply parity, packaging, and the self-hosting gate.
