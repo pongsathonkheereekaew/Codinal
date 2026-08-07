@@ -62,6 +62,11 @@ mcp:
     transport: http
     url: http://127.0.0.1:9200/mcp
     enabled: false
+  - id: cedia-browser-playwright
+    transport: stdio
+    command: npx
+    args: ["-y", "@playwright/mcp@latest", "--headless"]
+    enabled: false
   - id: cedia-context
     transport: http
     url: http://127.0.0.1:41783/mcp
