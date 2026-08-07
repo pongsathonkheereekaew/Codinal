@@ -206,6 +206,9 @@ Reviewer findings and resolutions (2026-08-07):
   `CEDIA_SELF_HOST_PROBE.md`, and `harness agent check` passes (PASS).
 - Live browser smoke proven: `scripts/browser-smoke.sh` runs
   `browser_navigate` through the extension MCP client and returns PASS.
+- Live provider and BrowserOS-native smokes are wired into `verify.sh` and
+  CI (`live-smoke.yml`); they skip cleanly until a real API key or BrowserOS
+  binary is available.
 - Live browser proven with Playwright MCP: `browser_navigate` returned
   `https://example.com/` + "Example Domain" using the installed
   Chrome-for-Testing binary; no extra download needed.
