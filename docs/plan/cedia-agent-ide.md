@@ -188,7 +188,12 @@ Reviewer findings and resolutions (2026-08-07):
   any configured HTTP MCP server.
 - Offline `mock/local` provider lets the full agent loop run without an API
   key; `CEDIA: Configure Provider` stores keys in SecretStorage;
-  `CEDIA: Self-check` reports config/tests/repo state. 10 extension tests pass.
+  `CEDIA: Self-check` reports config/tests/repo state.
+- `CEDIA: Add Context` sends the active file/selection into the agent session;
+  `CEDIA: Subagent` runs a delegated task in a fresh session. 10 extension
+  tests pass.
+- Fork launch verified: `scripts/code.sh` starts Electron, syncs built-in
+  extensions, and runs the extension host on this machine.
 - Review workflow gained per-file revert; apply creates a session branch;
   snapshot/restore covers checkpoints.
 - `harness agent list-mcp` exposes configured MCP servers to the extension;
