@@ -29,6 +29,9 @@ case "$cmd" in
   host|verify)
     exec python3 "$SCRIPTS/harness_host.py" "$@"
     ;;
+  agent)
+    exec python3 "$SCRIPTS/harness_agent.py" "${@:2}"
+    ;;
   skill)
     exec python3 "$SCRIPTS/harness_skill.py" "${@:2}"
     ;;

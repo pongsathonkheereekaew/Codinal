@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://harness-flow/schemas/agent-config.schema.json",
+  "title": "Minimal agent configuration",
+  "type": "object",
+  "required": ["schema_version", "active_model", "models", "plugins", "mcp"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "active_model": { "type": "string" },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "provider", "kind", "model"],
+        "properties": {
+          "id": { "type": "string" },
+          "provider": { "type": "string" },
+          "kind": { "enum": ["openai-compatible", "anthropic", "gemini"] },
+          "model": { "type": "string" },
+          "api_base": { "type": "string" },
+          "context_window": { "type": "integer", "minimum": 1 },
+          "capabilities": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "version", "entry"],
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "string" },
+          "entry": { "type": "string" },
+          "skills": { "type": "array", "items": { "type": "string" } },
+          "permissions": { "type": "array", "items": { "type": "string" } },
+          "mcp": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    },
+    "mcp": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "transport", "enabled"],
+        "properties": {
+          "id": { "type": "string" },
+          "transport": { "enum": ["stdio", "http"] },
+          "command": { "type": "string" },
+          "args": { "type": "array", "items": { "type": "string" } },
+          "url": { "type": "string" },
+          "enabled": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

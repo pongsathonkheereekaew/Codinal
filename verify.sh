@@ -87,6 +87,13 @@ else
   echo "manifest: SKIP (pyyaml/jsonschema not installed; pip install -r requirements-dev.txt)"
 fi
 
+echo "== agent config =="
+if "$PYTHON_BIN" -c "import yaml, jsonschema" 2>/dev/null; then
+  "$PYTHON_BIN" "$HARNESS/scripts/harness_agent.py" check
+else
+  echo "agent config: SKIP (pyyaml/jsonschema not installed; pip install -r requirements-dev.txt)"
+fi
+
 echo "== runtime truth =="
 "$PYTHON_BIN" scripts/runtime_truth_gate.py --check
 echo "runtime truth: OK"
