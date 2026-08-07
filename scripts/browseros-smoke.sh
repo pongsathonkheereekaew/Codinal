@@ -24,7 +24,7 @@ fi
 
 MCP_URL="http://127.0.0.1:9010/mcp"
 if ! curl -sS --max-time 2 "$MCP_URL" -o /dev/null 2>/dev/null; then
-  open -a "$(basename "$(dirname "$(dirname "$BIN")")")"
+  open "$(dirname "$(dirname "$BIN")")"
   for _ in $(seq 1 30); do
     if curl -sS --max-time 2 "$MCP_URL" -o /dev/null 2>/dev/null; then
       break
