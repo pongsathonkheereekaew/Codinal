@@ -58,3 +58,15 @@ modal approval/status prompts are excluded from headless runs.
   config).
 - DeepSeek live provider → PASS (`live-provider-smoke.sh`).
 - BrowserOS neo native MCP → PASS (`browseros-smoke.sh`).
+
+## Native in-IDE browser panel (2026-08-07)
+
+- `cediaAgent.browserPanel` now opens a Codex-style in-IDE browser:
+  address bar, back/forward/reload, tab strip, screenshot refresh, console
+  output, and "open in BrowserOS" button.
+- All actions drive BrowserOS MCP (`tabs`, `navigate`, `screenshot`,
+  `read format=console`); page id ownership is respected (new tab returns the
+  page id before navigation).
+- Unit tests cover page/tab/image parsing (66 extension tests pass). Live MCP
+  handshake verified against BrowserOS neo at `127.0.0.1:9010`; page actions
+  require a BrowserOS browser window to be open in the app.
