@@ -15,7 +15,7 @@
         "properties": {
           "id": { "type": "string" },
           "provider": { "type": "string" },
-          "kind": { "enum": ["openai-compatible", "anthropic", "gemini"] },
+          "kind": { "enum": ["openai-compatible", "anthropic", "gemini", "mock"] },
           "model": { "type": "string" },
           "api_base": { "type": "string" },
           "context_window": { "type": "integer", "minimum": 1 },
