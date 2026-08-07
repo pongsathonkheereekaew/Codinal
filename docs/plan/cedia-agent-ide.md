@@ -218,6 +218,10 @@ Reviewer findings and resolutions (2026-08-07):
   `scripts/self-host-gate.sh` runs the agent in a temp worktree, the agent
   reads the harness policy, authors `CEDIA_SELF_HOST_PROBE.md`, and the gate
   verifies PASS.
+- Full self-hosting acceptance proven: in a detached worktree of this repo,
+  CEDIA's agent (DeepSeek) authored `CEDIA_SELF_HOST_PROBE.md`, then
+  `bash verify.sh` passed inside that worktree. CEDIA now meets the plan's
+  self-hosting gate.
 - Signed/notarized release is deferred by the owner for self-use; browser
   native BinaryOS smoke remains SKIP until a BrowserOS binary is installed,
   with Playwright MCP as the verified fallback.
