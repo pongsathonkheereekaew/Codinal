@@ -1,0 +1,23 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{font-family:-apple-system,sans-serif;margin:24px;background:#f6f7f9;color:#111}
+.shell{max-width:760px;background:#fff;border:1px solid #d8dbe0;border-radius:8px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+.file{border:1px solid #d8dbe0;border-radius:6px;margin-bottom:12px;overflow:hidden}
+.filehead{display:flex;justify-content:space-between;padding:8px 12px;font-size:13px}
+.badge{padding:2px 8px;border-radius:3px;font-size:11px}
+.hunk{border-top:1px solid #eee}
+.hunkhead{display:flex;justify-content:space-between;padding:4px 12px;font-size:12px;color:#666;background:#fafbfc}
+.lines{font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:18px}
+.line{display:flex;white-space:pre}
+.add{background:#e6ffec}.del{background:#ffebe9}
+.num{width:2.5em;color:#999;text-align:right;padding-right:8px;flex:none}
+.btn{padding:3px 8px;border:1px solid #c9cdd3;border-radius:4px;font-size:12px;background:#fff;cursor:pointer}
+.btn.primary{background:#1f6feb;color:#fff;border-color:#1f6feb}
+</style></head><body><div class="shell">
+<div class="file"><div class="filehead"><strong>src/agent.ts</strong><span class="badge" style="background:#e6ffec;color:#1a7f37">accepted</span></div>
+<div class="hunk"><div class="hunkhead"><span>@@ -20,5 +21,6 @@</span><span><button class="btn">Accept</button> <button class="btn">Reject</button></span></div>
+<div class="lines"><div class="line del"><span class="num">21</span><span>const old = 2;</span></div><div class="line add"><span class="num">22</span><span>const newValue = 2;</span></div><div class="line"><span class="num">23</span><span>const y = 3;</span></div></div></div></div>
+<div class="file"><div class="filehead"><strong>src/tools.ts</strong><span class="badge" style="background:#fff3d4;color:#8a6d00">pending</span></div>
+<div class="hunk"><div class="hunkhead"><span>@@ -10,2 +10,3 @@</span><span><button class="btn">Accept</button> <button class="btn">Reject</button></span></div>
+<div class="lines"><div class="line"><span class="num">10</span><span>line</span></div><div class="line add"><span class="num">11</span><span>+added</span></div></div></div></div>
+<div style="display:flex;gap:8px;margin-top:8px"><button class="btn primary">Apply accepted</button><button class="btn">Reject pending</button></div>
+</div></body></html>
