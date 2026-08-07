@@ -192,6 +192,10 @@ Reviewer findings and resolutions (2026-08-07):
 - `CEDIA: Add Context` sends the active file/selection into the agent session;
   `CEDIA: Subagent` runs a delegated task in a fresh session. 10 extension
   tests pass.
+- Semantic workspace indexer adds `semantic_search` tool and inline symbol
+  completion; 12 extension tests pass; VSIX packaging works.
+- `CEDIA: Self-host gate` runs the agent in the current repo then
+  `bash verify.sh`; this is the self-hosting acceptance surface.
 - Fork launch verified: `scripts/code.sh` starts Electron, syncs built-in
   extensions, and runs the extension host on this machine.
 - Review workflow gained per-file revert; apply creates a session branch;
