@@ -169,6 +169,15 @@ Reviewer findings and resolutions (2026-08-07):
   command. Extension compile + 4 unit tests pass.
 - Browser layer wired through MCP (`cedia-browser` →
   `http://127.0.0.1:9200/mcp`).
+- Agent loop proven headlessly: extension test drives user → tool call →
+  approval → write → finish against a local SSE provider; 6 extension tests
+  pass.
+- BrowserOS MCP server (`browseros-claw-server-rs`) compiles and starts its
+  SQLite migrations, but requires the BrowserOS Chromium fork for CDP
+  (`Browser.getTabs`); stock Chrome/Brave cannot seed it. Building that
+  Chromium fork needs ~100 GB and is deferred. Until then, BrowserOS remains
+  the primary browser layer; a Playwright MCP fallback can be enabled in
+  `agent.yaml` for local browser tool coverage.
 - Remaining: live provider round-trip (needs a real API key), BrowserOS fork
-  dev build/run, full review/MCP/checkpoints/apply parity, packaging, and the
-  self-hosting gate.
+  Chromium build (~100 GB) or verified fallback, full review/MCP/checkpoints/
+  apply parity, packaging, and the self-hosting gate.
