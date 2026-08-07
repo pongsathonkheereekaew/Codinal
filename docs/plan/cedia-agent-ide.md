@@ -157,3 +157,18 @@ Reviewer findings and resolutions (2026-08-07):
    as explicit phase 2/3 gates instead of leaving them implied.
 9. **Self-hosting sequencing:** phase 1 is built by this session; the harness
    only starts authoring its own changes at phase 2.
+
+## Progress (2026-08-07)
+
+- Phase 0 done: VS Code fork builds with `npm install` + `npm run watch`
+  (client/extensions/copilot compile with 0 errors), dev shell launcher at
+  `~/cedia-ide/scripts/cedia-dev.sh`.
+- Phase 1 core done in `extensions/cedia-agent`: chat/composer webview,
+  streaming OpenAI-compatible provider from `agent.yaml`, plan mode, approved
+  read/write/shell/git/search tools, BrowserOS MCP browser calls, review
+  command. Extension compile + 4 unit tests pass.
+- Browser layer wired through MCP (`cedia-browser` →
+  `http://127.0.0.1:9200/mcp`).
+- Remaining: live provider round-trip (needs a real API key), BrowserOS fork
+  dev build/run, full review/MCP/checkpoints/apply parity, packaging, and the
+  self-hosting gate.
