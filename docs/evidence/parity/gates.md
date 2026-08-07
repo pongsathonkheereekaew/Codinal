@@ -31,6 +31,25 @@ The suite opens a real Code window via `@vscode/test-electron`, activates
 `cedia-agent`, and executes `cediaAgent.chat`. Non-modal commands only;
 modal approval/status prompts are excluded from headless runs.
 
+## Review-fix evidence (2026-08-07)
+
+- Plan approval is now bound to execution: `AgentSession.setPlan` rejects a
+  run while any step is unapproved (unit test covers gate + allowed run).
+- Review apply is real: accepted hunks are rebuilt into a filtered unified
+  diff and applied with `git apply --check` + `git apply`; rejected hunks stay
+  in the session.
+- Inline edit: multi-line suggestion text, Alt+Tab alternative cycling,
+  and conflict invalidation when the user types inside the proposed range.
+- Settings/onboarding load provider profiles and MCP servers from the harness
+  `agent.yaml`; telemetry opt-out persists in global state.
+- Retrieval is honest: keyword-hash vector is documented as non-semantic and
+  tested so synonym-only queries do not outrank exact overlap.
+- Keybindings contributed (Tab/Esc/Alt+Tab inline, Cmd+Alt+C C/R), inline SVG
+  icon set added; browser panel now has an address bar that mirrors
+  BrowserOS navigation.
+- E2E suite additionally exercises browser panel, settings, and inline reject
+  commands without modal prompts; exit 0.
+
 ## Live parity gates
 
 - `~/CEDIA/verify.sh` → PASS (Rust contracts, policy invariants,
