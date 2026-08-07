@@ -203,6 +203,9 @@ Reviewer findings and resolutions (2026-08-07):
 - Live browser proven with Playwright MCP: `browser_navigate` returned
   `https://example.com/` + "Example Domain" using the installed
   Chrome-for-Testing binary; no extra download needed.
+- `~/cedia-ide/verify.sh` + `cedia-verify.yml` gate the extension
+  compile/tests/package and harness config in CI; `scripts/cedia-release.sh`
+  builds the macOS app bundle with env-gated signing/notarization.
 - Fork launch verified: `scripts/code.sh` starts Electron, syncs built-in
   extensions, and runs the extension host on this machine.
 - Review workflow gained per-file revert; apply creates a session branch;
