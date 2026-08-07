@@ -180,6 +180,8 @@ Reviewer findings and resolutions (2026-08-07):
   `agent.yaml` for local browser tool coverage.
 - Extension tests now prove the full headless agent loop (7 tests): streaming
   provider, tool-call merge, approved write, and an MCP HTTP browser call.
+- Browser tool now speaks MCP streamable HTTP correctly (initialize +
+  session-id + notifications/initialized + tools/call); 8 extension tests pass.
 - Review workflow gained per-file revert; apply creates a session branch;
   snapshot/restore covers checkpoints.
 - `harness agent list-mcp` exposes configured MCP servers to the extension;
