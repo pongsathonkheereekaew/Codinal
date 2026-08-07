@@ -225,6 +225,12 @@ Reviewer findings and resolutions (2026-08-07):
 - Signed/notarized release is deferred by the owner for self-use; browser
   native BinaryOS smoke remains SKIP until a BrowserOS binary is installed,
   with Playwright MCP as the verified fallback.
+- BrowserOS-native now proven: BrowserOS neo release installed, MCP endpoint
+  `127.0.0.1:9010/mcp` answers, `scripts/browseros-smoke.sh` PASS; browser
+  tool auto-falls back from Playwright `browser_navigate` to BrowserOS `tabs`.
+- Unsigned macOS bundle built and launched (`VSCode-darwin-arm64/CEDIA.app`,
+  1.5 GB) with `cedia-agent` included; signed/notarized release remains
+  deferred for self-use until Apple credentials are provided.
 - Live browser proven with Playwright MCP: `browser_navigate` returned
   `https://example.com/` + "Example Domain" using the installed
   Chrome-for-Testing binary; no extra download needed.
