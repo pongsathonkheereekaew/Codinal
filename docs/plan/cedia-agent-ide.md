@@ -194,6 +194,8 @@ Reviewer findings and resolutions (2026-08-07):
   tests pass.
 - Semantic workspace indexer adds `semantic_search` tool and inline symbol
   completion; 12 extension tests pass; VSIX packaging works.
+- Inline edit command proposes a rewrite of the selection with accept/reject
+  (Cursor Tab-style flow).
 - `CEDIA: Self-host gate` runs the agent in the current repo then
   `bash verify.sh`; this is the self-hosting acceptance surface.
 - Headless gate CLI proven: `node out/cli.js --task "write gate-probe.txt"
