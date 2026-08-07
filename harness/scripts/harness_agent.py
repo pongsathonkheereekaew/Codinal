@@ -48,16 +48,25 @@ def resolve_model(root: Path = ROOT) -> None:
     sys.stdout.write("\n")
 
 
+def list_mcp(root: Path = ROOT) -> None:
+    data = load(root)
+    json.dump(data["mcp"], sys.stdout, indent=2)
+    sys.stdout.write("\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="validate config and print the active model")
     sub.add_parser("resolve-model", help="print the active model profile as JSON")
+    sub.add_parser("list-mcp", help="print configured MCP servers as JSON")
     args = parser.parse_args()
     if args.command == "check":
         check()
-    else:
+    elif args.command == "resolve-model":
         resolve_model()
+    else:
+        list_mcp()
 
 
 if __name__ == "__main__":
