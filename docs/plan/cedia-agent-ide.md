@@ -6,6 +6,9 @@ agent chat/plan/diff/review, IDE-grade editing, terminal, Git/worktree,
 search, LSP, provider BYOK, permissions, checkpoints, and a self-hosting
 acceptance gate.
 
+UI/UX parity is specified separately in
+[`docs/plan/cedia-cursor-parity.md`](cedia-cursor-parity.md) (phases P1-P5).
+
 ## Parity model
 
 Cursor is not one feature; it is three surfaces that must be planned and gated
