@@ -70,3 +70,16 @@ modal approval/status prompts are excluded from headless runs.
 - Unit tests cover page/tab/image parsing (66 extension tests pass). Live MCP
   handshake verified against BrowserOS neo at `127.0.0.1:9010`; page actions
   require a BrowserOS browser window to be open in the app.
+
+## True native WebContentsView browser (2026-08-07)
+
+- `cediaAgent.nativeBrowser` opens a real editor browser tab via the fork's
+  proposed `window.openBrowserTab` API (`extensions/cedia-agent` enables
+  `"browser"` API proposal). This is a WebContentsView inside the CEDIA
+  window, not an iframe or screenshot preview.
+- `CediaNativeBrowser` attaches a CDP session (`Page.enable`,
+  `Page.captureScreenshot`, `Runtime.evaluate`, `Page.navigate`) so the agent
+  and UI can read console, screenshot, navigate, and evaluate JS directly.
+- E2E suite exercises the command (exit 0; headless may skip native view
+  render); extension tests 66 pass.
+- Kept the BrowserOS MCP panel as the login/profile-rich fallback.
