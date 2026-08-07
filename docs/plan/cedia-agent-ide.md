@@ -185,7 +185,8 @@ Reviewer findings and resolutions (2026-08-07):
 - Browser tool now speaks MCP streamable HTTP correctly (initialize +
   session-id + notifications/initialized + tools/call).
 - Generic `mcp` tool resolves servers from `harness agent list-mcp` and calls
-  any configured HTTP MCP server.
+  any configured HTTP or stdio MCP server (streamable HTTP + stdio JSON-RPC
+  clients; 13 extension tests pass).
 - Offline `mock/local` provider lets the full agent loop run without an API
   key; `CEDIA: Configure Provider` stores keys in SecretStorage;
   `CEDIA: Self-check` reports config/tests/repo state.
