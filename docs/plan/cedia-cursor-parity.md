@@ -176,3 +176,16 @@ Remaining before "match" is defensible end-to-end: real GUI E2E in `code.sh`
 (accept/reject/inline-tab/image/onboarding), axe accessibility run, measured
 inline-edit latency, and the owner-gated signed release. The feature/UX code
 surface is now in place.
+
+### Gate completion (2026-08-07)
+
+- GUI E2E: `npm run test:e2e` opens a real Code window via
+  `@vscode/test-electron`, activates `cedia-agent`, and exits 0.
+- Accessibility: axe-core (4.13.0) runs in a clean jsdom child process against
+  chat, review, and product views; 0 violations. One real defect found and
+  fixed (`select-name`: labels now bound with `for`/`aria-label`).
+- Performance: measured budgets pass (index build 52.6 ms, search 0.42 ms,
+  plan parse 0.076 ms; budgets 3000/250/5 ms).
+- Evidence: `docs/evidence/parity/gates.md` plus P1-P5 screenshots.
+- Owner-deferred: signed/notarized release (Apple credentials), and
+  interactive modal approval in headless E2E (logic/UI covered by unit+axe).
