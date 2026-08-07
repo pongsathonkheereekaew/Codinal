@@ -24,6 +24,9 @@ chmod +x "$WORKTREE/verify-selfhost.sh"
 
 export PATH="$HOME/.local/node24/bin:$PATH"
 export CEDIA_AUTO_APPROVE="${CEDIA_AUTO_APPROVE:-1}"
+if [ -n "${CEDIA_API_KEY:-}" ] && [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+  export DEEPSEEK_API_KEY="$CEDIA_API_KEY"
+fi
 
 node "$EXT/out/cli.js" \
   --workspace "$WORKTREE" \

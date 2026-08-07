@@ -214,6 +214,13 @@ Reviewer findings and resolutions (2026-08-07):
   `LIVE_PROVIDER_PROBE.md` through the OpenAI-compatible adapter. CEDIA is the
   product name, not a provider; provider profiles are upstream models the
   agent calls.
+- Real-model self-host gate proven with DeepSeek:
+  `scripts/self-host-gate.sh` runs the agent in a temp worktree, the agent
+  reads the harness policy, authors `CEDIA_SELF_HOST_PROBE.md`, and the gate
+  verifies PASS.
+- Signed/notarized release is deferred by the owner for self-use; browser
+  native BinaryOS smoke remains SKIP until a BrowserOS binary is installed,
+  with Playwright MCP as the verified fallback.
 - Live browser proven with Playwright MCP: `browser_navigate` returned
   `https://example.com/` + "Example Domain" using the installed
   Chrome-for-Testing binary; no extra download needed.
