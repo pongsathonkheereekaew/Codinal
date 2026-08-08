@@ -7,9 +7,108 @@
 
 schema_version: 1
 
-active_model: deepseek/deepseek-chat
+active_model: opencode-go/deepseek-v4-flash
 
 models:
+  - id: opencode-go/grok-4.5
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-grok-4-5
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 500000
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/glm-5.2
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-glm-5-2
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 1048576
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/glm-5.1
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-glm-5-1
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 1048576
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/kimi-k3
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-kimi-k3
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 262144
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/kimi-k2.7-code
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-kimi-k2-7-code
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 262144
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/kimi-k2.6
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-kimi-k2-6
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 262144
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/deepseek-v4-pro
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-deepseek-v4-pro
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 1048576
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/deepseek-v4-flash
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-deepseek-v4-flash
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 1048576
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/mimo-v2.5
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-mimo-v2-5
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 131072
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/mimo-v2.5-pro
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-mimo-v2-5-pro
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 131072
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
+  - id: opencode-go/hy3
+    provider: opencode-go
+    kind: openai-compatible
+    model: opencode-go-hy3
+    api_base: http://127.0.0.1:4120/v1
+    context_window: 131072
+    capabilities: [streaming, tools, reasoning]
+    effort: high
+    efforts: [low, medium, high]
   - id: deepseek/deepseek-chat
     provider: deepseek
     kind: openai-compatible
