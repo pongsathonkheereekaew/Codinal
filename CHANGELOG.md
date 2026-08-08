@@ -5,6 +5,28 @@ All notable changes to the harness-flow agent harness. Format based on
 policy surface (standards + core skills); adapter wiring and peripheral skills
 bump independently.
 
+## [0.2.0] - 2026-08-08
+
+### Added
+- Market benchmark case set, runner, and baseline report
+  (`harness/eval`, `scripts/bench`, `docs/market/benchmark-2026-08.md`).
+- Host verification gate (`harness host verify --all`) and per-host smoke
+  scripts with evidence under `docs/evidence/market/b2-b5`.
+- Provider prompt-cache controls (`none | auto | long`), usage surface
+  (`cacheReadInputTokens`, `cacheWriteInputTokens`, `costUsd`), and context
+  compaction budgets in the CEDIA agent.
+- Perf budget registry and opt-in `CEDIA_PERF=1` lane.
+- Bounded skill catalog and on-demand `skill_view` tool.
+- Comparison matrix, landing page, roadmap, contribution, and security docs.
+- Cursor-style agent UI: segmented mode switcher, searchable model picker,
+  recent-chat empty state, hidden VS Code chrome, and Cursor-style start page.
+- opencode-go model profiles routed through the local opencode router with
+  effort selection.
+
+### Deferred
+- Hosted-only Cursor surfaces (Cloud Agents, Bugbot, enterprise SSO,
+  marketplace) remain out of scope with reason.
+
 ## [Unreleased]
 
 ### Changed — repo repurposed to Codinal (Phase 0b migration)

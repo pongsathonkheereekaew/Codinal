@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "cases": [
+    { "id": "hello-ts", "repo": "fixtures/hello-ts", "setup": "npm install", "prompt": "Add a failing test for isEven and make it pass", "expect": "npm test green", "budget_ms": 120000 },
+    { "id": "refactor-py", "repo": "fixtures/refactor-py", "setup": "true", "prompt": "Extract duplicate validation into one helper", "expect": "pytest green + no duplication", "budget_ms": 120000 },
+    { "id": "docs-md", "repo": "fixtures/docs-md", "setup": "true", "prompt": "Rewrite README with a usage section", "expect": "markdown lint passes", "budget_ms": 60000 }
+  ]
+}

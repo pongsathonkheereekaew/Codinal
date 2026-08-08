@@ -105,14 +105,14 @@ hosts:
     permission:
       mechanism: settings.permissions
     capabilities:
-      policy_file: { status: unverified }
-      skill_discovery: { status: unverified }
-      nested_skill_aliases: { status: unverified }
-      command_dir: { status: unverified }
-      native_permissions: { status: unverified }
-      config_merge: { status: unverified }
-      project_override: { status: unverified }
-      uninstall_ownership: { status: unverified }
+      policy_file: { status: supported, mechanism: CLAUDE.md-adapter }
+      skill_discovery: { status: supported, mechanism: skills-dir }
+      nested_skill_aliases: { status: partial, mechanism: skills-dir }
+      command_dir: { status: supported, mechanism: commands-dir }
+      native_permissions: { status: partial, mechanism: settings.permissions }
+      config_merge: { status: partial, mechanism: settings.json-merge }
+      project_override: { status: partial, mechanism: project-layout }
+      uninstall_ownership: { status: partial, mechanism: ownership-journal }
 
   codex:
     tier: 1
@@ -126,14 +126,14 @@ hosts:
     skill_discovery:
       - "~/.agents/skills/<name>/SKILL.md"
     capabilities:
-      policy_file: { status: unverified }
-      skill_discovery: { status: unverified }
-      nested_skill_aliases: { status: unverified }
-      command_dir: { status: unverified }
-      native_permissions: { status: unverified }
-      config_merge: { status: unverified }
-      project_override: { status: unverified }
-      uninstall_ownership: { status: unverified }
+      policy_file: { status: supported, mechanism: AGENTS.md-symlink }
+      skill_discovery: { status: supported, mechanism: agents-skills }
+      nested_skill_aliases: { status: supported, mechanism: agents-skills }
+      command_dir: { status: partial, mechanism: none }
+      native_permissions: { status: partial, mechanism: config.toml }
+      config_merge: { status: partial, mechanism: config-merge }
+      project_override: { status: partial, mechanism: project-layout }
+      uninstall_ownership: { status: partial, mechanism: ownership-journal }
 
   cursor:
     tier: 1
@@ -147,14 +147,14 @@ hosts:
       - "~/.cursor/skills/<name>/SKILL.md"
     command_dir: "~/.cursor/commands"
     capabilities:
-      policy_file: { status: unverified }
-      skill_discovery: { status: unverified }
-      nested_skill_aliases: { status: unverified }
-      command_dir: { status: unverified }
+      policy_file: { status: supported, mechanism: generated-mdc }
+      skill_discovery: { status: supported, mechanism: skills-dir }
+      nested_skill_aliases: { status: supported, mechanism: skills-dir }
+      command_dir: { status: supported, mechanism: commands-dir }
       native_permissions: { status: unsupported, mechanism: none }
-      config_merge: { status: unverified }
-      project_override: { status: unverified }
-      uninstall_ownership: { status: unverified }
+      config_merge: { status: partial, mechanism: mdc-merge }
+      project_override: { status: partial, mechanism: project-layout }
+      uninstall_ownership: { status: partial, mechanism: ownership-journal }
 
   gemini-cli:
     tier: 1
@@ -175,14 +175,14 @@ hosts:
       mechanism: user-policy-toml
       policy_dir: "~/.gemini/policies"
     capabilities:
-      policy_file: { status: unverified }
-      skill_discovery: { status: unverified }
-      nested_skill_aliases: { status: unverified }
-      command_dir: { status: unverified }
-      native_permissions: { status: unverified }
-      config_merge: { status: unverified }
-      project_override: { status: unverified }
-      uninstall_ownership: { status: unverified }
+      policy_file: { status: supported, mechanism: GEMINI.md-symlink }
+      skill_discovery: { status: supported, mechanism: gemini-skills + agents-skills }
+      nested_skill_aliases: { status: supported, mechanism: flat-symlink }
+      command_dir: { status: partial, mechanism: none }
+      native_permissions: { status: partial, mechanism: user-policy-toml }
+      config_merge: { status: partial, mechanism: settings-merge }
+      project_override: { status: partial, mechanism: project-layout }
+      uninstall_ownership: { status: partial, mechanism: ownership-journal }
 
   zcode:
     tier: 2
@@ -195,14 +195,14 @@ hosts:
       - "~/.zcode/skills/<name>/SKILL.md"
     command_dir: "~/.zcode/commands"
     capabilities:
-      policy_file: { status: unverified }
-      skill_discovery: { status: unverified }
-      nested_skill_aliases: { status: unverified }
-      command_dir: { status: unverified }
-      native_permissions: { status: unverified }
-      config_merge: { status: unverified }
-      project_override: { status: unverified }
-      uninstall_ownership: { status: unverified }
+      policy_file: { status: supported, mechanism: AGENTS.md-symlink }
+      skill_discovery: { status: supported, mechanism: skills-dir }
+      nested_skill_aliases: { status: supported, mechanism: flat-symlink }
+      command_dir: { status: supported, mechanism: commands-dir }
+      native_permissions: { status: partial, mechanism: unknown }
+      config_merge: { status: partial, mechanism: config-merge }
+      project_override: { status: partial, mechanism: project-layout }
+      uninstall_ownership: { status: partial, mechanism: ownership-journal }
 
   openclaw:
     tier: 2
@@ -210,14 +210,14 @@ hosts:
     skill_discovery:
       - "~/.openclaw/skills/<name>/SKILL.md"
     capabilities:
-      policy_file: { status: unverified }
-      skill_discovery: { status: unverified }
-      nested_skill_aliases: { status: unverified }
-      command_dir: { status: unverified }
-      native_permissions: { status: unverified }
-      config_merge: { status: unverified }
-      project_override: { status: unverified }
-      uninstall_ownership: { status: unverified }
+      policy_file: { status: unsupported, mechanism: none }
+      skill_discovery: { status: supported, mechanism: skills-dir }
+      nested_skill_aliases: { status: supported, mechanism: flat-symlink }
+      command_dir: { status: unsupported, mechanism: none }
+      native_permissions: { status: unsupported, mechanism: none }
+      config_merge: { status: unsupported, mechanism: none }
+      project_override: { status: unsupported, mechanism: none }
+      uninstall_ownership: { status: unsupported, mechanism: none }
 
   hermes:
     tier: 2
@@ -228,14 +228,14 @@ hosts:
       # Hermes reads ~/.agents/skills via skills.external_dirs (not a symlink tree).
       mechanism: external_dirs
     capabilities:
-      policy_file: { status: unverified }
-      skill_discovery: { status: unverified }
-      nested_skill_aliases: { status: unverified }
-      command_dir: { status: unverified }
-      native_permissions: { status: unverified }
-      config_merge: { status: unverified }
-      project_override: { status: unverified }
-      uninstall_ownership: { status: unverified }
+      policy_file: { status: partial, mechanism: AGENTS.md-behavioral-fallback }
+      skill_discovery: { status: supported, mechanism: external_dirs }
+      nested_skill_aliases: { status: partial, mechanism: external_dirs }
+      command_dir: { status: unsupported, mechanism: none }
+      native_permissions: { status: unsupported, mechanism: none }
+      config_merge: { status: partial, mechanism: yaml-merge }
+      project_override: { status: partial, mechanism: project-layout }
+      uninstall_ownership: { status: partial, mechanism: ownership-journal }
 
   generic:
     tier: 3

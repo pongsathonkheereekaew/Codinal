@@ -98,6 +98,10 @@ echo "== runtime truth =="
 "$PYTHON_BIN" scripts/runtime_truth_gate.py --check
 echo "runtime truth: OK"
 
+echo "== host capabilities =="
+"$PYTHON_BIN" "$HARNESS/scripts/harness_host.py" --agents-home "$HARNESS" host verify --all --project "$ROOT"
+echo "host capabilities: OK"
+
 echo "== product tests =="
 # Product tests are Rust-only after the full retire (Python control plane and
 # web UI removed). Unit/integration coverage lives in the cargo gates below.

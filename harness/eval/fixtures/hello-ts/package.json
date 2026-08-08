@@ -1,0 +1,11 @@
+{
+  "name": "hello-ts",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test src/*.test.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

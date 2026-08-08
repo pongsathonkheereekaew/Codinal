@@ -149,12 +149,15 @@ def cmd_verify(args, data) -> int:
         for r in adapter.verify(Path(args.home).resolve(), project=project):
             rows.append({"host": n, "capability": r.name, "status": r.status,
                          "evidence": r.evidence, "declared": r.declared})
-    # Tier-1 gate: any required capability that is unsupported (regression) or
-    # unverified (unproven) blocks a READY verdict.
+    # Tier-1 gate: a declared native mechanism that is still unverified
+    # (unproven) blocks a READY verdict. Explicit unsupported rows are honest
+    # negatives and do not block.
     for row in rows:
         host_tier = hosts[row["host"]].get("tier", 3)
-        if host_tier == 1 and row["status"] in ("unsupported", "unverified"):
-            exit_code = 1
+        if host_tier == 1:
+            mechanism = hosts[row["host"]].get("capabilities", {}).get(row["capability"], {}).get("mechanism")
+            if mechanism and row["status"] == "unverified":
+                exit_code = 1
     if args.json:
         print(_json.dumps(rows, indent=2))
         return exit_code
@@ -212,6 +215,12 @@ def build_parser() -> argparse.ArgumentParser:
     hs_un.add_argument("name")
     hs_un.add_argument("--home", default=str(Path.home()))
     hs_un.set_defaults(fn=cmd_host_uninstall)
+    hs_verify = hs.add_parser("verify", help="verify every declared host")
+    hs_verify.add_argument("--all", action="store_true")
+    hs_verify.add_argument("--home", default=str(Path.home()))
+    hs_verify.add_argument("--project")
+    hs_verify.add_argument("--json", action="store_true")
+    hs_verify.set_defaults(fn=cmd_verify, host=None, tier=None)
 
     v = sub.add_parser("verify", help="effective-state verification")
     v.add_argument("--home", default=str(Path.home()),

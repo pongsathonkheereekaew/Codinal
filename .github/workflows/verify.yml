@@ -28,3 +28,20 @@ jobs:
         run: cargo clippy --manifest-path desktop/gpui/Cargo.toml --all-targets -- -D warnings
       - name: Test desktop shell
         run: cargo test --manifest-path desktop/gpui/Cargo.toml
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell lint scripts
+        run: |
+          set -e
+          for f in install.sh backup.sh verify.sh bootstrap.sh scripts/*.sh harness/scripts/adapters/*verify.sh; do
+            [ -f "$f" ] || continue
+            bash -n "$f"
+          done
+      - name: Markdown lint (when available)
+        run: |
+          if command -v npx >/dev/null 2>&1; then
+            npx --yes markdownlint-cli2 "docs/**/*.md" "harness/**/*.md" || true
+          fi

@@ -1,0 +1,35 @@
+{
+  "agent": "cedia",
+  "cases": [
+    {
+      "id": "hello-ts",
+      "wall_ms": 87738,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": null,
+      "cache_write_tokens": null,
+      "cacheReadShare": null,
+      "pass": true
+    },
+    {
+      "id": "refactor-py",
+      "wall_ms": 33537,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": null,
+      "cache_write_tokens": null,
+      "cacheReadShare": null,
+      "pass": true
+    },
+    {
+      "id": "docs-md",
+      "wall_ms": 34103,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": null,
+      "cache_write_tokens": null,
+      "cacheReadShare": null,
+      "pass": true
+    }
+  ]
+}
